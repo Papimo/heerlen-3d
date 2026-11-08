@@ -16,7 +16,12 @@
     line: { snelweg: '#80858e', hoofd: '#8b9098', weg: '#979ba2', straat: '#a4a7ad', erfweg: '#bcb5a8', dienst: '#b0b2b6', voet: '#ddd0b6', pad: '#e0d3b9',
       stoep: '#d0c9bd', fiets: '#c46f62', zand: '#d9c08f', beek: '#5aa9d6', spoor: '#9a8f84', tram: '#a59c92' },
     pitch: { gras: '#8cc96a', kunstgras: '#5fae5a', hard: '#6f93a8', gravel: '#c8653f', zand: '#e1c993', beton: '#c9c6c0' },
-    chalk: '#ffffff', dash: { hoofd: '#f4f1ea', snelweg: '#f4f1ea' }, mow: 0.06, rails: '#5c544c', bridge: '#5f574e',
+    chalk: '#ffffff', mow: 0.06, rails: '#5c544c', bridge: '#5f574e',
+    // oude lint-look (app.js): [wegdek, stoeprand]; erf/voetgangers zachter. extra = lint was iets breder dan de OSM-breedte, kerb = deel binnen de stoeprand (26/32)
+    rib: { street: { hoofd: ['#8f9196', '#c4c1bb'], weg: ['#8f9196', '#c4c1bb'], straat: ['#8f9196', '#c4c1bb'], erfweg: ['#b3aea6', '#d6d2ca'], voet: ['#b3aea6', '#d6d2ca'] },
+      extra: 0.6, kerb: 26 / 32, berm: '#c9c4ba', asphalt: '#3d3f45', paint: '#fbfaf5',
+      railW: 6, ballast: '#a49c90', sleeper: '#6e5a48', rail: '#4d4f55',
+      round: ['#8a8c91', '#e2dfd8'], isle: '#8cc46c', ink: '#3a332e' },
   };
 
   // ---------- data → features per vak (absolute RD) ----------
@@ -99,6 +104,19 @@
     return P.gras;
   }
   const isWat = f => f.c === 'water' || f.c === 'zwembad';
+  // rotondes als standaardvorm (zoals de oude linten in app.js buildLayers): ronde rijbaan met lichte rand; middeneiland = 3D-cilinder van de app (blijft in iso)
+  function rounds(x, c, ink) {
+    const d = H.layerData?.rounds; if (!d) return;
+    for (const [type, cx, cy, r0] of d) {
+      const big = /^(motorway|trunk|primary|secondary)/.test(type), w = big ? 8 : 6.5, R = Math.min(34, Math.max(w / 2 + 6, Math.round(r0 / 2) * 2));
+      if (cx + R + w < c.x0 || cx - R - w > c.x0 + KM || cy + R + w < c.y0 || cy - R - w > c.y0 + KM) continue;
+      x.beginPath(); x.arc(cx - X0, cy - Y0, R, 0, Math.PI * 2);
+      x.lineWidth = w + 2 * ink; x.strokeStyle = ST.rib.ink; x.stroke();
+      x.lineWidth = w; x.strokeStyle = ST.rib.round[1]; x.stroke();
+      x.lineWidth = w * ST.rib.kerb; x.strokeStyle = ST.rib.round[0]; x.stroke();
+      x.beginPath(); x.arc(cx - X0, cy - Y0, Math.max(0, R - w / 2 - 0.3), 0, Math.PI * 2); x.fillStyle = ST.rib.isle; x.fill();
+    }
+  }
   function paint(c, res) {
     const F = feats(c), s = res / KM, px = 1 / s;
     const cv = c.gCv && c.gCv.width === res ? c.gCv : (c.gCv = Object.assign(document.createElement('canvas'), { width: res, height: res }));
@@ -118,23 +136,54 @@
       pitchLines(x, f);
     }
     for (const f of F.area) if (isWat(f)) { x.fillStyle = ST.area[f.c]; path(x, f.rs); x.fill('evenodd'); }
-    // lijnen: beken, vulling, spoor, middenstreep; bruggen als laatste (met donkere rand)
+    // lijnen: beken, wegen, spoor, rotondes; bruggen als laatste (met donkere rand)
+    // wegen/spoor/rotondes in de stijl van de oude linten (app.js streetTex/laneTex/railTex): stoeprand, donker asfalt met witte randen, ballast + dwarsliggers
     const stroke = (f, w, col) => { const a = f.a; x.beginPath(); x.moveTo(a[0] - X0, a[1] - Y0); for (let k = 2; k < a.length; k += 2) x.lineTo(a[k] - X0, a[k + 1] - Y0); x.lineWidth = w; x.strokeStyle = col; x.stroke(); };
+    const offset = (a, d) => { // polylijn d m opzij (links +), hoeken via gemiddelde normaal
+      const o = [], n = a.length / 2;
+      for (let k = 0; k < n; k++) {
+        const p = Math.max(0, k - 1), q = Math.min(n - 1, k + 1);
+        let dx = a[q * 2] - a[p * 2], dy = a[q * 2 + 1] - a[p * 2 + 1]; const L = Math.hypot(dx, dy) || 1; dx /= L; dy /= L;
+        o.push(a[k * 2] - dy * d, a[k * 2 + 1] + dx * d);
+      }
+      return { a: o };
+    };
+    const RT = ST.rib, ink = Math.max(0.3, 0.6 * px); // inktrand: de linten lagen hoger en kregen een omlijning van de nabewerking
     for (const br of [0, 1]) {
       const L = F.line.filter(f => f.br === br);
-      if (br) for (const f of L) if (f.c !== 'beek') stroke(f, f.w + 2.2, ST.bridge);
+      if (br) for (const f of L) if (f.c !== 'beek') stroke(f, (RT.street[f.c] || f.c === 'snelweg' ? f.w + RT.extra : f.w) + 2.2, ST.bridge);
       for (const f of L) if (f.c === 'beek') stroke(f, Math.max(f.w, 1.6 * px), ST.line.beek);
-      for (const f of L) { if (f.c === 'beek' || f.c === 'spoor' || f.c === 'tram') continue; stroke(f, Math.max(f.w, 1.2 * px), ST.line[f.c] || ST.line.pad); }
-      for (const f of L) if (f.c === 'spoor' || f.c === 'tram') {
-        stroke(f, f.w, ST.line[f.c]); x.setLineDash([0.3, 0.55]); stroke(f, 2.6, shade(ST.line[f.c], 0.7)); x.setLineDash([]);
-        x.lineCap = 'butt'; stroke(f, 1.75, ST.rails); stroke(f, 1.2, ST.line[f.c]); x.lineCap = 'round';
+      // overige paden/fietspaden e.d. (hadden geen lint): oude grondstijl
+      for (const f of L) { if (f.c === 'beek' || f.c === 'spoor' || f.c === 'tram' || f.c === 'snelweg' || RT.street[f.c]) continue; stroke(f, Math.max(f.w, 1.2 * px), ST.line[f.c] || ST.line.pad); }
+      // straten: eerst alle stoepranden, dan alle wegdekken → kruisingen lopen in elkaar over
+      const S = L.filter(f => RT.street[f.c]), wOf = f => Math.max(f.w + RT.extra, 1.6 * px);
+      for (const f of S) stroke(f, wOf(f) + 2 * ink, RT.ink);
+      for (const f of S) stroke(f, wOf(f), RT.street[f.c][1]);
+      for (const f of S) stroke(f, wOf(f) * RT.kerb, RT.street[f.c][0]);
+      // snelwegen: lichte berm, donker asfalt, witte kantstrepen, middenstreep 3 m / gat 9 m (alleen ≥ 2 stroken)
+      const M = L.filter(f => f.c === 'snelweg');
+      for (const f of M) stroke(f, f.w + 2 * ink, RT.ink);
+      for (const f of M) stroke(f, f.w, RT.berm);
+      for (const f of M) stroke(f, f.w - 0.96, RT.asphalt);
+      for (const f of M) { stroke(f, f.w - 2.04, RT.paint); stroke(f, f.w - 2.76, RT.asphalt); }
+      x.lineCap = 'butt'; x.setLineDash([3, 9]); for (const f of M) if (f.w >= 7) stroke(f, 0.24, RT.paint); x.setLineDash([]); x.lineCap = 'round';
+      // spoor: ballast 6 m, dwarsliggers (2,8 m breed, om de 0,65 m), twee spoorstaven 1,5 m uit elkaar; tram blijft oude stijl
+      for (const f of L) if (f.c === 'tram') {
+        stroke(f, f.w, ST.line.tram); x.setLineDash([0.3, 0.55]); stroke(f, 2.6, shade(ST.line.tram, 0.7)); x.setLineDash([]);
+        x.lineCap = 'butt'; stroke(f, 1.75, ST.rails); stroke(f, 1.2, ST.line.tram); x.lineCap = 'round';
       }
-      x.setLineDash([3, 6]); x.lineCap = 'butt'; for (const f of L) if (ST.dash[f.c]) stroke(f, 0.3, ST.dash[f.c]); x.setLineDash([]); x.lineCap = 'round';
+      const R = L.filter(f => f.c === 'spoor');
+      for (const f of R) stroke(f, RT.railW + 2 * ink, RT.ink);
+      for (const f of R) stroke(f, RT.railW, RT.ballast);
+      x.lineCap = 'butt'; x.setLineDash([0.27, 0.38]); for (const f of R) stroke(f, RT.railW * 0.46, RT.sleeper); x.setLineDash([]);
+      for (const f of R) for (const d of [-0.75, 0.75]) stroke(offset(f.a, d), Math.max(0.19, 0.8 * px), RT.rail);
+      x.lineCap = 'round';
+      if (!br) rounds(x, c, ink);
     }
     if (!c.gTex || c.gTex.image !== cv) {
       c.gTex?.dispose(); c.gTex = new THREE.CanvasTexture(cv); c.gTex.colorSpace = THREE.SRGBColorSpace; c.gTex.anisotropy = 8; // three kapt af op het maximum
     }
-    c.gTex.needsUpdate = true; c.gRes = res;
+    c.gTex.needsUpdate = true; c.gRes = res; H.freeAfterUpload(c.gTex); // canvas na upload vrij (2048² = 16 MB); volgende keer nieuw canvas
   }
   // watermasker per vak (±1 px/m)
   function waterMask(c) {
@@ -153,7 +202,7 @@
       const si = r * row, di = (res - 1 - r) * row;
       for (let k = 0; k < row; k += 4) { out[di + k] = d0[si + k]; out[di + k + 1] = d1[si + k]; out[di + k + 2] = d2[si + k]; out[di + k + 3] = 255; }
     }
-    c.mTex = new THREE.DataTexture(out, res, res); c.mTex.magFilter = c.mTex.minFilter = THREE.LinearFilter; c.mTex.needsUpdate = true;
+    c.mTex = new THREE.DataTexture(out, res, res); c.mTex.magFilter = c.mTex.minFilter = THREE.LinearFilter; c.mTex.needsUpdate = true; H.freeAfterUpload(c.mTex);
   }
 
   // ---------- shader (terrein + ondergrond; alleen in iso) ----------
@@ -203,7 +252,7 @@
     return r;
   }
   function refresh() {
-    refT = 0; if (!iso()) return;
+    refT = 0; if (!iso() || H.moving?.()) return; // zoomen/schuiven: pas bij stilstand ('still')
     for (const c of H.chunks.values()) {
       if (!c.terrain || !c.gOn) continue;
       const r = want(c), cur = c.gRes || 0;
@@ -214,7 +263,7 @@
   const later = () => { if (!refT) refT = setTimeout(refresh, 150); };
   function pump() { if (!busy && Q.size) { busy = true; setTimeout(step, 0); } }
   function step() {
-    busy = false; if (!iso() || !Q.size) return;
+    busy = false; if (!iso() || !Q.size || H.moving?.()) return; // niet schilderen/uploaden midden in een beweging
     let c = null; for (const k of Q.keys()) if (!c || (!k.gTex && c.gTex) || (!!k.gTex === !!c.gTex && k.gDt < c.gDt)) c = k;
     const r = Q.get(c); Q.delete(c);
     paint(c, r);
@@ -232,6 +281,8 @@
 
   H.on('chunk', c => { c.gOn = true; c.terrain.material.userData.groundChunk = c; c.terrain.material.needsUpdate = true; later(); });
   H.on('detail', later);
+  H.on('still', () => { later(); pump(); });
   H.on('mode', () => { later(); water(); });
+  H.on('layers', () => { for (const c of H.chunks.values()) c.gRes = 0; later(); }); // rotondes komen uit layers.js: vakken die eerder geschilderd waren opnieuw
   H.on('turn', later);
 })();

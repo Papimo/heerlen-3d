@@ -16,15 +16,15 @@
 
   // ---------- W4: wolkschaduw (wereldpositie per pixel uit de diepte van de ortho-camera) + ballonschaduw ----------
   const cloudM = new THREE.ShaderMaterial({ name: 'wolken',
-    uniforms: { tIn: { value: null }, tN: { value: null }, uTime: { value: 0 }, uCamW: { value: camW }, uLRBT: { value: lrbt }, uSun: { value: SUN },
+    uniforms: { tIn: { value: null }, tN: { value: null }, uTime: { value: 0 }, uMove: { value: 0 }, uCamW: { value: camW }, uLRBT: { value: lrbt }, uSun: { value: SUN },
       uWind: { value: WIND.clone().multiplyScalar(CLOUD.speed) }, uScale: { value: CLOUD.scale }, uCov: { value: CLOUD.cov }, uSoft: { value: CLOUD.soft },
       uDark: { value: CLOUD.dark }, uSunB: { value: CLOUD.sun }, uNight: { value: 0 }, uCloudY: { value: 1000 }, uBal: { value: bal } },
     vertexShader: VS,
     fragmentShader: `varying vec2 vUv; uniform sampler2D tIn, tN; uniform mat4 uCamW; uniform vec4 uLRBT, uBal; uniform vec3 uSun; uniform vec2 uWind;
-      uniform float uTime, uScale, uCov, uSoft, uDark, uSunB, uNight, uCloudY;
+      uniform float uTime, uMove, uScale, uCov, uSoft, uDark, uSunB, uNight, uCloudY;
       float h(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
       float vn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(h(i), h(i + vec2(1, 0)), f.x), mix(h(i + vec2(0, 1)), h(i + vec2(1, 1)), f.x), f.y); }
-      float fbm(vec2 p) { float a = 0.0, w = 0.5; mat2 r = mat2(0.8, -0.6, 0.6, 0.8); for (int i = 0; i < 5; i++) { a += w * vn(p); p = r * p * 2.03 + 17.0; w *= 0.5; } return a; }
+      float fbm(vec2 p) { float a = 0.0, w = 0.5; mat2 r = mat2(0.8, -0.6, 0.6, 0.8); for (int i = 0; i < 5; i++) { if (uMove > 0.5 && i >= 3) { a += w * 0.75; break; } a += w * vn(p); p = r * p * 2.03 + 17.0; w *= 0.5; } return a; }
       void main() {
         vec4 c = texture2D(tIn, vUv), n = texture2D(tN, vUv);
         if (n.g > 0.0) {
@@ -47,13 +47,13 @@
   });
   // ---------- T4: zachte randen boven/onder + warm vignet ----------
   const tiltM = new THREE.ShaderMaterial({ name: 'randen',
-    uniforms: { tIn: { value: null }, uRes: { value: new THREE.Vector2(1, 1) }, uAmt: { value: TILT.amt }, uW0: { value: TILT.w0 }, uW1: { value: TILT.w1 }, uSat: { value: TILT.sat }, uVig: { value: TILT.vig } },
+    uniforms: { tIn: { value: null }, uMove: { value: 0 }, uRes: { value: new THREE.Vector2(1, 1) }, uAmt: { value: TILT.amt }, uW0: { value: TILT.w0 }, uW1: { value: TILT.w1 }, uSat: { value: TILT.sat }, uVig: { value: TILT.vig } },
     vertexShader: VS,
-    fragmentShader: `varying vec2 vUv; uniform sampler2D tIn; uniform vec2 uRes; uniform float uAmt, uW0, uW1, uSat, uVig;
+    fragmentShader: `varying vec2 vUv; uniform sampler2D tIn; uniform vec2 uRes; uniform float uMove, uAmt, uW0, uW1, uSat, uVig;
       void main() {
         vec4 c = texture2D(tIn, vUv);
         float r = smoothstep(uW0, uW1, abs(vUv.y - 0.5)) * uAmt * uRes.y / 100.0; // straal in px
-        if (r > 0.4) { vec4 a = vec4(0.0); for (int i = 0; i < 24; i++) { float t = float(i) * 2.39996, q = sqrt(float(i) + 0.5) / 4.9; a += texture2D(tIn, vUv + vec2(cos(t), sin(t)) * q * r / uRes); } c = a / 24.0; /* 24 i.p.v. 40 monsters (draait bij elk wolkenbeeld) */ }
+        if (r > 0.4) { vec4 a = vec4(0.0); float n = 0.0; for (int i = 0; i < 24; i++) { n += 1.0; float t = float(i) * 2.39996, q = sqrt(float(i) + 0.5) / 4.9; a += texture2D(tIn, vUv + vec2(cos(t), sin(t)) * q * r / uRes); } c = a / n; /* 8 monsters tijdens bewegen gaf spookstrepen → altijd 24 */ /* 24 i.p.v. 40 monsters (draait bij elk wolkenbeeld) */ }
         c.rgb = mix(vec3(dot(c.rgb, vec3(0.3, 0.59, 0.11))), c.rgb, uSat);
         vec2 p = vUv - 0.5; c.rgb *= mix(vec3(1.0), vec3(0.72, 0.62, 0.52), smoothstep(0.25, 0.75, length(p * vec2(1.0, 1.25))) * uVig * 2.0);
         gl_FragColor = c;

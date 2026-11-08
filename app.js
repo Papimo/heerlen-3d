@@ -22,6 +22,8 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
   THREE.ShaderChunk.common += '\nvarying vec3 vMrtV;\n#ifdef gl_FragColor\nlayout(location = 1) out highp vec4 gNrm;\n' + NRM_GLSL + '#endif\n';
   THREE.ShaderChunk.project_vertex += '\nvMrtV = mvPosition.xyz;';
   THREE.ShaderChunk.opaque_fragment += '\n#ifdef gl_FragColor\n#ifdef OPAQUE\ngNrm = vec4(nrmPack(normalize(cross(dFdx(vMrtV), dFdy(vMrtV))), -vMrtV.z), 0.0, 1.0);\n#else\ngNrm = vec4(0.0);\n#endif\n#endif';
+  // ShadowMaterial (schaduwvlak diorama) heeft geen opaque_fragment → zonder gNrm faalt de draw ("missing fragment shader outputs")
+  THREE.ShaderLib.shadow.fragmentShader = THREE.ShaderLib.shadow.fragmentShader.replace('#include <fog_fragment>', '#include <fog_fragment>\n#ifdef gl_FragColor\ngNrm = vec4(0.0);\n#endif');
 
   // ---------- RD ↔ WGS84 (~1 m) ----------
   function rd2wgs(x, y) {
@@ -50,6 +52,11 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
   const ISO_POLAR = Math.PI / 2 - Math.atan(0.5), ISO_H0 = 500, TAN21 = Math.tan(21 * Math.PI / 180);
   const isoHalf = () => ISO_H0 / ortho.zoom; // zichtbare halve hoogte (m)
   const isoD = (h = isoHalf()) => 6 * h + 2000; // afstand ortho-camera ↔ doel (beeld gelijk, alleen diepte/near/far)
+  // iso: 4 vaste zoomstanden (zichtbare halve hoogte, m); scrollen springt vloeiend naar de volgende. Grond/detail rekenen alleen
+  // op deze standen (bij stilstand), tussendoor niets → geen herschilderen of uploads midden in een zoom
+  const ISO_LEVELS = [70, 220, 700, 2200];
+  const levelOf = h => { let k = 0; for (let i = 1; i < ISO_LEVELS.length; i++) if (Math.abs(Math.log(h / ISO_LEVELS[i])) < Math.abs(Math.log(h / ISO_LEVELS[k]))) k = i; return k; };
+  const snapHalf = h => ISO_LEVELS[levelOf(h)];
   const snapAz = t => Math.PI / 4 + Math.round((t - Math.PI / 4) / (Math.PI / 2)) * Math.PI / 2;
   let iso = false;
   const MAT = {
@@ -61,6 +68,8 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
   let dirty = true;
   const redraw = () => { dirty = true; };
   H.redraw = redraw;
+  // na de upload naar de GPU de kopie in het werkgeheugen weggooien (canvas → 1×1, DataTexture-data → null). Opnieuw tekenen = nieuw canvas/nieuwe textuur
+  H.freeAfterUpload = tex => { tex.onUpdate = () => { tex.onUpdate = null; const im = tex.image; if (im && im.getContext) im.width = im.height = 1; else if (im && im.data) im.data = null; }; return tex; };
 
   function init() {
     const el = document.getElementById('view');
@@ -102,7 +111,11 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
     controls.maxPolarAngle = 1.45;
     controls.addEventListener('change', redraw);
     controls.addEventListener('start', () => { controls.autoRotate = false; clearTimeout(idleT); emit('interact'); });
-    controls.addEventListener('end', () => { if (mode === 'rond') idleT = setTimeout(() => { controls.autoRotate = true; }, 4000); });
+    controls.addEventListener('end', () => {
+      if (mode === 'rond') idleT = setTimeout(() => { controls.autoRotate = true; }, 4000);
+      if (camera === ortho && !fly) { const h = isoHalf(), s = snapHalf(h); if (Math.abs(s - h) / h > 0.01) { const [x, y] = toRD(controls.target); H.flyTo(x, y, { half: s, ms: 300, arc: false }); } } // knijpen: naar dichtstbijzijnde zoomstand
+    });
+    renderer.domElement.addEventListener('wheel', isoWheel, { capture: true, passive: false }); // vóór OrbitControls
 
     addEventListener('resize', () => {
       persp.aspect = el.clientWidth / el.clientHeight; persp.updateProjectionMatrix(); setOrtho();
@@ -230,10 +243,10 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
   H.chunk = async (h, b64) => {
     try {
       const buf = await new Response(new Blob([b64bytes(b64)]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
-      const A = (T, k) => new T(buf, h.lay[k][0], h.lay[k][1]);
+      const A = (T, k) => new T(buf, h.lay[k][0], h.lay[k][1]), S = (T, k) => A(T, k).slice(); // S = eigen kopie: anders houdt een view de hele uitgepakte buffer (±1 MB/vak) vast
       const c = {
         i: h.i, j: h.j, x0: h.i * area.km, y0: h.j * area.km, nr: h.nr, nw: h.nw, demN: h.demN, demStep: h.demStep,
-        ids: A(Float64Array, 'ids'), bR: A(Uint32Array, 'bR'), bW: A(Uint32Array, 'bW'), year: A(Int16Array, 'year'), hgt: A(Uint16Array, 'hgt'), fl: A(Uint8Array, 'fl'), dem: A(Uint16Array, 'dem'),
+        ids: S(Float64Array, 'ids'), bR: S(Uint32Array, 'bR'), bW: S(Uint32Array, 'bW'), year: S(Int16Array, 'year'), hgt: S(Uint16Array, 'hgt'), fl: S(Uint8Array, 'fl'), dem: S(Uint16Array, 'dem'),
       };
       // gebouwen: detail (LoD 2.2) + lichte variant voor ver weg (LoD 1.2, oudere data: geen)
       const ax = h.ox - O[0], az = h.oy - O[1];
@@ -347,10 +360,11 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
   function setWallMask(m) { let ch = false; for (const c of H.chunks.values()) if (wallGroups(c, m)) ch = true; return ch; }
   on('turn', () => { if (setWallMask(WALL_ALL)) redraw(); }); // meteen alles, updateDetail loopt maar elke 400 ms
   function updateDetail() {
+    const mv = moveNow; // tijdens bewegen alleen grover (goedkoper) maken; fijner, schaduw en emit('detail') pas bij stilstand
     let ch = setWallMask(isoWallMask());
     const dist = viewDist();
     const shadows = sun.castShadow ? dist < SHADOW_OFF + 300 : dist < SHADOW_OFF - 300; // marge: niet steeds wisselen
-    if (shadows !== sun.castShadow) { sun.castShadow = shadows; ch = true; }
+    if (shadows !== sun.castShadow && !mv) { sun.castShadow = shadows; ch = true; }
     const S = shadowExt() + 200;
     // iso: één terreinstap voor alle vakken naar pixels per meter (ortho = overal dezelfde schaal): rastercel 10 m ≥ ±6 px, anders grover
     // (fijn terrein ver uitgezoomd = piepkleine driehoeken, kostte ±25 ms GPU op Iris Pro)
@@ -358,23 +372,23 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
     const ppm = camera === ortho ? dbs.y / (2 * isoHalf()) : 0, isoSt = ppm >= 0.6 ? 1 : ppm >= 0.3 ? 2 : 4;
     for (const c of H.chunks.values()) {
       const d = chunkDist(c, camera.position) * lens(), far = !!c.lo && camera !== ortho && (c.lo.visible ? d > LO_FAR - 200 : d > LO_FAR + 200); // iso: altijd LoD 2.2 (A1)
-      if (c.lo && c.lo.visible !== far) { c.lo.visible = far; c.mesh.visible = !far; ch = true; }
+      if (c.lo && c.lo.visible !== far && (far || !mv)) { c.lo.visible = far; c.mesh.visible = !far; ch = true; }
       const cast = shadows && !far && chunkDist(c, controls.target, 0) < S;
-      if (c.mesh.castShadow !== cast) { c.mesh.castShadow = cast; ch = true; }
+      if (c.mesh.castShadow !== cast && !mv) { c.mesh.castShadow = cast; ch = true; }
       if (c.trees) { // bomen: dichtbij alles, verder weg uitgedund, heel ver weg geen
         const f = d < 1800 ? 1 : d < 4000 ? 1 / 3 : d < 8000 ? 1 / 8 : 0, lo = dbs.y / (2 * d * TAN21) < TREE_LO_PPM; // d × lens → px/m zoals in iso
         for (const im of c.trees) {
-          const g = lo ? im.geoLo : im.geoHi; if (im.geometry !== g) { im.geometry = g; ch = true; }
+          const g = lo ? im.geoLo : im.geoHi; if (im.geometry !== g && (lo || !mv)) { im.geometry = g; ch = true; }
           const n = Math.round(im.full * f), cs = cast && f === 1;
-          if (im.count !== n) { im.count = n; ch = true; }
-          if (im.castShadow !== cs) { im.castShadow = cs; ch = true; }
+          if (im.count !== n && (n < im.count || !mv)) { im.count = n; ch = true; }
+          if (im.castShadow !== cs && !mv) { im.castShadow = cs; ch = true; }
         }
       }
       const st = camera === ortho ? isoSt : d < 2500 ? 1 : d < 6000 ? 2 : 4; // terrein grover ver weg (naden vallen weg tegen de ondergrond); iso: overal dezelfde stap (geen naden)
-      if (st !== c.tStep) { c.tStep = st; c.terrain.geometry.setIndex(terrIndex(c.demN, st)); ch = true; }
+      if (st !== c.tStep && (st > c.tStep || !mv)) { c.tStep = st; c.terrain.geometry.setIndex(terrIndex(c.demN, st)); ch = true; }
     }
     if (ch) { shadowDirty = true; redraw(); }
-    emit('detail', dist); // iso/*.js: eigen uitdunning naar afstand (H.chunkDist(c) × H.lens())
+    if (!mv) emit('detail', dist); // iso/*.js: eigen uitdunning naar afstand (H.chunkDist(c) × H.lens()); bij stilstand
   }
   H.viewDist = () => viewDist();
   H.chunkDist = (c, p = camera.position) => chunkDist(c, p);
@@ -388,6 +402,7 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
     let todo = (tx1 - tx0 + 1) * (ty1 - ty0 + 1), ok = 0;
     const finish = () => {
       if (tok !== c.texTok || st !== style) return;
+      if (moveNow) { setTimeout(finish, 150); return; } // omkleuren + uploaden niet midden in een beweging
       if (!ok) { c.level = z; return; } // offline: kale kleur houden
       if (st === 'kaart') recolor(ctx, landCanvas(c, z, tx0, ty0, cv.width, cv.height));
       const N = c.demN, s = c.demStep, uv = c.terrain.geometry.attributes.uv;
@@ -396,7 +411,7 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
         uv.setXY(k, (lon2px(lo, z) - tx0 * TS) / cv.width, 1 - (lat2py(la, z) - ty0 * TS) / cv.height);
       }
       uv.needsUpdate = true;
-      const tex = new THREE.CanvasTexture(cv);
+      const tex = H.freeAfterUpload(new THREE.CanvasTexture(cv));
       tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
       const m = c.terrain.material;
       m.map?.dispose(); m.map = tex; m.color.set('#ffffff'); m.needsUpdate = true;
@@ -475,7 +490,7 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
     if (now - lastLod < 400) return;
     lastLod = now;
     updateDetail();
-    if (camera === ortho) return; // iso: eigen grond (iso/ground.js) i.p.v. PDOK-tegels → niets laden; terug naar Oud laadt vanzelf bij
+    if (camera === ortho || moveNow) return; // iso: eigen grond (iso/ground.js) i.p.v. PDOK-tegels → niets laden; terug naar Oud laadt vanzelf bij. Bewegen: pas bij stilstand
     for (const c of H.chunks.values()) {
       const z = wantLevel(c); c.wantZ = z;
       if (z !== c.level && z !== c.pendingZ) { c.pendingZ = z; texture(c, z); }
@@ -870,14 +885,15 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
   // ---------- Camera ----------
   let fly = null;
   // iso: dist = afstand bij de gewone lens (→ zichtbare halve hoogte), of `half` direct; kijkhoek vast, richting op een kwartslag
-  H.flyTo = (x, y, { dist = 320, polar, azim, ms = 1100, half } = {}) => {
+  H.flyTo = (x, y, { dist = 320, polar, azim, ms = 1100, half, arc = true } = {}) => { // arc false = zonder boog (zoomstap)
     const t1 = toWorld(x, y), off = camera.position.clone().sub(controls.target);
     const sph = new THREE.Spherical().setFromVector3(off);
     sph.radius = dist; if (polar !== undefined) sph.phi = polar; if (azim !== undefined) sph.theta = azim;
     sph.phi = Math.min(sph.phi, controls.maxPolarAngle);
     if (camera === ortho) { sph.phi = ISO_POLAR; sph.theta = snapAz(sph.theta); }
     fly = { t0: performance.now(), ms, a: controls.target.clone(), b: t1, sa: new THREE.Spherical().setFromVector3(off), sb: sph };
-    if (camera === ortho) { fly.ha = isoHalf(); fly.hb = half ?? dist * TAN21; }
+    if (camera === ortho) { fly.ha = isoHalf(); fly.hb = snapHalf(half ?? dist * TAN21); }
+    fly.arc = arc;
     // kortste draairichting
     let d = fly.sb.theta - fly.sa.theta; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; fly.sb.theta = fly.sa.theta + d;
     redraw();
@@ -904,7 +920,7 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
     iso = on; U.uIso.value = on ? 1 : 0; document.body.classList.toggle('iso', on); applyNight(); shadowDirty = true;
   }
   function applyMode(m, animate = true) {
-    useCam(m === 'iso' ? ortho : persp); setLook(m === 'iso');
+    useCam(m === 'iso' ? ortho : persp); setLook(m === 'iso'); ribbonsForMode();
     const [x, y] = toRD(controls.target), r = camera.position.distanceTo(controls.target);
     const vis = visHalf(); // zichtbare halve hoogte gelijk houden bij andere lens
     const fov = FOV[m], far = animate ? vis / Math.tan(fov * Math.PI / 360) : r; // bij opstarten is de afstand al goed bewaard
@@ -916,7 +932,7 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
       controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN };
       controls.minPolarAngle = controls.maxPolarAngle = ISO_POLAR;
       controls.minDistance = 0; controls.maxDistance = Infinity;
-      controls.minZoom = ISO_H0 / 5800; controls.maxZoom = ISO_H0 / 10;
+      controls.minZoom = ISO_H0 / ISO_LEVELS[ISO_LEVELS.length - 1]; controls.maxZoom = ISO_H0 / ISO_LEVELS[0];
       const h = !animate && savedZoom ? ISO_H0 / savedZoom : isoHalf();
       H.flyTo(x, y, { half: Math.min(ISO_H0 / controls.minZoom, Math.max(ISO_H0 / controls.maxZoom, h)), ms: animate ? 700 : 1 });
       redraw(); return;
@@ -980,7 +996,7 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
   }
 
   // ---------- Iso-nabewerking: omlijning uit normaal + diepte (2e render met NRM), dan op het scherm ----------
-  let useMRT = false, rtC, rtN, NRM, post, postScene, postCam, pq, rtA, rtB, rtD, rtDN;
+  let useMRT = false, rtC, rtN, RTS = {}, rtS = new THREE.Vector2(4, 4), NRM, post, postScene, postCam, pq, rtA, rtB, rtD, rtDN;
   // H.addDynamic(obj): bewegend object (voertuigen, ballon …) op laag 1. Wordt los getekend (kleur + NRM) en in de omlijning op diepte over het
   // bewaarde scènebeeld gelegd → animatie kan 'post' teruggeven (geen hele scène-render). Alleen iso; werpt geen schaduw, niet aanklikbaar.
   const dyn = new Set();
@@ -1006,8 +1022,8 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
     if (!rtC) {
       // geen MSAA: omlijning dekt de randen (stap 9). Diepte heeft float32 nodig (half-float gaf streepruis); blenden op float32 vraagt EXT_float_blend
       useMRT = renderer.capabilities.isWebGL2 && !!renderer.getContext().getExtension('EXT_float_blend');
-      ({ c: rtC, n: rtN } = makeTargets());
-      NRM = new THREE.ShaderMaterial({ // normaal (uit de afgeleiden) + diepte; bomen via instanceMatrix
+      RTS.f = makeTargets(); ({ c: rtC, n: rtN } = RTS.f);
+      NRM =new THREE.ShaderMaterial({ // normaal (uit de afgeleiden) + diepte; bomen via instanceMatrix
         vertexShader: `varying vec3 vV; void main() { vec4 p = vec4(position, 1.0);
           #ifdef USE_INSTANCING
           p = instanceMatrix * p;
@@ -1041,7 +1057,12 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
       pq = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), post); pq.frustumCulled = false; postScene.add(pq);
     }
     renderer.getDrawingBufferSize(dbs);
-    if (rtC.width !== dbs.x || rtC.height !== dbs.y) { rtC.setSize(dbs.x, dbs.y); rtN.setSize(dbs.x, dbs.y); }
+    // tijdens bewegen de scène kleiner tekenen in eigen, bewaarde doelen (canvas blijft gelijk → geen herallocatie); omlijning schaalt op
+    const low = false, sc = 1; // kleiner tekenen tijdens bewegen gaf strepen (omlijning/diepte opgeschaald met factor 1,5) → uit; mechaniek blijft voor later
+    ({ c: rtC, n: rtN } = RTS[low ? 'l' : 'f'] || (RTS[low ? 'l' : 'f'] = makeTargets()));
+    rtS.set(Math.round(dbs.x * sc), Math.round(dbs.y * sc));
+    if (rtC.width !== rtS.x || rtC.height !== rtS.y) { rtC.setSize(rtS.x, rtS.y); rtN.setSize(rtS.x, rtS.y); }
+    post.uniforms.tC.value = useMRT ? rtC.texture[0] : rtC.texture; post.uniforms.tN.value = rtN.texture;
     if (useMRT) { // één render: kleur (uitvoer 0, zonder lucht, leeg = alfa 0) + normaal/diepte (uitvoer 1)
       const bg = scene.background; scene.background = null;
       renderer.getClearColor(clr); const ca = renderer.getClearAlpha(); renderer.setClearColor(0x000000, 0);
@@ -1084,7 +1105,7 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
     // lijndikte/-sterkte naar zoom (pixels per meter): ver uit dun en zachter (kleine panden verdrinken anders in inkt), middenin 2 px, dichtbij weer fijn
     const ppm = dbs.y / (2 * isoHalf());
     // uW altijd 1: symmetrisch bemonsterd → lijn ±2 px; uW 2 gaf ±4 px (te dik bij startzoom)
-    post.uniforms.uRes.value.copy(dbs); post.uniforms.uW.value = 1;
+    post.uniforms.uRes.value.copy(rtS); post.uniforms.uW.value = 1; // uRes = maat van rtN (kleiner tijdens bewegen)
     post.uniforms.uK.value = 0.85 * Math.min(1, 0.4 + ppm * 0.3);
     const on = posts.filter(p => p.enabled !== false); for (const p of on) p.before?.();
     const steps = [post, ...on.map(p => p.material)];
@@ -1095,7 +1116,7 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
     let src = null, dst = rtA;
     steps.forEach((m, i) => {
       mq(i ? 'post ' + (m.name || i) : 'omlijning');
-      if (i) { const u = m.uniforms; if (u.tIn) u.tIn.value = src.texture; if (u.tN) u.tN.value = rtN.texture; if (u.uRes) u.uRes.value.copy(dbs); if (u.uTime) u.uTime.value = performance.now() / 1000; if (u.uHalf) u.uHalf.value = isoHalf(); }
+      if (i) { const u = m.uniforms; if (u.tIn) u.tIn.value = src.texture; if (u.tN) u.tN.value = rtN.texture; if (u.uRes) u.uRes.value.copy(dbs); if (u.uTime) u.uTime.value = performance.now() / 1000; if (u.uHalf) u.uHalf.value = isoHalf(); if (u.uMove) u.uMove.value = moveNow ? 1 : 0; }
       pq.material = m; renderer.setRenderTarget(i === steps.length - 1 ? null : dst); renderer.render(postScene, postCam);
       src = dst; dst = dst === rtA ? rtB : rtA;
     });
@@ -1169,7 +1190,9 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
 
   // ---------- Renderlus (alleen tekenen als er iets veranderde) ----------
   const ease = t => t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
-  let lastT = 0, moveT = 0, shadowDirty = true, shadowKey = '';
+  let lastT = 0, moveT = 0, shadowDirty = true, shadowKey = '', moveNow = false, lastZ = 0;
+  const lastCP = new THREE.Vector3(), lastCT = new THREE.Vector3();
+  H.moving = () => moveNow; // slepen/zoomen/vliegen bezig (tot 250 ms erna); bij stilstand emit('still')
   const PR = Math.min(devicePixelRatio, 2), PR_MOVE = Math.min(devicePixelRatio, 1);
   // H.animate((now, dt) => …): elke ±33 ms aanroepen zolang er iets beweegt (niet als de tab verborgen is); return false = stoppen.
   // Return 'post' = alleen de nabewerking veranderde (scène niet opnieuw renderen, alleen iso), 'none' = deze tik niets.
@@ -1179,6 +1202,31 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
   H.shadowDirty = () => { shadowDirty = true; redraw(); };
   const IDLE_MS = 120000; let inputT = performance.now();
   for (const ev of ['pointerdown', 'pointermove', 'wheel', 'keydown', 'touchstart']) addEventListener(ev, () => { const was = performance.now() - inputT > IDLE_MS; inputT = performance.now(); if (was) redraw(); }, { passive: true });
+  // iso: scrollen = één zoomstand verder (vloeiend, punt onder de muis blijft staan); trackpad: kleine stapjes optellen
+  let wAcc = 0, wT = 0, wLock = 0;
+  function isoWheel(e) {
+    if (camera !== ortho || !controls.enabled) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    const now = performance.now(); inputT = now;
+    if (now - wT > 250) wAcc = 0;
+    wT = now; wAcc += e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1);
+    if (Math.abs(wAcc) < 40 || now < wLock) return;
+    const dir = Math.sign(wAcc); wAcc = 0;
+    H.isoZoom(dir, e.clientX, e.clientY);
+  }
+  H.isoZoom = (dir, cx, cy) => { // dir +1 = verder uit, −1 = dichterbij; cx/cy = schermpunt dat blijft staan (anders midden)
+    if (camera !== ortho) return;
+    const h0 = isoHalf(), k = Math.max(0, Math.min(ISO_LEVELS.length - 1, levelOf(fly?.hb ?? h0) + dir)), h1 = ISO_LEVELS[k];
+    if (Math.abs(h1 - (fly?.hb ?? h0)) / h1 < 0.01) return;
+    wLock = performance.now() + 260;
+    let T = controls.target.clone();
+    if (cx !== undefined) { // ortho = affien: doel schaalt t.o.v. het punt onder de muis
+      const r = renderer.domElement.getBoundingClientRect(), P = new THREE.Vector3();
+      ndc.set((cx - r.left) / r.width * 2 - 1, -(cy - r.top) / r.height * 2 + 1); ray.setFromCamera(ndc, camera);
+      if (ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -T.y), P)) T = P.add(T.sub(P).multiplyScalar(h1 / h0));
+    }
+    const [x, y] = toRD(T); H.flyTo(x, y, { half: h1, ms: 380, arc: false }); emit('interact');
+  };
   function loop(now) {
     requestAnimationFrame(loop);
     if (M.on) { M.raf++; M.tick0 = performance.now(); meterShow(now); if (M.stress) dirty = true; }
@@ -1192,7 +1240,7 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
       controls.target.lerpVectors(fly.a, fly.b, e);
       const s = new THREE.Spherical(fly.sa.radius + (fly.sb.radius - fly.sa.radius) * e, fly.sa.phi + (fly.sb.phi - fly.sa.phi) * e, fly.sa.theta + (fly.sb.theta - fly.sa.theta) * e);
       // boog: halverwege iets hoger als het ver is
-      const far = fly.a.distanceTo(fly.b); s.radius += Math.sin(Math.PI * e) * Math.min(far * 0.5, 2500);
+      const far = fly.arc ? fly.a.distanceTo(fly.b) : 0; s.radius += Math.sin(Math.PI * e) * Math.min(far * 0.5, 2500);
       if (camera === ortho) { // iso: zoom i.p.v. afstand (zelfde boog: halverwege verder uit)
         const h = fly.ha + (fly.hb - fly.ha) * e + Math.sin(Math.PI * e) * Math.min(far * 0.5, 2500) * TAN21;
         ortho.zoom = ISO_H0 / h; ortho.updateProjectionMatrix(); s.radius = isoD(h);
@@ -1203,10 +1251,15 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
       dirty = true;
     }
     const ctl = controls.update();
-    if (ctl) dirty = true;
-    if ((ctl && !controls.autoRotate) || fly) moveT = now; // slepen/zoomen/vliegen (rustig ronddraaien telt niet)
+    // OrbitControls meldt bij ortho (iso) élke update als veranderd (zoomChanged) → zelf vergelijken, anders tekent iso eindeloos en is nooit 'stil'
+    const moved = ctl && (camera.position.distanceToSquared(lastCP) > 1e-8 || controls.target.distanceToSquared(lastCT) > 1e-8 || camera.zoom !== lastZ);
+    lastCP.copy(camera.position); lastCT.copy(controls.target); lastZ = camera.zoom;
+    if (moved) dirty = true;
+    if ((moved && !controls.autoRotate) || fly) moveT = now; // slepen/zoomen/vliegen (rustig ronddraaien telt niet)
     const moving = now - moveT < 250;
-    const prW = moving ? PR_MOVE : camera === ortho ? Math.min(PR, 1.5) : PR; // iso: max 1,5 (omlijning + nabewerking zijn per pixel)
+    if (moving !== moveNow) { moveNow = moving; dirty = true; if (!moving) { lastLod = 0; emit('still'); } } // stilstand: scherp + detail/tegels/grond bijwerken
+    // iso: canvas blijft op max 1,5 (omlijning + nabewerking zijn per pixel); kleiner tekenen tijdens bewegen gebeurt in draw() → geen canvas-herallocatie
+    const prW = camera === ortho ? Math.min(PR, 1.5) : moving ? PR_MOVE : PR;
     if (renderer.getPixelRatio() !== prW) { renderer.setPixelRatio(prW); dirty = true; }
     if (!area) return;
     // doel volgt het terrein (anders draai je om een punt in de lucht of onder de grond)
@@ -1268,9 +1321,12 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
   H.layerOn = k => !!layerOn[k];
   H.setLayer = (k, on) => {
     layerOn[k] = on ? 1 : 0; try { localStorage.setItem('h3d.layers', JSON.stringify(layerOn)); } catch {}
-    for (const o of layerObjs[k] || []) o.visible = !!on;
+    for (const o of layerObjs[k] || []) o.visible = layerVis(k, o);
     shadowDirty = true; emit('layer', k, !!on); redraw();
   };
+  // linten (wegen/spoor/water als 3D-strook) niet in iso: daar schildert iso/ground.js ze in dezelfde stijl op de grond (±6,5 ms GPU)
+  function layerVis(k, o) { return !!layerOn[k] && !(o.userData.ribbon && camera === ortho); }
+  function ribbonsForMode() { for (const k in layerObjs) for (const o of layerObjs[k]) if (o.userData.ribbon) o.visible = layerVis(k, o); }
   H.layers = d => { H.layerData = d; emit('layers', d); buildLayers(); };
   // hoogte alleen waar een vak geladen is (anders null → lint daar onderbreken)
   const hAt = (x, y) => H.chunks.get(Math.floor(x / area.km) + '_' + Math.floor(y / area.km))?.dem ? heightAt(x, y) : null;
@@ -1353,8 +1409,8 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
     const d = H.layerData;
     if (layersBuilt || !d || !allIn || !scene) return;
     layersBuilt = true;
-    const add = (k, mesh) => { mesh.receiveShadow = true; mesh.visible = !!layerOn[k]; scene.add(mesh); (layerObjs[k] ||= []).push(mesh); };
-    const addR = (k, geos, mat) => { for (const g of geos) add(k, new THREE.Mesh(g, mat)); };
+    const add = (k, mesh, ribbon) => { mesh.receiveShadow = true; mesh.userData.ribbon = !!ribbon; mesh.visible = layerVis(k, mesh); scene.add(mesh); (layerObjs[k] ||= []).push(mesh); };
+    const addR = (k, geos, mat) => { for (const g of geos) add(k, new THREE.Mesh(g, mat), true); };
     // water: beken als lint (4–8 m), vijvers plat op de laagste oeverhoogte
     const waterMat = ribbonMat({ color: '#7eaed3' }, -2);
     addR('water', ribbonGeo(d.water.map(([, ww, xy]) => ({ xy, w: ww === 'river' ? 12 : ww === 'canal' ? 10 : 5 })), 0.4), waterMat);
@@ -1373,7 +1429,7 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
       g.setAttribute('position', new THREE.Float32BufferAttribute(PP, 3));
       g.setAttribute('normal', new THREE.Float32BufferAttribute(new Float32Array(PP.length).map((_, k) => k % 3 === 1 ? 1 : 0), 3));
       g.setIndex(PI); g.computeBoundingSphere();
-      add('water', new THREE.Mesh(g, waterMat));
+      add('water', new THREE.Mesh(g, waterMat), true);
     }
     // spoor: 6 m met dwarsliggers
     addR('spoor', ribbonGeo(d.rail.map(([bridge, xy]) => ({ xy, w: 6, bridge })), 0.9), ribbonMat({ map: railTex() }, -3));
@@ -1411,6 +1467,7 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
   const TREE_SP = 10; // m tussen bomen (raster met verspringing)
   // lo = ver weg / klein in beeld (< TREE_LO_PPM px per m): alleen kroon, octaëder/5-kant (8 of 5 driehoeken i.p.v. 30/17). Onderkanten open (nooit zichtbaar).
   const TREE_LO_PPM = 1.5;
+  H.treeLo = d => dbs.y / (2 * d * TAN21) < TREE_LO_PPM; // iso/props.js: zelfde grens voor straatbomen
   function treeGeo(conifer, lo) { // boom van 1 m hoog: stam (donker) + kroon (wit, gekleurd per boom via instanceColor)
     const crown = conifer ? new THREE.ConeGeometry(0.22, 0.85, lo ? 5 : 7, 1, true).translate(0, 0.55, 0)
       : (lo ? new THREE.OctahedronGeometry(1, 0) : new THREE.IcosahedronGeometry(1, 0)).scale(0.32, 0.4, 0.32).translate(0, 0.58, 0);

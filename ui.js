@@ -168,6 +168,7 @@
       p.el.classList.toggle('named', free);
       if (free) boxes.push(b);
     }
+    H3D.pinBoxes = boxes; // labels.js: pins gaan voor
   }
   function markSelected() {
     for (const [k, p] of pinEls) p.el.classList.toggle('sel', !!state.sel && key(state.sel) === k);

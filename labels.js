@@ -62,7 +62,7 @@
     if (streets) {
       const cam = H3D.camera(), W = innerWidth, Hh = innerHeight, camD = H3D.cameraDistance() * H3D.lens();
       // pins en hun namen gaan voor: hun plek telt als bezet
-      for (const p of document.querySelectorAll('#pins .pin.named')) { const r = p.querySelector('em')?.getBoundingClientRect(); if (r) boxes.push([r.left, r.top, r.right, r.bottom]); }
+      for (const b of H3D.pinBoxes || []) boxes.push(b); // vakjes van pin-namen (ui.js placePins), niet uit de DOM meten: dat dwong elk beeld een layout af
       if (H3D.layerOn('wijken')) {
         const list = [];
         for (const it of [...places, ...stations]) {

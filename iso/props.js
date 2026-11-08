@@ -74,6 +74,8 @@
   const style = () => ST ||= {
     tree: [merge([part(cyl(0.05, 0.035, 0.3, 5), TRUNK), part(ico(1, 0), '#fff', { p: [0, 0.58, 0], s: [0.32, 0.4, 0.32], tint: 1 })]),
            merge([part(cyl(0.05, 0.035, 0.3, 5), TRUNK), part(cone(0.22, 0.85, 7), '#fff', { p: [0, 0.13, 0], tint: 1 })])],
+    treeLo: [merge([part(new THREE.OctahedronGeometry(1, 0), '#fff', { p: [0, 0.58, 0], s: [0.32, 0.4, 0.32], tint: 1 })]), // ver weg: alleen kroon (zoals bossen)
+             merge([part(cone(0.22, 0.85, 5), '#fff', { p: [0, 0.13, 0], tint: 1 })])],
     lamp: [merge([part(cyl(0.08, 0.06, 4.8, 6), '#4a4d55'), part(cyl(0.34, 0.12, 0.32, 4), '#4a4d55', { p: [0, 4.9, 0], r: [0, Math.PI / 4, 0] }), part(box(0.42, 0.06, 0.42), GLASS, { p: [0, 4.85, 0], tint: 1, glow: 1 })]),
            merge([part(cyl(0.12, 0.07, 8, 6), '#8a9098'), rod([0, 7.8, 0], [1.6, 8.1, 0], 0.05, '#8a9098', 5), part(box(0.8, 0.12, 0.3), '#8a9098', { p: [1.8, 8.0, 0] }), part(box(0.7, 0.04, 0.24), GLASS, { p: [1.8, 7.97, 0], tint: 1, glow: 1 })])],
     bench: benchGeo('#b08055', '#3d3f45'),
@@ -111,7 +113,7 @@
           #ifdef gl_FragColor
           gNrm = vec4(0.0);
           #endif
-          float r = length(vQ), a = r < 0.42 ? 0.55 : r < 0.82 ? 0.26 : 0.0;
+          float r = length(vQ), a = r < 0.42 ? 0.3 : r < 0.82 ? 0.13 : 0.0; // was 0,55/0,26: te fel
           gl_FragColor = vec4(vec3(1.0, 0.749, 0.451) * a * uNight, 1.0);
         }`,
       blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4,
@@ -124,7 +126,9 @@
     const km = H.areaInfo.km, out = new Map();
     const add = (key, arr, k, n) => { const i = Math.floor(arr[k] / km), j = Math.floor(arr[k + 1] / km), id = i + '_' + j; let b = out.get(id); if (!b) out.set(id, b = { trees: [], lamps: [], benches: [], gear: [] }); b[key].push(arr.slice(k, k + n)); };
     for (let k = 0; k < P.trees.length; k += 4) add('trees', P.trees, k, 4);
-    for (let k = 0; k < P.lamps.length; k += 5) add('lamps', P.lamps, k, 5);
+    // lantaarns buiten de gemeentegrens weg: hun lichtpoel (ShaderMaterial) wordt niet door de diorama-rand afgeknipt
+    const R = H.areaInfo.outline, inside = (x, y) => { let c = false; for (let a = 0, b = R.length - 1; a < R.length; b = a++) { const [xa, ya] = R[a], [xb, yb] = R[b]; if ((ya > y) !== (yb > y) && x < (xb - xa) * (y - ya) / (yb - ya) + xa) c = !c; } return c; };
+    for (let k = 0; k < P.lamps.length; k += 5) if (!R || inside(P.lamps[k], P.lamps[k + 1])) add('lamps', P.lamps, k, 5);
     for (let k = 0; k < P.benches.length; k += 4) add('benches', P.benches, k, 4);
     for (let k = 0; k < P.gear.length; k += 4) add('gear', P.gear, k, 4);
     return out;
@@ -133,6 +137,30 @@
   // ---------- vak opbouwen ----------
   const m4 = new THREE.Matrix4(), qq = new THREE.Quaternion(), sc = new THREE.Vector3(), ps = new THREE.Vector3(), col = new THREE.Color();
   const WARM = new THREE.Color('#ffbf73');
+  // [geo, matrix, kleur|null] → één geometrie; kleur per exemplaar vooraf in 'color' gebakken (× vertexkleur) waar aTint = 1 (zoals de shader bij instancing doet)
+  function bake(list) {
+    let n = 0; for (const [g] of list) n += g.attributes.position.count;
+    const P = new Float32Array(n * 3), N = new Float32Array(n * 3), C = new Float32Array(n * 3), T = new Float32Array(n), G = new Float32Array(n);
+    const v = new THREE.Vector3(), nm = new THREE.Matrix3();
+    let o = 0;
+    for (const [g, M, c] of list) {
+      const a = g.attributes, m = a.position.count; nm.getNormalMatrix(M);
+      for (let k = 0; k < m; k++) {
+        const i = o + k, t = a.aTint.array[k];
+        v.fromBufferAttribute(a.position, k).applyMatrix4(M); P[i * 3] = v.x; P[i * 3 + 1] = v.y; P[i * 3 + 2] = v.z;
+        v.fromBufferAttribute(a.normal, k).applyMatrix3(nm).normalize(); N[i * 3] = v.x; N[i * 3 + 1] = v.y; N[i * 3 + 2] = v.z;
+        const r = a.color.array[k * 3], gg = a.color.array[k * 3 + 1], bb = a.color.array[k * 3 + 2];
+        const w = c && t; C[i * 3] = w ? r * c.r : r; C[i * 3 + 1] = w ? gg * c.g : gg; C[i * 3 + 2] = w ? bb * c.b : bb;
+        T[i] = t; G[i] = a.aGlow.array[k];
+      }
+      o += m;
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(P, 3)); g.setAttribute('normal', new THREE.BufferAttribute(N, 3)); g.setAttribute('color', new THREE.BufferAttribute(C, 3));
+    g.setAttribute('aTint', new THREE.BufferAttribute(T, 1)); g.setAttribute('aGlow', new THREE.BufferAttribute(G, 1));
+    g.computeBoundingSphere();
+    return g;
+  }
   const rad = d => (90 - d) * Math.PI / 180; // richting° (0 = noord, met de klok mee) → draaiing om y
   const VAK = []; // { c, group, trees: [im], small: [im], pool }
 
@@ -163,14 +191,17 @@
         const h = t[3] || (kind ? 9 : 7) + rnd() * 6;
         at(t[0], t[1], -0.2, rnd() * 6.28, 1); sc.set(h * (0.85 + rnd() * 0.3), h, h * (0.85 + rnd() * 0.3));
       }, () => col.setHSL(...treeCol(rnd, kind)));
-      if (im) v.trees.push(im);
+      if (im) { im.geoHi = st.tree[kind]; im.geoLo = st.treeLo[kind]; v.trees.push(im); }
     }
-    for (const kind of [0, 1]) { // lantaarns werpen geen schaduw (dun, en veel)
-      const im = inst(st.lamp[kind], b.lamps.filter(l => l[2] === kind), l => at(l[0], l[1], 0, rad(l[4]), 1), () => col.copy(WARM));
-      if (im) v.small.push(im);
+    // klein spul: per vak samengebakken tot 2 gewone meshes (lantaarns zonder schaduw / banken + toestellen) i.p.v. tot 11 InstancedMeshes
+    const lampB = [], restB = [];
+    for (const l of b.lamps) { at(l[0], l[1], 0, rad(l[4]), 1); lampB.push([st.lamp[l[2]], m4.compose(ps, qq, sc).clone(), WARM]); }
+    for (const x of b.benches) { at(x[0], x[1], 0, rad(x[3]), 1); restB.push([st.bench[x[2]], m4.compose(ps, qq, sc).clone(), null]); }
+    for (const g of b.gear) { at(g[0], g[1], 0, rad(g[3]), 1); restB.push([st.gear[g[2]], m4.compose(ps, qq, sc).clone(), null]); }
+    for (const [L, noShadow] of [[lampB, true], [restB, false]]) {
+      if (!L.length) continue;
+      const m = new THREE.Mesh(bake(L), PMAT); m.userData.noShadow = noShadow; group.add(m); v.small.push(m);
     }
-    for (const kind of [0, 1]) { const im = inst(st.bench[kind], b.benches.filter(x => x[2] === kind), x => at(x[0], x[1], 0, rad(x[3]), 1)); if (im) v.small.push(im); }
-    for (let kind = 0; kind < st.gear.length; kind++) { const im = inst(st.gear[kind], b.gear.filter(g => g[2] === kind), g => at(g[0], g[1], 0, rad(g[3]), 1)); if (im) v.small.push(im); }
     // lichtpoel: per lamp een schijf (midden + 2 ringen × 16) op het terrein, onder de kap (arm richting straat)
     if (b.lamps.length) {
       const Pp = [], Q = [], I = [], seg = 16;
@@ -182,7 +213,7 @@
           const a = k / seg * 6.283, x = cx + Math.cos(a) * R0 * f, y = cy + Math.sin(a) * R0 * f;
           Pp.push(x - O[0], hAt(x, y) + 0.15, -(y - O[1])); Q.push(Math.cos(a) * f, Math.sin(a) * f);
         }
-        for (let k = 0; k < seg; k++) { const a = base + 1 + k, bb = base + 1 + (k + 1) % seg; I.push(base, bb, a, a, bb, a + seg, bb, bb + seg, a + seg); }
+        for (let k = 0; k < seg; k++) { const a = base + 1 + k, bb = base + 1 + (k + 1) % seg; I.push(base, a, bb, a, a + seg, bb, bb, a + seg, bb + seg); } // tegen de klok in van boven gezien (anders achterkant boven → weggeknipt)
       }
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.Float32BufferAttribute(Pp, 3)); g.setAttribute('aQ', new THREE.Float32BufferAttribute(Q, 2)); g.setIndex(I);
@@ -200,8 +231,9 @@
   // ---------- uitdunnen naar afstand (gelijkwaardige afstand = chunkDist × lens, zoals bossen) ----------
   function detail(v) {
     const d = H.chunkDist(v.c) * H.lens();
-    const f = d < 1800 ? 1 : d < 4000 ? 1 / 3 : 0, cast = d < 1800; let ch = false;
+    const f = d < 1800 ? 1 : d < 4000 ? 1 / 3 : 0, cast = d < 1800, lo = !!H.treeLo?.(d); let ch = false;
     for (const im of v.trees) {
+      const g = lo ? im.geoLo : im.geoHi; if (im.geometry !== g) { im.geometry = g; ch = true; }
       const n = Math.round(im.full * f);
       if (im.count !== n) { im.count = n; ch = true; }
       if (im.castShadow !== cast) { im.castShadow = cast; ch = true; }
@@ -209,7 +241,7 @@
     const near = d < 2200; // lantaarns, banken, toestellen: klein → ver weg weg
     for (const im of v.small) {
       if (im.visible !== near) { im.visible = near; ch = true; }
-      const cs = cast && im.geometry !== ST.lamp[0] && im.geometry !== ST.lamp[1];
+      const cs = cast && !im.userData.noShadow;
       if (im.castShadow !== cs) { im.castShadow = cs; ch = true; }
     }
     v.group.visible = d < 6000; // poelen blijven langer staan: straten als kralensnoeren

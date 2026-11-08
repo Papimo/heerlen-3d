@@ -11,7 +11,7 @@
     let c = plainOf.get(m); if (c) return c;
     c = m.clone(); const d = m.userData.dioPrev;
     c.onBeforeCompile = d ? d.prev : m.onBeforeCompile; c.customProgramCacheKey = d ? d.key : m.customProgramCacheKey.bind(m);
-    uncut.add(c); plainOf.set(m, c); return c;
+    c.userData.dioOrig = m; uncut.add(c); plainOf.set(m, c); return c;
   }
   const _bb = new THREE.Box3();
   function inside(o) {
@@ -209,7 +209,7 @@
     nextScan = performance.now() + 3000;
     H.scene.traverse(o => {
       if (!o.isMesh || mine.has(o) || o.userData.chunk) return; // vakken: terrein via patchTerrain, panden via cutChunk
-      if (!Array.isArray(o.material) && !uncut.has(o.material) && inside(o)) { o.material = plain(o.material); return; }
+      if (!Array.isArray(o.material) && !o.material.isShaderMaterial && !uncut.has(o.material) && inside(o)) { o.material = plain(o.material); return; } // ShaderMaterial: clone kopieert uniforms (bv. uNight bevriest) en wordt toch niet afgeknipt
       for (const m of [].concat(o.material)) cutMaterial(m);
       if (o.castShadow && !o.customDepthMaterial) o.customDepthMaterial = depthCut;
     });
@@ -240,6 +240,6 @@
     if (!ensure()) return;
     const want = U.uIso.value > 0.5;
     if (want !== active) setActive(want);
-    else if (active && performance.now() > nextScan) scan();
+    else if (active && performance.now() > nextScan && !H.moving?.()) scan(); // hele scène doorlopen: niet tijdens bewegen
   });
 })();
