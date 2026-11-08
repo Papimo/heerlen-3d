@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Heerlen 3D</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="view"></div>
+<div id="pins"></div>
+
+<header id="top">
+  <div class="brand"><b>Heerlen</b><span>3D</span></div>
+  <div id="search">
+    <input id="q" type="search" autocomplete="off" placeholder="Zoek koffie, restaurant, winkel, straat…  ( / )">
+    <button id="qx" title="Wissen">×</button>
+    <div id="results" hidden></div>
+  </div>
+</header>
+<nav id="chips"></nav>
+
+<div id="tools">
+  <div id="styles" class="seg"></div>
+  <div class="seg">
+    <button data-mode="iso" title="Isometrisch, tekenfilm-look: draaien per kwartslag met Q / E">Iso</button>
+    <button data-view="thuis" title="Terug naar het centrum">Centrum</button>
+  </div>
+  <details id="oldmodes" class="seg"><summary title="Oude weergaven (worden niet meer bijgewerkt)">Oud</summary><div>
+    <button data-mode="plat" title="Recht van boven, bijna plat (als een kaart)">Plat</button>
+    <button data-mode="3d" title="Vrij bewegen: slepen = schuiven, rechts = draaien">3D</button>
+    <button data-mode="rond" title="Rustig rond een punt draaien">Rondkijken</button>
+  </div></details>
+  <div id="isorot" class="seg"><button data-rot="-1" title="Kwartslag linksom (Q)">⟲</button><button data-rot="1" title="Kwartslag rechtsom (E)">⟳</button></div>
+  <button id="openf" class="seg" title="Dichte plekken grijs maken (volgens de openingstijden in OpenStreetMap)">Nu open</button>
+  <details id="layers" class="seg"><summary title="Lagen aan/uit">Lagen</summary><div></div></details>
+  <button id="dim" class="seg" title="Andere gebouwen vager maken, zodat de plekken nog meer opvallen">Dimmen</button>
+  <button id="light" class="seg" title="Licht: dag, avond, of zoals het nu buiten is">☀ Dag</button>
+  <button id="tour" class="seg" title="Rondleiding: vlieg een voor een langs je pins (of de plekken in beeld)">▶ Rondleiding</button>
+  <button id="compass" data-view="noord" title="Noord boven"><i id="needle"><b>N</b></i></button>
+  <details id="menu">
+    <summary title="Mijn pins">⋯</summary>
+    <div>
+      <button data-m="export">Mijn pins exporteren</button>
+      <button data-m="import">Pins importeren…</button>
+      <p class="help"><b>Bediening</b><br>Slepen = schuiven · rechts slepen / twee vingers = draaien en kantelen · scrollen = zoomen · klik op een pand of plek voor info.<br>Iso: slepen = schuiven · Q / E (of ⟲ ⟳) = kwartslag draaien.</p>
+    </div>
+  </details>
+  <input id="importfile" type="file" accept=".json,application/json" hidden>
+</div>
+
+<aside id="card" hidden></aside>
+<div id="progress" hidden><i></i><span></span></div>
+<footer id="attr"></footer>
+<div id="nowebgl">Deze browser kan geen 3D (WebGL) tonen.</div>
+
+<script src="vendor/three.js"></script>
+<script>window.THREE || document.write('<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"><\/script>')</script>
+<script src="vendor/OrbitControls.js"></script>
+<script src="app.js"></script>
+<script src="data/area.js"></script>
+<script src="data/pois.js"></script>
+<script src="data/layers.js"></script>
+<script src="ui.js"></script>
+<script src="labels.js"></script>
+<!-- iso-uitbreidingen (plan_iso.md): elk bestand haakt in via H3D.on / patchTerrain / addPost / animate; data eerst, dan code -->
+<script src="data/ground.js" onerror="this.remove()"></script>
+<script src="data/props.js" onerror="this.remove()"></script>
+<script src="data/traffic.js" onerror="this.remove()"></script>
+<script src="iso/ground.js"></script>
+<script src="iso/diorama.js"></script>
+<script src="iso/sky.js"></script>
+<script src="iso/props.js"></script>
+<script src="iso/traffic.js"></script>
+<script src="iso/models.js"></script>
+</body>
+</html>
