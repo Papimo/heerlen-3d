@@ -66,6 +66,7 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
     sel: new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.45, depthTest: true, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 }),
   };
   let dirty = true;
+  const QS = new URLSearchParams(location.search); // testschakelaars: ?nopost ?noshadow
   const redraw = () => { dirty = true; };
   H.redraw = redraw;
   // na de upload naar de GPU de kopie in het werkgeheugen weggooien (canvas → 1×1, DataTexture-data → null). Opnieuw tekenen = nieuw canvas/nieuwe textuur
@@ -363,7 +364,7 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
     const mv = moveNow; // tijdens bewegen alleen grover (goedkoper) maken; fijner, schaduw en emit('detail') pas bij stilstand
     let ch = setWallMask(isoWallMask());
     const dist = viewDist();
-    const shadows = sun.castShadow ? dist < SHADOW_OFF + 300 : dist < SHADOW_OFF - 300; // marge: niet steeds wisselen
+    const shadows = !QS.has('noshadow') && (sun.castShadow ? dist < SHADOW_OFF + 300 : dist < SHADOW_OFF - 300); // marge: niet steeds wisselen; ?noshadow = test (strepen op mobiel)
     if (shadows !== sun.castShadow && !mv) { sun.castShadow = shadows; ch = true; }
     const S = shadowExt() + 200;
     // iso: één terreinstap voor alle vakken naar pixels per meter (ortho = overal dezelfde schaal): rastercel 10 m ≥ ±6 px, anders grover
@@ -1017,7 +1018,19 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
     if (useMRT) { const c = new THREE.WebGLMultipleRenderTargets(4, 4, 2, { type: THREE.HalfFloatType }), t = c.texture[1]; Object.assign(t, nOpt); delete t.depthBuffer; return { c, n: { texture: t, setSize() {} } }; }
     return { c: new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType }), n: new THREE.WebGLRenderTarget(4, 4, nOpt) };
   }
+  // iso-omlijning vraagt float32-doelen + highp in de fragmentshader (normaal zit exact in 24 bits gepakt, diepte in meters).
+  // Veel telefoons kunnen dat niet → ruis → strepen. Dan iso zonder nabewerking (cel-look blijft, geen inktlijnen/wolken/tilt). ?nopost = forceren (test)
+  let postOk = null;
+  function canPost() {
+    if (postOk !== null) return postOk;
+    const gl = renderer.getContext(), hp = gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER, gl.HIGH_FLOAT);
+    postOk = !QS.has('nopost') && renderer.capabilities.isWebGL2 && !!gl.getExtension('EXT_color_buffer_float') && !!hp && hp.precision >= 23;
+    if (!postOk) console.info('heerlen-3d: iso zonder nabewerking (float32/highp ontbreekt of ?nopost)');
+    return postOk;
+  }
+  H.postOk = () => canPost();
   function draw() {
+    if (camera === ortho && !canPost()) { camera.layers.enable(1); renderer.render(scene, camera); camera.layers.set(0); return; } // bewegende laag (verkeer) direct mee
     if (camera !== ortho) { renderer.render(scene, camera); return; }
     if (!rtC) {
       // geen MSAA: omlijning dekt de randen (stap 9). Diepte heeft float32 nodig (half-float gaf streepruis); blenden op float32 vraagt EXT_float_blend
