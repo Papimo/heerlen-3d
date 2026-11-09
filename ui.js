@@ -384,16 +384,16 @@
   const FX = { // naam, icoon, kosten 1–3, uitleg
     wolken: ['Wolkschaduw', '☁', 2, '±1,3 ms per beeld'], lucht: ['Ballon en vogels', '🎈', 1, 'af en toe iets in de lucht'], randen: ['Zachte randen', '◎', 3, '±2,1 ms per beeld · toets T'],
     zuinig: ['Zuinig', '🍃', 0, 'animaties 10/s i.p.v. 20/s, water stil — rustiger voor laptop/accu'],
-    inkt: ['Inktlijnen', '✒', 0, 'iso: donkere lijn om panden i.p.v. een licht randje'], bouwjaar: ['Daken op bouwjaar', '🏠', 0, 'oud = rode pannen, jaren 40–70 = oranje, nieuw = antraciet; gevels baksteen of licht (uit = Mijnstreek-palet)'],
+    inkt: ['Inktlijnen', '✒', 0, 'iso: volle donkere lijn om panden en vouwen i.p.v. een dunne silhouetlijn'], film: ['Filmisch licht', '🎞', 2, 'iso: lagere zon, filmische kleuren, gloed op glans en glas, waas in de verte (zwaarder voor de GPU)'], bouwjaar: ['Daken op bouwjaar', '🏠', 0, 'oud = rode pannen, jaren 40–70 = oranje, nieuw = antraciet; gevels baksteen of licht (uit = Mijnstreek-palet)'],
     verkeer: ['Bussen en treinen', '🚌', 1, '±0,2 ms per beeld'], props: ['Straatmeubilair', '🌳', 2, 'straatbomen, lantaarns, bankjes'], ao: ['Contactschaduw', '◐', 1, 'één keer gebakken, daarna bijna gratis'], diorama: ['Diorama-rand', '▱', 1, 'aardlagen langs de gemeentegrens'],
   };
   const GRP = { sfeer: ['wolken', 'lucht', 'randen'], stad: ['verkeer', 'props', 'ao', 'diorama'] };
   const FXK_ALL = [...GRP.sfeer, ...GRP.stad];
   const fxRow = k => { const [n, ic, c, t] = FX[k]; return `<label title="${t}"><span class="ic">${ic}</span>${n}<span class="cost">${c ? [1, 2, 3].map(i => `<i class="${i <= c ? 'f' : ''}"></i>`).join('') : ''}</span><input type="checkbox" class="sw" data-fx="${k}"${H3D.fxOn(k) ? ' checked' : ''}></label>`; };
-  const LIGHTS = { dag: '☀ Dag', avond: '🌙 Avond', nu: '🕒 Nu' };
+  const LIGHTS = { dag: '☀ Dag', schemer: '🌇 Schemer', avond: '🌙 Nacht', nu: '🕒 Nu' };
   const SEASONS = { lente: '🌸 Lente', zomer: '🌳 Zomer', herfst: '🍂 Herfst', winter: '❄ Winter' };
   const sfeer = $('g-sfeer').querySelector('div'), stad = $('g-stad').querySelector('div');
-  sfeer.innerHTML = `<h4>Licht</h4><div class="lseg">${Object.entries(LIGHTS).map(([k, l]) => `<button data-light="${k}">${l}</button>`).join('')}</div><h4>Seizoen</h4><div class="lseg">${Object.entries(SEASONS).map(([k, l]) => `<button data-season="${k}">${l}</button>`).join('')}</div><h4>Stijl</h4>${fxRow('inkt')}${fxRow('bouwjaar')}<div class="sep2"></div><h4>Effecten</h4>${GRP.sfeer.map(fxRow).join('')}<div class="sep2"></div>${fxRow('zuinig')}`;
+  sfeer.innerHTML = `<h4>Licht</h4><div class="lseg">${Object.entries(LIGHTS).map(([k, l]) => `<button data-light="${k}">${l}</button>`).join('')}</div><h4>Seizoen</h4><div class="lseg">${Object.entries(SEASONS).map(([k, l]) => `<button data-season="${k}">${l}</button>`).join('')}</div><h4>Stijl</h4>${fxRow('film')}${fxRow('inkt')}${fxRow('bouwjaar')}<div class="sep2"></div><h4>Effecten</h4>${GRP.sfeer.map(fxRow).join('')}<div class="sep2"></div>${fxRow('zuinig')}`;
   stad.innerHTML = GRP.stad.map(fxRow).join('') + '<p class="hint">Contactschaduw wordt één keer gebakken (±10 s), daarna bijna gratis.</p>';
   const showLight = () => sfeer.querySelectorAll('[data-light]').forEach(b => b.classList.toggle('on', b.dataset.light === H3D.getLight()));
   const showSeason = () => sfeer.querySelectorAll('[data-season]').forEach(b => b.classList.toggle('on', b.dataset.season === H3D.getSeason?.()));
@@ -448,7 +448,7 @@
 
   // ---------- Kaartstijl, weergave, kompas ----------
   function renderStyles() { // kaartstijl-knoppen zijn weg (iso tekent eigen grond); alleen de bronvermelding
-    $('attr').innerHTML = `${H3D.STYLES[H3D.getStyle()].attr} · Gebouwen © <a href="https://3dbag.nl" target="_blank" rel="noopener">3D BAG</a> · Terrein AHN · Plekken © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>`;
+    $('attr').innerHTML = `${H3D.STYLES[H3D.getStyle()].attr} · Gebouwen © <a href="https://3dbag.nl" target="_blank" rel="noopener">3D BAG</a> · Terrein AHN · Plekken © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> · v${H3D.VERSION}`;
   }
   const showMode = () => {}; // modusknoppen Plat/3D/Rondkijken zijn weg; iso is de enige weergave
   const dimBtn = $('dim'), showDim = () => dimBtn.classList.toggle('on', H3D.getDim());

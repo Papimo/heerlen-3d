@@ -7,7 +7,7 @@
   const H = typeof H3D !== 'undefined' ? H3D : null;
   if (!H) return;
   const REV_S = 1.3; // s van lijntekening naar volle kleur (wolken trekken in de eerste ±0,6 s weg)
-  const G_WAIT = 4; // s: grond na zoveel tijd nog niet geschilderd (geen iso/ground.js, fout) → toch onthullen
+  const G_WAIT = 8; // s: grond/panden na zoveel tijd nog niet klaar (geen iso/ground.js, fout) → toch onthullen
 
   let grid = null, tex, data, post, cover = 0;
   const pend = new Map(); // texel → starttijd (s) onthullen (= grond geschilderd)
@@ -123,13 +123,18 @@
     return need ? 'post' : 'none'; // ook stil wachten: wolken drijven door
   }
 
-  // onthullen pas als de grond geschilderd is (iso/ground.js 'ground'); terrein alleen = papier + wolken blijven
+  // onthullen pas als de grond geschilderd is (iso/ground.js 'ground') én de panden er staan ('chunk'); terrein alleen = papier + wolken blijven
   const kOf = c => (c.j - grid.j0) * grid.W + (c.i - grid.i0);
+  const gOk = new Set(), bOk = new Set();
   function start(k) { terr.delete(k); if (data[k * 4] === 0 && !pend.has(k)) pend.set(k, now()); }
+  function check(k) { if (gOk.has(k) && bOk.has(k)) start(k); }
   H.on('terrain', c => {
     if (!grid && !init()) return;
     const k = kOf(c);
-    if (H.groundReady?.(c)) start(k); else if (data[k * 4] === 0 && !pend.has(k)) terr.set(k, now());
+    if (H.groundReady?.(c)) gOk.add(k);
+    if (data[k * 4] === 0 && !pend.has(k) && !terr.has(k)) terr.set(k, now());
+    check(k);
   });
-  H.on('ground', c => { if (grid || init()) start(kOf(c)); });
+  H.on('ground', c => { if (grid || init()) { const k = kOf(c); gOk.add(k); check(k); } });
+  H.on('chunk', c => { if (grid || init()) { const k = kOf(c); bOk.add(k); check(k); } });
 })();
