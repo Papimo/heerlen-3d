@@ -17,6 +17,7 @@
     area: { plein: '#e6d7bb', asfalt: '#9a9ea5', fietsvlak: '#c9786a', parkeren: '#aeb0b4', water: '#5aa9d6', zwembad: '#59c3e0', baan: '#c8664b', perron: '#c9c3b8' },
     line: { snelweg: '#80858e', hoofd: '#8b9098', weg: '#979ba2', straat: '#a4a7ad', erfweg: '#bcb5a8', dienst: '#b0b2b6', voet: '#ddd0b6', pad: '#e0d3b9',
       stoep: '#d0c9bd', fiets: '#c46f62', zand: '#d9c08f', beek: '#5aa9d6', spoor: '#9a8f84', tram: '#a59c92' },
+    grind: '#d8cdb2', // grindpaden begraafplaats
     pitch: { gras: '#8cc96a', kunstgras: '#5fae5a', hard: '#6f93a8', gravel: '#c8653f', zand: '#e1c993', beton: '#c9c6c0' },
     chalk: '#ffffff', mow: 0.06, rails: '#5c544c', bridge: '#5f574e',
     // oude lint-look (app.js): [wegdek, stoeprand]; erf/voetgangers zachter. extra = lint was iets breder dan de OSM-breedte, kerb = deel binnen de stoeprand (26/32)
@@ -40,6 +41,7 @@
     if (ALL) return ALL;
     const A = H.areaInfo, O = A.origin, q = GD.q;
     ALL = { land: [], area: [], pitch: [], line: [], cross: [], jn: [], isl: [] };
+    ALL.park = GD.park || []; ALL.grave = GD.grave || []; // vakindeling/begraafplaats-rijen: blijven in GD staan (iso/props.js zet er auto's/stenen op)
     const dec = d => { const a = new Float64Array(d.length); let x = 0, y = 0; for (let k = 0; k < d.length; k += 2) { x += d[k]; y += d[k + 1]; a[k] = O[0] + x * q; a[k + 1] = O[1] + y * q; } return a; };
     GD.land.forEach(([c, rs], n) => ALL.land.push({ c, rs: rs.map(dec), n }));
     GD.area.forEach(([c, rs]) => ALL.area.push({ c, rs: rs.map(dec) }));
@@ -106,6 +108,30 @@
   // grasvlakken minder leeg: zachte vlekken licht/donker (maaipatroon, droge plekken), dichtbij grasplukjes en in weides/parken wat bloemetjes
   const GRASSY = { gras: 1, weide: 1, park: 1, sport: 1, kerkhof: 1, tuin: 1, boomgaard: 1, struik: 1 };
   const FLOWERS = { weide: 1, park: 1, tuin: 1 };
+  // parkeervakken (witte U-lijnen, fijn) + grindpaden begraafplaats; data [cx2, cy2, hoek·1000, …] zie tools/build-ground.cjs layoutPark/layoutGrave
+  function parkGrave(x, F) {
+    const O = H.areaInfo.origin, q = GD.q;
+    x.lineCap = 'butt';
+    for (const g of F.grave) {
+      const c = Math.cos(g[2] / 1000), s = Math.sin(g[2] / 1000), cx = O[0] + g[0] * q, cy = O[1] + g[1] * q, P = g[5];
+      x.beginPath();
+      for (let k = 0; k < P.length; k += 3) { const v = P[k] * q; [P[k + 1], P[k + 2]].forEach((u2, i) => { const u = u2 * q, px = cx + u * c - v * s - X0, py = cy + u * s + v * c - Y0; i ? x.lineTo(px, py) : x.moveTo(px, py); }); }
+      x.lineWidth = 2; x.strokeStyle = ST.grind; x.stroke();
+    }
+    x.fine = 1; x.lineWidth = 0.12; x.strokeStyle = ST.road.paint; x.globalAlpha = 0.9;
+    for (const g of F.park) {
+      const c = Math.cos(g[2] / 1000), s = Math.sin(g[2] / 1000), cx = O[0] + g[0] * q, cy = O[1] + g[1] * q, R = g[3];
+      const pt = (u, v, mv) => { const px = cx + u * c - v * s - X0, py = cy + u * s + v * c - Y0; mv ? x.moveTo(px, py) : x.lineTo(px, py); };
+      x.beginPath();
+      for (let k = 0; k < R.length; k += 3) {
+        const u0 = R[k] / 2, vf = R[k + 1] / 2, n = Math.abs(R[k + 2]), vb = vf + Math.sign(R[k + 2]) * 5;
+        pt(u0, vf, 1); pt(u0, vb); pt(u0 + n * 2.5, vb); pt(u0 + n * 2.5, vf);
+        for (let i = 1; i < n; i++) { pt(u0 + i * 2.5, vf, 1); pt(u0 + i * 2.5, vb); }
+      }
+      x.stroke();
+    }
+    x.fine = 0; x.globalAlpha = 1; x.lineCap = 'round';
+  }
   function pitchLines(x, f) {
     const r = f.box; if (!r) return;
     const O = H.areaInfo.origin, [cx, cy, L, W, ang] = r, sp = f.c;
@@ -199,7 +225,7 @@
       pitchLines(x, f); if (Y()) yield;
     }
     for (const f of F.area) if (isWat(f)) { x.fillStyle = ST.area[f.c]; path(x, f.rs); x.fill('evenodd'); }
-    yield;
+    parkGrave(x, F); yield;
     // lijnen: beken, wegen, spoor, rotondes; bruggen als laatste (met donkere rand)
     const stroke = (f, wd, col, mp = 0) => { const a = f.a; x.beginPath(); x.moveTo(a[0] - X0, a[1] - Y0); for (let k = 2; k < a.length; k += 2) x.lineTo(a[k] - X0, a[k + 1] - Y0); x.lineWidth = wd; x.minPx = mp; x.strokeStyle = col; x.stroke(); x.minPx = 0; };
     const offset = (a, d) => { // polylijn d m opzij (links +), hoeken via gemiddelde normaal
@@ -483,21 +509,54 @@
   H.groundMB = () => G.mb || 0;
 
   // ---------- opbouw in stukjes (±12 ms per tik) ----------
+  // eerst in een worker (zelfde tekencode via toString, three.js via importScripts); lukt dat niet (file://, fout, >90 s) → hoofddraad in stukjes
   function startBuild() {
     if (G.gen || G.ready) return;
-    const t0 = performance.now(), B = Buf(), x = VCtx(B), F = prep();
+    const t0 = performance.now();
     X0 = H.areaInfo.origin[0]; Y0 = H.areaInfo.origin[1];
+    G.gen = 'worker';
+    buildInWorker().then(o => {
+      GD.land = GD.area = GD.pitch = GD.line = GD.cross = []; // ruwe data niet meer nodig (park/grave blijven voor iso/props.js)
+      finish(o, t0, 'worker');
+    }).catch(e => { console.info('heerlen-3d grond: worker lukt niet → hoofddraad', e?.message || e); buildMain(t0); });
+  }
+  function buildInWorker() {
+    return new Promise((ok, no) => {
+      if (typeof Worker === 'undefined' || location.protocol === 'file:') return no('geen worker / file://'); // importScripts van file:// mag niet vanuit een blob-worker
+      const arrows = { path, pick, shade, isWat, quad, rect, scaleRing, V2, pip, bbR };
+      const src = `importScripts(${JSON.stringify(new URL('vendor/three.js', document.baseURI).href)});
+        const ST = ${JSON.stringify(ST)}, RANK = ${JSON.stringify(RANK)}, GRASSY = ${JSON.stringify(GRASSY)}, FLOWERS = ${JSON.stringify(FLOWERS)}, DASH = ${JSON.stringify(DASH)}, COL = new Map();
+        let X0 = 0, Y0 = 0, ALL = null, GD = null, H = null;
+        ${Object.entries(arrows).map(([k, f]) => `const ${k} = ${f};`).join('\n')}
+        ${[prep, junctions, islands, parkGrave, pitchLines, pitchSurf, teeth, islands2D, zebras, paintAll, rgba, Buf, evenOdd, VCtx].map(f => f.toString()).join('\n')}
+        onmessage = e => {
+          GD = e.data.gd; H = { areaInfo: { origin: e.data.origin } }; X0 = e.data.origin[0]; Y0 = e.data.origin[1];
+          try { const B = Buf(), x = VCtx(B), F = prep(); for (const _ of paintAll(x, F)); const o = B.out(); postMessage(o, [o.P.buffer, o.C.buffer, o.K.buffer, o.O.buffer, o.U.buffer, o.I.buffer]); }
+          catch (err) { postMessage({ err: String(err && err.stack || err) }); }
+        };`;
+      let w, url;
+      try { url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' })); w = new Worker(url); } catch (e) { return no(e); }
+      const end = () => { clearTimeout(to); w.terminate(); URL.revokeObjectURL(url); };
+      const to = setTimeout(() => { end(); no('time-out'); }, 90000);
+      w.onerror = e => { e.preventDefault?.(); end(); no(e.message || 'worker-fout'); };
+      w.onmessage = e => { end(); e.data.err ? no(e.data.err) : ok(e.data); };
+      const { q, land, area, pitch, line, cross, park, grave } = GD;
+      w.postMessage({ origin: H.areaInfo.origin, gd: { q, land, area, pitch, line, cross, park, grave } });
+    });
+  }
+  function buildMain(t0) {
+    const B = Buf(), x = VCtx(B), F = prep();
     G.gen = paintAll(x, F);
     const tick = () => {
       const t = performance.now();
-      try { while (performance.now() - t < 12) if (G.gen.next().done) return finish(B, t0); }
+      try { while (performance.now() - t < 12) if (G.gen.next().done) return finish(B.out(), t0, 'hoofddraad'); }
       catch (e) { console.error('heerlen-3d grond:', e); return; }
       setTimeout(tick, 0);
     };
     tick();
   }
-  function finish(B, t0) {
-    const o = B.out(), g = new THREE.BufferGeometry();
+  function finish(o, t0, how) {
+    const g = new THREE.BufferGeometry();
     const at = (a, k, nm) => new THREE.BufferAttribute(a, k, nm).onUpload(function () { this.array = null; }); // JS-kopie weg na upload
     g.setAttribute('position', at(o.P, 2)); g.setAttribute('aC', at(o.C, 4, true)); g.setAttribute('aK', at(o.K, 4, false));
     g.setAttribute('aO', at(o.O, 2, true)); g.setAttribute('aU', at(o.U, 1, false)); g.setIndex(at(o.I, 1));
@@ -505,7 +564,7 @@
     const m = new THREE.Mesh(g, GMAT); m.rotation.x = -Math.PI / 2; m.frustumCulled = false; gScene.add(m); // (x, y) → wereld (x, 0, −y)
     G.mesh = m; G.ready = true; gDirty = true;
     G.mb = (o.P.byteLength + o.C.byteLength + o.K.byteLength + o.O.byteLength + o.U.byteLength + o.I.byteLength) / 1048576;
-    console.info(`heerlen-3d grond: ${o.n} hoekpunten, ${o.ni / 3} driehoeken, ${G.mb.toFixed(1)} MB, ${Math.round(performance.now() - t0)} ms`);
+    console.info(`heerlen-3d grond: ${o.n} hoekpunten, ${o.ni / 3} driehoeken, ${G.mb.toFixed(1)} MB, ${Math.round(performance.now() - t0)} ms (${how})`);
     for (const c of H.chunks.values()) if (c.gOn) H.emit?.('ground', c); // iso/laden.js: inkleuren; app.js: panden mogen komen
     H.redraw();
   }
@@ -515,7 +574,7 @@
     uGrTpm: { value: 1 }, uGrOn: { value: 0 }, uGrT: { value: 0 } };
   GU.tGr.value.needsUpdate = true;
   H.patchTerrain('ground', s => {
-    Object.assign(s.uniforms, GU);
+    Object.assign(s.uniforms, GU); H.seasonize?.(s, '');
     s.vertexShader = s.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vGrW;')
       .replace('#include <project_vertex>', '#include <project_vertex>\nvGrW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
     s.fragmentShader = s.fragmentShader.replace('#include <common>', `#include <common>
@@ -533,6 +592,7 @@
         vec3 grC = uGrOn > 0.5 ? grAt(grUv) : GR_BASE;
         diffuseColor.rgb = grLin(grC);
         float grW = grWat(grC) * smoothstep(0.8, 1.0, uGrTpm) * uGrOn;
+        ${H.seasonize ? 'diffuseColor.rgb = seasonGround(diffuseColor.rgb, grWat(grC));' : ''}
         if (grW > 0.0) { // schuimrand: aandeel water binnen 1,6 m (smal) en 8 m (geen schuim op smalle beken)
           float s1 = 0.0, s2 = 0.0;
           for (int i = 0; i < 8; i++) { float a = float(i) * 0.7853982; vec2 d = vec2(cos(a), sin(a)) * uGrM;

@@ -1,0 +1,112 @@
+// iso/bridges.js — bruggen in 3D (alleen iso). Leest de brug-lijnen (bridge === 1) uit H3D_DATA.ground.line, bouwt per km-vak één mesh:
+// dek (dikte 0,8 m, betonzijkanten, asfalttop) + borstwering 0,9 m + pijlers om de ±20 m waar het terrein >2,5 m onder het dek ligt.
+// Dekhoogte lineair (naar booglengte) tussen terreinhoogte aan de eindpunten (H.heightAt, zoals ribbonGeo in app.js). Bouwt pas als alle vakken van de brug terrein hebben.
+(() => {
+  const H = typeof H3D !== 'undefined' ? H3D : null, GD = window.H3D_DATA?.ground;
+  if (!H || !H.on || !GD?.line) return;
+  // ground.js prep() leegt GD.line → nu al kopiëren (alleen de ruwe records; decoderen pas bij bouwen)
+  const RAW = GD.line.filter(l => l[2] === 1 && l[0] !== 'beek' && l[0] !== 'zand').map(l => ({ c: l[0], w: l[1] / 10, d: l[3] }));
+  if (!RAW.length) return;
+  const q = GD.q, DECK = 0.8, RAIL = 0.9, STEP = 20, MINGAP = 2.5, TOP = 0.2; // TOP: dek ligt iets boven het terrein aan de uiteinden
+  const COL = { beton: new THREE.Color('#8d8a84'), top: new THREE.Color('#4a4b50'), rail: new THREE.Color('#a9a59d'), spoor: new THREE.Color('#5a5650') };
+  let O, km, mat, group, BR = null;
+  const VAK = new Map(); // vaksleutel → { mesh, n } ; n = aantal gebouwde bruggen
+  const key = (x, y) => Math.floor(x / km) + '_' + Math.floor(y / km);
+  const hasDem = (x, y) => !!H.chunks.get(key(x, y))?.dem;
+
+  function prep() { // decoderen naar absolute RD + vaksleutels
+    O = H.areaInfo.origin; km = H.areaInfo.km || 1000;
+    BR = RAW.map(r => {
+      const a = []; let x = 0, y = 0;
+      for (let k = 0; k < r.d.length; k += 2) { x += r.d[k]; y += r.d[k + 1]; a.push([O[0] + x * q, O[1] + y * q]); }
+      const ks = new Set(a.map(p => key(p[0], p[1]))); // alle vakken die de brug raakt (ook tussenpunten)
+      return { c: r.c, w: r.w, a, ks: [...ks], v: key(a[0][0], a[0][1]), done: false };
+    }).filter(b => b.a.length >= 2);
+  }
+
+  function sweep(b) { // → { pos[], col[] } losse driehoeken (wereldruimte, y = scène-hoogte)
+    const P = b.a, n = P.length, S = [0];
+    for (let i = 1; i < n; i++) S.push(S[i - 1] + Math.hypot(P[i][0] - P[i - 1][0], P[i][1] - P[i - 1][1]));
+    const L = S[n - 1]; if (L < 3) return null;
+    const hA = H.heightAt(P[0][0], P[0][1]) + TOP, hB = H.heightAt(P[n - 1][0], P[n - 1][1]) + TOP;
+    const hw = Math.max(1.2, b.w / 2 + 0.25), ri = b.c === 'spoor' ? COL.spoor : COL.top;
+    // dwarsprofiel (zijwaarts, hoogte t.o.v. dektop, kleur) als gesloten ring
+    const pr = [[-hw, -DECK, COL.beton], [-hw, RAIL, COL.rail], [-hw + 0.25, RAIL, COL.rail], [-hw + 0.25, 0, ri], [hw - 0.25, 0, ri], [hw - 0.25, RAIL, COL.rail], [hw, RAIL, COL.rail], [hw, -DECK, COL.beton]];
+    // ring i: pr[i] → pr[i+1]; de laatste (onderkant) sluit terug naar pr[0]
+    const ring = [], pos = [], col = [];
+    for (let i = 0; i < n; i++) { // zijwaartse richting (gemiddelde van aangrenzende stukken)
+      const p0 = P[Math.max(0, i - 1)], p1 = P[Math.min(n - 1, i + 1)];
+      let dx = p1[0] - p0[0], dy = p1[1] - p0[1]; const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
+      const y = hA + (hB - hA) * S[i] / L, X = P[i][0] - O[0], Z = -(P[i][1] - O[1]);
+      // rechts in RD = (dy, -dx); scène z = -y_RD → rechts in scène = (dy, +dx)·(x,z)
+      ring.push(pr.map(([s, h]) => [X + dy * s, y + h, Z + dx * s]));
+    }
+    const tri = (A, B, C, c) => { pos.push(...A, ...B, ...C); for (let k = 0; k < 3; k++) col.push(c.r, c.g, c.b); };
+    for (let i = 0; i < n - 1; i++) for (let k = 0; k < pr.length; k++) {
+      const k2 = (k + 1) % pr.length, c = pr[k][2];
+      tri(ring[i][k], ring[i + 1][k], ring[i + 1][k2], c); tri(ring[i][k], ring[i + 1][k2], ring[i][k2], c);
+    }
+    // eindkappen (dicht maken): waaier over het profiel
+    for (const i of [0, n - 1]) for (let k = 1; k < pr.length - 1; k++) tri(ring[i][0], ring[i][k], ring[i][k + 1], COL.beton);
+    // pijlers
+    let pil = 0;
+    for (let s = STEP / 2; s < L; s += STEP) {
+      let i = 1; while (i < n - 1 && S[i] < s) i++;
+      const t = (s - S[i - 1]) / ((S[i] - S[i - 1]) || 1), x = P[i - 1][0] + (P[i][0] - P[i - 1][0]) * t, yy = P[i - 1][1] + (P[i][1] - P[i - 1][1]) * t;
+      if (!hasDem(x, yy)) continue;
+      const g = H.heightAt(x, yy), top = hA + (hB - hA) * s / L - DECK;
+      if (top - g <= MINGAP) continue;
+      const dx = P[i][0] - P[i - 1][0], dy = P[i][1] - P[i - 1][1], l = Math.hypot(dx, dy) || 1, ux = dx / l, uy = dy / l;
+      const cx = x - O[0], cz = -(yy - O[1]), bot = g - 0.3, hs = Math.min(hw, 3) * 0.6, ht = 0.5; // kolom 1×(2·hs) + dwarsbalk onder het dek
+      const box = (hl, hwd, y0, y1, c) => { // doos, lengte-as langs de brug
+        const e = [[-hl, -hwd], [hl, -hwd], [hl, hwd], [-hl, hwd]].map(([a, bb]) => [cx + ux * a + uy * bb, cz - uy * a + ux * bb]); // (a = langs, bb = zijwaarts)
+        const Q = (i0, i1, ya, yb) => { const A = [e[i0][0], ya, e[i0][1]], B = [e[i1][0], ya, e[i1][1]], C = [e[i1][0], yb, e[i1][1]], D = [e[i0][0], yb, e[i0][1]]; tri(A, B, C, c); tri(A, C, D, c); };
+        for (let j = 0; j < 4; j++) Q(j, (j + 1) % 4, y0, y1);
+        tri([e[0][0], y1, e[0][1]], [e[1][0], y1, e[1][1]], [e[2][0], y1, e[2][1]], c); tri([e[0][0], y1, e[0][1]], [e[2][0], y1, e[2][1]], [e[3][0], y1, e[3][1]], c);
+      };
+      box(0.5, hs * 0.5 + 0.2, bot, top - ht, COL.beton);
+      box(0.8, hw * 0.9, top - ht, top, COL.beton);
+      pil++;
+    }
+    return { pos, col, pil };
+  }
+
+  const stat = { bruggen: 0, pijlers: 0 };
+  function rebuild(v) { // vak opnieuw: alle klare bruggen van dit vak samenvoegen tot één mesh
+    const pos = [], col = []; let n = 0, pil = 0;
+    for (const b of BR) if (b.v === v && b.done && b.geo) { for (const x of b.geo.pos) pos.push(x); for (const x of b.geo.col) col.push(x); n++; pil += b.geo.pil; }
+    const old = VAK.get(v); if (old) { group.remove(old); old.geometry.dispose(); }
+    if (!pos.length) { VAK.delete(v); return; }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    g.computeVertexNormals(); g.computeBoundingSphere();
+    const m = new THREE.Mesh(g, mat); m.castShadow = m.receiveShadow = true; m.name = 'brug ' + v;
+    group.add(m); VAK.set(v, m);
+  }
+
+  let timer = 0;
+  function work() {
+    timer = 0;
+    if (!H.areaInfo) return;
+    if (!BR) prep();
+    if (!group) {
+      mat = H.celify(new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, side: THREE.DoubleSide }), 'brug');
+      group = new THREE.Group(); group.name = 'bruggen'; group.visible = H.getMode?.() === 'iso'; H.scene.add(group);
+    }
+    const touched = new Set();
+    for (const b of BR) {
+      if (b.done || !b.ks.every(k => H.chunks.get(k)?.dem)) continue;
+      b.done = true; b.geo = sweep(b); touched.add(b.v);
+      if (b.geo) { stat.bruggen++; stat.pijlers += b.geo.pil; }
+    }
+    for (const v of touched) rebuild(v);
+    if (touched.size) H.shadowDirty?.();
+  }
+  const later = () => { if (!timer) timer = setTimeout(work, 60); }; // bundelen: veel 'terrain'-events achter elkaar
+  const show = () => { if (group) { group.visible = H.getMode?.() === 'iso'; H.shadowDirty?.(); H.redraw?.(); } };
+
+  H.on('terrain', later);
+  H.on('loaded', later);
+  H.on('mode', show);
+  H.bridges = { stat: () => ({ ...stat }), count: () => RAW.length };
+})();

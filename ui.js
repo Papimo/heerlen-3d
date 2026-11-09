@@ -390,12 +390,14 @@
   const FXK_ALL = [...GRP.sfeer, ...GRP.stad];
   const fxRow = k => { const [n, ic, c, t] = FX[k]; return `<label title="${t}"><span class="ic">${ic}</span>${n}<span class="cost">${c ? [1, 2, 3].map(i => `<i class="${i <= c ? 'f' : ''}"></i>`).join('') : ''}</span><input type="checkbox" class="sw" data-fx="${k}"${H3D.fxOn(k) ? ' checked' : ''}></label>`; };
   const LIGHTS = { dag: '☀ Dag', avond: '🌙 Avond', nu: '🕒 Nu' };
+  const SEASONS = { lente: '🌸 Lente', zomer: '🌳 Zomer', herfst: '🍂 Herfst', winter: '❄ Winter' };
   const sfeer = $('g-sfeer').querySelector('div'), stad = $('g-stad').querySelector('div');
-  sfeer.innerHTML = `<h4>Licht</h4><div class="lseg">${Object.entries(LIGHTS).map(([k, l]) => `<button data-light="${k}">${l}</button>`).join('')}</div><div class="sep2"></div><h4>Effecten</h4>${GRP.sfeer.map(fxRow).join('')}<div class="sep2"></div>${fxRow('zuinig')}`;
+  sfeer.innerHTML = `<h4>Licht</h4><div class="lseg">${Object.entries(LIGHTS).map(([k, l]) => `<button data-light="${k}">${l}</button>`).join('')}</div><h4>Seizoen</h4><div class="lseg">${Object.entries(SEASONS).map(([k, l]) => `<button data-season="${k}">${l}</button>`).join('')}</div><div class="sep2"></div><h4>Effecten</h4>${GRP.sfeer.map(fxRow).join('')}<div class="sep2"></div>${fxRow('zuinig')}`;
   stad.innerHTML = GRP.stad.map(fxRow).join('') + '<p class="hint">Contactschaduw wordt één keer gebakken (±10 s), daarna bijna gratis.</p>';
   const showLight = () => sfeer.querySelectorAll('[data-light]').forEach(b => b.classList.toggle('on', b.dataset.light === H3D.getLight()));
-  sfeer.addEventListener('click', e => { const b = e.target.closest('[data-light]'); if (b) { H3D.setLight(b.dataset.light); showLight(); } });
-  showLight();
+  const showSeason = () => sfeer.querySelectorAll('[data-season]').forEach(b => b.classList.toggle('on', b.dataset.season === H3D.getSeason?.()));
+  sfeer.addEventListener('click', e => { const b = e.target.closest('[data-light]'); if (b) { H3D.setLight(b.dataset.light); showLight(); } const z = e.target.closest('[data-season]'); if (z) { H3D.setSeason(z.dataset.season); showSeason(); } });
+  showLight(); showSeason();
   function showCounts() {
     const n = (keys, on) => keys.filter(on).length + '/' + keys.length;
     $('g-kaart').querySelector('small').textContent = n(Object.keys(LAYERS), H3D.layerOn);

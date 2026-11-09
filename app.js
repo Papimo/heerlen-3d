@@ -196,7 +196,7 @@ vec3 growB(vec3 p) {
   function start() {
     // ondergrond rondom (buiten de gemeente) zodat de wereld niet in het niets eindigt
     ground = new THREE.Mesh(new THREE.PlaneGeometry(80000, 80000).rotateX(-Math.PI / 2), terrMat(new THREE.MeshLambertMaterial({ color: STYLES[style].bg })));
-    ground.position.y = 60; // geen schaduw: ligt ver onder het terrein, schaduwen zouden verschoven vallen
+    ground.position.y = 60; ground.renderOrder = 2; // na het terrein tekenen: bedekt deel valt weg in de dieptetest (zelfde dure shader). Geen schaduw: ligt ver onder het terrein, schaduwen zouden verschoven vallen
     scene.add(ground);
     restoreView();
     if (mode !== '3d') applyMode(mode, false);
@@ -329,26 +329,65 @@ vec3 growB(vec3 p) {
     return true;
   }
   function b64bytes(s) { const bin = atob(s), n = bin.length, u = new Uint8Array(n); for (let k = 0; k < n; k++) u[k] = bin.charCodeAt(k); return u; }
+  // vak uitpakken in een worker (base64 → gzip → hoekpunten/indices); Blob-worker werkt ook via file://. Lukt dat niet → zelfde werk op de hoofddraad.
+  const DECW = (() => {
+    const src = `function geo(h, buf, vk, rk, wk, nv, nr, nw, ax, az) {
+      const V = new Uint16Array(buf, h.lay[vk][0], h.lay[vk][1]), pos = new Float32Array(nv * 3);
+      for (let k = 0; k < nv; k++) { pos[k * 3] = ax + V[k * 3] * h.qxy; pos[k * 3 + 1] = V[k * 3 + 2] * h.qz; pos[k * 3 + 2] = -(az + V[k * 3 + 1] * h.qxy); }
+      const idx = new Uint32Array((nr + nw) * 3); let w = 0;
+      for (const key of [rk, wk]) { const D = new Int32Array(buf, h.lay[key][0], h.lay[key][1]); let p = 0; for (let k = 0; k < D.length; k++) idx[w++] = (p += D[k]); }
+      return { pos, idx };
+    }
+    onmessage = async e => {
+      const { id, h, b64, ax, az, lo } = e.data;
+      try {
+        const bin = atob(b64), u = new Uint8Array(bin.length); for (let k = 0; k < bin.length; k++) u[k] = bin.charCodeAt(k);
+        const buf = await new Response(new Blob([u]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
+        const g = { v: geo(h, buf, 'v', 'roof', 'wall', h.nv, h.nr, h.nw, ax, az) };
+        if (lo && h.nv1) g.v1 = geo(h, buf, 'v1', 'roof1', 'wall1', h.nv1, h.nr1, h.nw1, ax, az);
+        const tr = [buf]; for (const k in g) tr.push(g[k].pos.buffer, g[k].idx.buffer);
+        postMessage({ id, buf, g }, tr);
+      } catch (err) { postMessage({ id, err: String(err && err.message || err) }); }
+    };`;
+    let w = null, n = 0; const wait = new Map();
+    const fail = () => { w = false; for (const r of wait.values()) r[1](new Error('worker')); wait.clear(); };
+    return (h, b64, ax, az, lo) => {
+      if (w === null) try {
+        w = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+        w.onmessage = e => { const r = wait.get(e.data.id); if (!r) return; wait.delete(e.data.id); e.data.err ? r[1](new Error(e.data.err)) : r[0](e.data); };
+        w.onerror = fail;
+      } catch { w = false; }
+      if (!w) return null;
+      return new Promise((res, rej) => { wait.set(++n, [res, rej]); w.postMessage({ id: n, h, b64, ax, az, lo }); });
+    };
+  })();
   H.chunk = async (h, b64) => {
     try {
-      const buf = await new Response(new Blob([b64bytes(b64)]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
+      const ax = h.ox - O[0], az = h.oy - O[1];
+      let buf, G = null;
+      try { const r = await DECW(h, b64, ax, az, mode !== 'iso'); if (r) { buf = r.buf; G = r.g; } } catch {}
+      if (!buf) buf = await new Response(new Blob([b64bytes(b64)]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
       const A = (T, k) => new T(buf, h.lay[k][0], h.lay[k][1]), S = (T, k) => A(T, k).slice(); // S = eigen kopie: anders houdt een view de hele uitgepakte buffer (±1 MB/vak) vast
       const c = {
         i: h.i, j: h.j, x0: h.i * area.km, y0: h.j * area.km, nr: h.nr, nw: h.nw, demN: h.demN, demStep: h.demStep,
         ids: S(Float64Array, 'ids'), bR: S(Uint32Array, 'bR'), bW: S(Uint32Array, 'bW'), year: S(Int16Array, 'year'), hgt: S(Uint16Array, 'hgt'), fl: S(Uint8Array, 'fl'), dem: S(Uint16Array, 'dem'),
       };
       // gebouwen: detail (LoD 2.2) + lichte variant voor ver weg (LoD 1.2, oudere data: geen)
-      const ax = h.ox - O[0], az = h.oy - O[1];
       const build = (vk, rk, wk, nv, nr, nw, perBuilding) => {
-        const V = A(Uint16Array, vk), pos = new Float32Array(nv * 3);
-        for (let k = 0; k < nv; k++) {
-          pos[k * 3] = ax + V[k * 3] * h.qxy;
-          pos[k * 3 + 1] = V[k * 3 + 2] * h.qz;
-          pos[k * 3 + 2] = -(az + V[k * 3 + 1] * h.qxy);
+        let pos, idx;
+        if (G && G[vk]) ({ pos, idx } = G[vk]); // al uitgepakt in de worker
+        else {
+          const V = A(Uint16Array, vk); pos = new Float32Array(nv * 3);
+          for (let k = 0; k < nv; k++) {
+            pos[k * 3] = ax + V[k * 3] * h.qxy;
+            pos[k * 3 + 1] = V[k * 3 + 2] * h.qz;
+            pos[k * 3 + 2] = -(az + V[k * 3 + 1] * h.qxy);
+          }
+          idx = new Uint32Array((nr + nw) * 3);
+          let w = 0;
+          for (const key of [rk, wk]) { const D = A(Int32Array, key); let p = 0; for (let k = 0; k < D.length; k++) idx[w++] = (p += D[k]); }
         }
-        const idx = new Uint32Array((nr + nw) * 3);
-        let w = 0;
-        for (const key of [rk, wk]) { const D = A(Int32Array, key); let p = 0; for (let k = 0; k < D.length; k++) idx[w++] = (p += D[k]); }
+        if (G) G[vk] = null; // niet twee keer gebruiken / niet vasthouden
         const seed = new Float32Array(nv).fill(0.37); // vast willekeurig getal per pand (iso: kleur per pand); ver-weg-variant één tint
         const lift = y => (EXAG - 1) * (y - H0), done = new Uint8Array(nv);
         const grow = perBuilding ? new Float32Array(nv) : null, gbase = perBuilding ? new Float32Array(nv) : null, gt0 = Math.max(nowS(), growFloor);
@@ -674,6 +713,40 @@ vec3 growB(vec3 p) {
     uPalW: { value: pal(['#f2dcb6', '#f4e6c9', '#dfe6cf', '#d6e2e8', '#efd5c4', '#f7ecd8', '#e9d3c9', '#e7e2cc']) } }; // iso-gevels
   // A2 gebakken licht (iso/bake.js vult de atlas): uBk = atlas (R zon zichtbaar · G contactschaduw · BA hoogte), uBkI = vak → atlasplek
   Object.assign(U, { uBk: { value: null }, uBkI: { value: null }, uBkR: { value: new THREE.Vector4(0, 0, 512, 0) }, uBkN: { value: new THREE.Vector2(0, 0) }, uBaked: { value: 0 }, uBkAO: { value: 0 } });
+  // seizoenen (knop in Sfeer): één uniform, geen animatie; 0 zomer · 1 herfst · 2 winter · 3 lente. H.seasonize(shader, 'leaf'|'roof'|'') in elk materiaal dat meedoet.
+  const SEASONS = ['zomer', 'herfst', 'winter', 'lente'];
+  U.uSeason = { value: 0 };
+  try { U.uSeason.value = Math.max(0, SEASONS.indexOf(localStorage.getItem('h3d.season'))); } catch {}
+  H.getSeason = () => SEASONS[U.uSeason.value];
+  H.setSeason = k => { U.uSeason.value = Math.max(0, SEASONS.indexOf(k)); try { localStorage.setItem('h3d.season', k); } catch {} shadowDirty = true; redraw(); emit('season', k); };
+  const SEASON_GLSL = `uniform float uSeason;
+    const vec3 SN_COL = vec3(0.80, 0.84, 0.90);
+    float snHash(vec3 c) { return fract(sin(dot(c, vec3(91.7, 53.3, 27.1))) * 4375.85); }
+    vec3 seasonLeaf(vec3 c, float up) { // c lineair; alleen groen (blad) verandert, stam/rest blijft
+      if (uSeason < 0.5) return c;
+      float leaf = smoothstep(0.0, 0.015, c.g - max(c.r, c.b)), r = snHash(c), lum = dot(c, vec3(0.2126, 0.7152, 0.0722));
+      vec3 o;
+      if (uSeason < 1.5) { o = r < 0.35 ? vec3(0.60, 0.17, 0.02) : r < 0.7 ? vec3(0.70, 0.38, 0.03) : r < 0.88 ? vec3(0.40, 0.08, 0.02) : c; o *= 0.55 + lum * 2.5; }
+      else if (uSeason < 2.5) { o = vec3(0.085, 0.07, 0.058) * (0.8 + r * 0.4); o = mix(o, SN_COL, smoothstep(0.3, 0.65, up)); }
+      else o = r < 0.14 ? vec3(0.92, 0.55, 0.66) : c * vec3(1.15, 1.35, 0.75);
+      return mix(c, o, leaf);
+    }
+    vec3 seasonRoof(vec3 c, float up) { return uSeason > 1.5 && uSeason < 2.5 ? mix(c, SN_COL, 0.82 * smoothstep(0.25, 0.6, up)) : c; }
+    vec3 seasonGround(vec3 c, float wat) { // c lineair; wat = 1 op water (geen sneeuw)
+      if (uSeason < 0.5) return c;
+      float g = smoothstep(0.0, 0.02, c.g - max(c.r, c.b));
+      if (uSeason < 1.5) return mix(c, c * vec3(1.3, 1.0, 0.55), g * 0.75);
+      if (uSeason < 2.5) return mix(c, SN_COL, (g * 0.7 + 0.22) * (1.0 - wat));
+      return mix(c, c * vec3(1.05, 1.15, 0.85), g);
+    }`;
+  H.seasonize = (s, kind) => {
+    s.uniforms.uSeason = U.uSeason;
+    s.fragmentShader = s.fragmentShader.replace('#include <common>', '#include <common>\n' + SEASON_GLSL);
+    if (!kind) return;
+    // vlaknormaal uit vViewPosition (panden hebben geen normal-attribuut) → wereld-omhoog, ook ortho
+    s.fragmentShader = s.fragmentShader.replace('#include <alphamap_fragment>', `{ float snUp = abs((transpose(mat3(viewMatrix)) * normalize(cross(dFdx(vViewPosition), dFdy(vViewPosition)))).y);
+      diffuseColor.rgb = ${kind === 'roof' ? 'seasonRoof' : 'seasonLeaf'}(diffuseColor.rgb, snUp); }\n#include <alphamap_fragment>`);
+  };
   const SUN_DIR = new THREE.Vector3(-0.55, 0.75, 0.35); H.SUN_DIR = SUN_DIR; // vaste zonrichting (× 3000 = zonpositie t.o.v. het doel)
   const BAKE_GLSL = `
   uniform sampler2D uBk, uBkI; uniform vec4 uBkR; uniform vec2 uBkN; uniform float uBaked, uBkAO; varying vec3 vBkW;
@@ -811,7 +884,7 @@ vec3 growB(vec3 p) {
       s.uniforms.uIso = U.uIso;
       s.fragmentShader = s.fragmentShader.replace('#include <common>', '#include <common>\nuniform float uIso;')
         .replace('#include <color_fragment>', `#include <color_fragment>
-        if (uIso > 0.5) {
+        if (uIso > 0.5 && ${PATCH.terrain.some(p => p.name === 'ground') ? 'false' : 'true'}) { // eigen grond (iso/ground.js) overschrijft de kleur toch → filter overslaan
           vec3 c = pow(max(diffuseColor.rgb, 0.0), vec3(1.0 / 2.2));
           c = mix(vec3(dot(c, vec3(0.2126, 0.7152, 0.0722))), c, 1.25);
           c = ((c - 0.5) * 0.85 + 0.5) * 1.06;
@@ -822,7 +895,7 @@ vec3 growB(vec3 p) {
     };
     return m;
   }
-  MAT.roof.onBeforeCompile = s => { isoPal(s, true); runPatch('roof', s, MAT.roof); };
+  MAT.roof.onBeforeCompile = s => { isoPal(s, true); runPatch('roof', s, MAT.roof); H.seasonize(s, 'roof'); };
   celify(MAT.roof, 'roof');
   MAT.wall.onBeforeCompile = s => { // ramen: raster per verdieping (3,1 m) op de muur, ±20% brandt; ver weg vervaagd tot gemiddelde gloed
     s.uniforms.uNight = U.uNight; s.uniforms.uEye = U.uEye;
@@ -1843,6 +1916,7 @@ vec3 growB(vec3 p) {
         sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nuniform float uTT; attribute float aTA;')
           .replace('#include <begin_vertex>', `#include <begin_vertex>
           { float k = clamp((uTT - aTA) / ${TREE_FADE.toFixed(2)}, 0.0, 1.0); k = k * k * (3.0 - 2.0 * k); transformed *= k; }`);
+        H.seasonize(sh, 'leaf');
       };
       treeRes = { geo: [treeGeo(false), treeGeo(true)], geoLo: [treeGeo(false, true), treeGeo(true, true)], mat: celify(m, 'tree') };
     }

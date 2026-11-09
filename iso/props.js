@@ -80,7 +80,24 @@
            merge([part(cyl(0.12, 0.07, 8, 6), '#8a9098'), rod([0, 7.8, 0], [1.6, 8.1, 0], 0.05, '#8a9098', 5), part(box(0.8, 0.12, 0.3), '#8a9098', { p: [1.8, 8.0, 0] }), part(box(0.7, 0.04, 0.24), GLASS, { p: [1.8, 7.97, 0], tint: 1, glow: 1 })])],
     bench: benchGeo('#b08055', '#3d3f45'),
     gear: gearSet({ a: '#c0563f', b: '#4f7fa8', c: '#a87a52', frame: '#a87a52', wood: '#a87a52', sand: '#ead7a4' }),
+    // auto (lengte langs x, 4,3 × 1,8 m): carrosserie in kleur per exemplaar, ruiten/wielen vast
+    car: merge([part(box(4.3, 0.75, 1.8), '#fff', { p: [0, 0.3, 0], tint: 1 }), part(box(2.2, 0.55, 1.6), '#fff', { p: [-0.25, 1.05, 0], tint: 1 }),
+      part(box(2.26, 0.4, 1.5), '#3b4552', { p: [-0.25, 1.1, 0] }), part(box(0.5, 0.36, 1.84), '#24262b', { p: [1.35, 0.1, 0] }), part(box(0.5, 0.36, 1.84), '#24262b', { p: [-1.35, 0.1, 0] })]),
+    stone: merge([part(box(0.6, 0.85, 0.14), '#fff', { tint: 1 }), part(box(0.7, 0.08, 0.3), '#9a978f')]),
+    hedge: merge([part(boxc(1, 1, 1), '#fff', { p: [0, 0.5, 0], tint: 1 })]),
+    // doelen (breedte langs z): voetbal, hockey, basketbal (paal + bord), tennisnet
+    goal: [
+      merge([rod([0, 0, -3.66], [0, 2.44, -3.66], 0.06, '#f4f4f0'), rod([0, 0, 3.66], [0, 2.44, 3.66], 0.06, '#f4f4f0'), rod([0, 2.44, -3.66], [0, 2.44, 3.66], 0.06, '#f4f4f0'),
+        rod([0, 2.44, -3.66], [-1.5, 0, -3.66], 0.03, '#d8d8d2'), rod([0, 2.44, 3.66], [-1.5, 0, 3.66], 0.03, '#d8d8d2'), rod([-1.5, 0, -3.66], [-1.5, 0, 3.66], 0.03, '#d8d8d2')]),
+      merge([rod([0, 0, -1.83], [0, 2.14, -1.83], 0.05, '#f4f4f0'), rod([0, 0, 1.83], [0, 2.14, 1.83], 0.05, '#f4f4f0'), rod([0, 2.14, -1.83], [0, 2.14, 1.83], 0.05, '#f4f4f0'),
+        part(box(1.2, 0.46, 3.66), '#2d3a4a', { p: [-0.6, 0, 0] })]),
+      merge([rod([-1.2, 0, 0], [-1.2, 3.05, 0], 0.08, '#4a4d55'), rod([-1.2, 3.05, 0], [0, 3.05, 0], 0.06, '#4a4d55'), part(boxc(0.06, 1.05, 1.8), '#f4f4f0', { p: [0, 3.4, 0] }),
+        rod([0.03, 3.05, -0.23], [0.45, 3.05, 0], 0.02, '#e0642f'), rod([0.03, 3.05, 0.23], [0.45, 3.05, 0], 0.02, '#e0642f')]),
+      merge([part(boxc(0.04, 0.9, 12.8), '#2b2d31', { p: [0, 0.45, 0] }), part(boxc(0.06, 0.06, 12.8), '#f4f4f0', { p: [0, 0.92, 0] }),
+        part(cyl(0.05, 0.05, 1.07), '#4a4d55', { p: [0, 0, -6.4] }), part(cyl(0.05, 0.05, 1.07), '#4a4d55', { p: [0, 0, 6.4] })]),
+    ],
   };
+  const CARC = ['#e8e6e1', '#2e3036', '#8d9299', '#b8bcc2', '#a53a2e', '#2f4f78', '#55606b', '#d8cfb8', '#6b4a3a', '#c9a23a']; // geen groen: seizoen-shader zou dat als blad verkleuren
   const treeCol = (r, n) => n ? [0.36 + r() * 0.04, 0.38, 0.22 + r() * 0.06] : (r() < 0.12 ? [0.06 + r() * 0.07, 0.6, 0.42 + r() * 0.08] : [0.22 + r() * 0.08, 0.46 + r() * 0.14, 0.3 + r() * 0.1]);
 
   // ---------- materialen ----------
@@ -99,6 +116,7 @@
         vGlow = aGlow;`);
       s.fragmentShader = s.fragmentShader.replace('#include <common>', '#include <common>\nuniform float uNight; varying float vGlow;')
         .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\ntotalEmissiveRadiance += diffuseColor.rgb * vGlow * uNight * 1.8;');
+      H.seasonize?.(s, 'leaf'); // groen (kronen, hagen) kleurt mee met het seizoen
     };
     H.celify(PMAT, 'prop');
     // lichtpoel B: twee harde ringen (binnen 0,55, buiten 0,26), additief over het terrein
@@ -131,6 +149,16 @@
     for (let k = 0; k < P.lamps.length; k += 5) if (!R || inside(P.lamps[k], P.lamps[k + 1])) add('lamps', P.lamps, k, 5);
     for (let k = 0; k < P.benches.length; k += 4) add('benches', P.benches, k, 4);
     for (let k = 0; k < P.gear.length; k += 4) add('gear', P.gear, k, 4);
+    // parkeerterreinen / begraafplaatsen (uit data/ground.js, hulpcoördinaten in halve m t.o.v. origin) + hagen + doelen
+    const O = H.areaInfo.origin, GD = window.H3D_DATA?.ground, q = GD?.q || 0.5;
+    const put = (key, x, y, it) => { const i = Math.floor(x / km), j = Math.floor(y / km), id = i + '_' + j; let b = out.get(id); if (!b) out.set(id, b = { trees: [], lamps: [], benches: [], gear: [] }); (b[key] ||= []).push(it); };
+    for (const g of GD?.park || []) put('park', O[0] + g[0] * q, O[1] + g[1] * q, g);
+    for (const g of GD?.grave || []) put('grave', O[0] + g[0] * q, O[1] + g[1] * q, g);
+    for (const h of P.hedges || []) { // [hoogte dm, delta-xy halve m t.o.v. origin]
+      const xy = []; let x = 0, y = 0; for (let k = 1; k + 1 < h.length; k += 2) { x += h[k]; y += h[k + 1]; xy.push(O[0] + x / 2, O[1] + y / 2); }
+      if (xy.length >= 4) put('hedge', xy[0], xy[1], [h[0] / 10, xy]);
+    }
+    const Gl = P.goals || []; for (let k = 0; k + 5 < Gl.length; k += 6) put('goal', Gl[k + 1], Gl[k + 2], Gl.slice(k, k + 6));
     return out;
   }
 
@@ -198,6 +226,48 @@
     for (const l of b.lamps) { at(l[0], l[1], 0, rad(l[4]), 1); lampB.push([st.lamp[l[2]], m4.compose(ps, qq, sc).clone(), WARM]); }
     for (const x of b.benches) { at(x[0], x[1], 0, rad(x[3]), 1); restB.push([st.bench[x[2]], m4.compose(ps, qq, sc).clone(), null]); }
     for (const g of b.gear) { at(g[0], g[1], 0, rad(g[3]), 1); restB.push([st.gear[g[2]], m4.compose(ps, qq, sc).clone(), null]); }
+    // doelen: aan beide korte kanten (voetbal/hockey/basketbal), tennisnet in het midden; ang = RD-hoek → om y = ang (z = −noord)
+    for (const [k, x, y, L, W, ang] of b.goal || []) {
+      const c = Math.cos(ang), s = Math.sin(ang);
+      if (k === 3) { at(x, y, 0, ang, 1); restB.push([st.goal[3], m4.compose(ps, qq, sc).clone(), null]); continue; }
+      for (const e of [-1, 1]) {
+        const d = L / 2 - (k === 2 ? 1.2 : 0), gx = x + c * d * e, gy = y + s * d * e;
+        at(gx, gy, 0, ang + (e > 0 ? Math.PI : 0), 1); restB.push([st.goal[k], m4.compose(ps, qq, sc).clone(), null]);
+      }
+    }
+    // hagen: per stuk lijn een blok (lengte × hoogte × 0,9 m), kleur licht gevarieerd
+    const HC = new THREE.Color();
+    for (const [h, xy] of b.hedge || []) for (let k = 0; k + 3 < xy.length; k += 2) {
+      const x0 = xy[k], y0 = xy[k + 1], x1 = xy[k + 2], y1 = xy[k + 3], L = Math.hypot(x1 - x0, y1 - y0); if (L < 0.3) continue;
+      const mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+      ps.set(mx - O[0], Math.min(hAt(x0, y0), hAt(x1, y1), hAt(mx, my)) - 0.1, -(my - O[1])); qq.setFromAxisAngle(UP, Math.atan2(y1 - y0, x1 - x0)); sc.set(L + 0.6, h + 0.1, 0.9);
+      restB.push([st.hedge, m4.compose(ps, qq, sc).clone(), HC.setHSL(0.27 + rnd() * 0.04, 0.38, 0.3 + rnd() * 0.05).clone()]);
+    }
+    // grafstenen: rijen langs u op afstand sp, voorkant naar −v
+    const stones = [];
+    for (const g of b.grave || []) {
+      const c = Math.cos(g[2] / 1000), s = Math.sin(g[2] / 1000), cx = O[0] + g[0] * 0.5, cy = O[1] + g[1] * 0.5, sp = g[3] / 10, R = g[4];
+      for (let k = 0; k + 2 < R.length; k += 3) for (let i = 0; i < R[k + 2]; i++) {
+        const u = R[k] / 2 + i * sp, v = R[k + 1] / 2; stones.push([cx + u * c - v * s, cy + u * s + v * c, g[2] / 1000]);
+      }
+    }
+    const sIm = inst(st.stone, stones, t => { at(t[0], t[1], -0.05, t[2] + (rnd() - 0.5) * 0.08, 1); sc.set(0.8 + rnd() * 0.5, 0.7 + rnd() * 0.6, 1); },
+      () => col.setHSL(0.08 + rnd() * 0.05, 0.05 + rnd() * 0.06, 0.45 + rnd() * 0.3));
+    if (sIm) v.small.push(sIm);
+    // auto's: ±60 % van de vakken bezet, kleur uit CARC, neus naar de rijbaan (−d)
+    const cars = [];
+    for (const g of b.park || []) {
+      const c = Math.cos(g[2] / 1000), s = Math.sin(g[2] / 1000), cx = O[0] + g[0] * 0.5, cy = O[1] + g[1] * 0.5, R = g[3];
+      for (let k = 0; k + 2 < R.length; k += 3) {
+        const n = Math.abs(R[k + 2]), d = Math.sign(R[k + 2]), vm = R[k + 1] / 2 + d * 2.5;
+        for (let i = 0; i < n; i++) {
+          if (rnd() > 0.6) continue;
+          const u = R[k] / 2 + (i + 0.5) * 2.5; cars.push([cx + u * c - vm * s, cy + u * s + vm * c, g[2] / 1000 + Math.PI / 2 + (d > 0 ? Math.PI : 0)]);
+        }
+      }
+    }
+    const cIm = inst(st.car, cars, t => { at(t[0], t[1], 0, t[2] + (rnd() - 0.5) * 0.06, 1); }, () => col.set(CARC[Math.floor(rnd() * CARC.length)]));
+    if (cIm) v.small.push(cIm);
     for (const [L, noShadow] of [[lampB, true], [restB, false]]) {
       if (!L.length) continue;
       const m = new THREE.Mesh(bake(L), PMAT); m.userData.noShadow = noShadow; group.add(m); v.small.push(m);
