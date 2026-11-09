@@ -1407,7 +1407,7 @@ vec3 growB(vec3 p) {
         vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
         fragmentShader: `varying vec2 vUv; uniform sampler2D tC, tD, tSky; uniform highp sampler2D tN, tDN; uniform vec2 uRes; uniform float uW, uK, uDyn, uMrt; uniform vec3 uInk; uniform vec2 uDbg;
           ${NRM_GLSL}
-          ivec2 tq(sampler2D t, vec2 o) { return clamp(ivec2(gl_FragCoord.xy + o), ivec2(0), textureSize(t, 0) - 1); } // exacte pixel (vUv+o/uRes rondde op telefoons af → strepen)
+          ivec2 tq(highp sampler2D t, vec2 o) { return clamp(ivec2(gl_FragCoord.xy + o), ivec2(0), textureSize(t, 0) - 1); } // exacte pixel (vUv+o/uRes rondde op telefoons af → strepen)
           vec4 N(vec2 o) { ivec2 u = tq(tN, o); vec2 s = texelFetch(tN, u, 0).xy; // xyz = normaal, w = diepte
             if (uDyn > 0.5) { vec2 d = texelFetch(tDN, u, 0).xy; if (d.y > 0.0 && (s.y <= 0.0 || d.y < s.y)) s = d; }
             return vec4(nrmUnpack(s.x), s.y); }
