@@ -1,7 +1,9 @@
 // iso/ground.js — stroom B: eigen grond in iso i.p.v. kaarttegels (keuze design/3_grond.html: Grond 1 Speelgoedmat · Water 2 Schuimrand).
-// Data: window.H3D_DATA.ground (tools/build-ground.cjs). Per vak een canvas (RD-meters, noord boven) → textuur via H3D.patchTerrain;
-// UV = (RD − vakhoek) / km uit de wereldpositie, dus los van de tegel-UV's. Resolutie naar beeldschaal (256…2048 px/km).
-// Water: masker per vak (R = water, G = smalle vervaging → schuimrand, B = brede vervaging → geen schuim op smalle beken).
+// Data: window.H3D_DATA.ground (tools/build-ground.cjs). Vector i.p.v. plaatjes: de tekencode (paintAll, zelfde als design/3_grond.html paint())
+// tekent op een vector-'canvas' (VCtx) dat driehoeken maakt → één mesh voor heel Heerlen (±tientallen MB i.p.v. ±21–85 MB per vak).
+// Per beeld tekent de GPU die mesh van bovenaf in één doel ter grootte van het scherm (gPass, vóór de scène); het terrein leest daar zijn kleur
+// op wereldpositie (uGrVP). Altijd scherp, geheugen vast. Patronen (gras, maaistrepen, bloemetjes, streepjeslijnen) rekent de shader uit.
+// Water: kleur-sleutel in het doel + schuimrand uit buur-monsters (grWat), geen masker per vak meer.
 (() => {
   const H = typeof H3D !== 'undefined' ? H3D : null, GD = window.H3D_DATA?.ground; // H3D = top-level const in app.js (niet op window)
   if (!H || !GD) return;
@@ -31,28 +33,23 @@
   // ---------- data → features per vak (absolute RD) ----------
   let KM = 1000, BY = null; // BY: 'i_j' → { land, area, pitch, line, wat }
   const M = 40; // marge rond het vak (lijnen/randen die erin steken)
+
+  // ---------- data → één lijst voor heel het gebied (absolute RD) ----------
+  let ALL = null;
   function prep() {
-    if (BY) return;
-    const A = H.areaInfo, O = A.origin, q = GD.q; KM = A.km; BY = new Map();
+    if (ALL) return ALL;
+    const A = H.areaInfo, O = A.origin, q = GD.q;
+    ALL = { land: [], area: [], pitch: [], line: [], cross: [], jn: [], isl: [] };
     const dec = d => { const a = new Float64Array(d.length); let x = 0, y = 0; for (let k = 0; k < d.length; k += 2) { x += d[k]; y += d[k + 1]; a[k] = O[0] + x * q; a[k + 1] = O[1] + y * q; } return a; };
-    const bbOf = rs => { let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; for (const a of rs) for (let k = 0; k < a.length; k += 2) { if (a[k] < x0) x0 = a[k]; if (a[k] > x1) x1 = a[k]; if (a[k + 1] < y0) y0 = a[k + 1]; if (a[k + 1] > y1) y1 = a[k + 1]; } return [x0, y0, x1, y1]; };
-    const put = (kind, f) => {
-      const [x0, y0, x1, y1] = f.bb;
-      for (let i = Math.floor((x0 - M) / KM); i <= Math.floor((x1 + M) / KM); i++) for (let j = Math.floor((y0 - M) / KM); j <= Math.floor((y1 + M) / KM); j++) {
-        const k = i + '_' + j; let b = BY.get(k); if (!b) BY.set(k, b = { land: [], area: [], pitch: [], line: [], cross: [], jn: [], isl: [], wat: false });
-        b[kind].push(f); if (f.c === 'water' || f.c === 'zwembad' || f.c === 'beek') b.wat = true;
-      }
-    };
-    GD.land.forEach(([c, rs], n) => { const r = rs.map(dec); put('land', { c, rs: r, bb: bbOf(r), n }); });
-    GD.area.forEach(([c, rs]) => { const r = rs.map(dec); put('area', { c, rs: r, bb: bbOf(r) }); });
-    GD.pitch.forEach(([c, rs, surf, box]) => { const r = rs.map(dec); put('pitch', { c, rs: r, bb: bbOf(r), surf, box }); });
+    GD.land.forEach(([c, rs], n) => ALL.land.push({ c, rs: rs.map(dec), n }));
+    GD.area.forEach(([c, rs]) => ALL.area.push({ c, rs: rs.map(dec) }));
+    GD.pitch.forEach(([c, rs, surf, box]) => ALL.pitch.push({ c, rs: rs.map(dec), surf, box }));
     const S = [];
-    GD.line.forEach(([c, w, br, d, fl = 0]) => { const a = dec(d), f = { c, w: w / 10, br, a, bb: bbOf([a]), sw: fl & 3, ring: !!(fl & 4) }; put('line', f); if (RANK[c] != null && !br) S.push(f); });
-    (GD.cross || []).forEach(([k, bike, d]) => { const a = dec(d); put('cross', { k, bike, a, bb: bbOf([a]) }); });
-    junctions(S).forEach(n => put('jn', n));
-    islands(S).forEach(I => put('isl', I));
-    // ruwe data niet meer nodig
-    GD.land = GD.area = GD.pitch = GD.line = GD.cross = [];
+    GD.line.forEach(([c, w, br, d, fl = 0]) => { const f = { c, w: w / 10, br, a: dec(d), sw: fl & 3, ring: !!(fl & 4) }; ALL.line.push(f); if (RANK[c] != null && !br) S.push(f); });
+    (GD.cross || []).forEach(([k, bike, d]) => ALL.cross.push({ k, bike, a: dec(d) }));
+    ALL.jn = junctions(S); ALL.isl = islands(S);
+    GD.land = GD.area = GD.pitch = GD.line = GD.cross = []; // ruwe data niet meer nodig
+    return ALL;
   }
   // kruisingen: knooppunten met ≥ 3 armen (gedeelde punten + eindpunt midden op een ander lijnstuk). Per knoop: hoogste rang/breedte, rotonde?
   function junctions(S) {
@@ -102,46 +99,13 @@
     }
     return out;
   }
-  const EMPTY = { land: [], area: [], pitch: [], line: [], cross: [], jn: [], isl: [], wat: false };
-  const feats = c => (prep(), BY.get(c.i + '_' + c.j) || EMPTY);
-
-  // ---------- schilderen (zelfde als design/3_grond.html paint(), stijl Speelgoedmat) ----------
   let X0 = 0, Y0 = 0;
   const path = (x, rs) => { x.beginPath(); for (const a of rs) { x.moveTo(a[0] - X0, a[1] - Y0); for (let k = 2; k < a.length; k += 2) x.lineTo(a[k] - X0, a[k + 1] - Y0); x.closePath(); } };
   const pick = (v, n) => Array.isArray(v) ? v[(n * 7919) % v.length] : v;
   const shade = (hex, k) => { const n = parseInt(hex.slice(1), 16); const f = v => Math.max(0, Math.min(255, Math.round(v * k))); return `rgb(${f(n >> 16)},${f(n >> 8 & 255)},${f(n & 255)})`; };
-  function stripes(x, f, ang, sp, col, lw) { // evenwijdige lijnen binnen het vlak
-    x.save(); path(x, f.rs); x.clip('evenodd');
-    const [a, b, c2, d] = f.bb, cx = (a + c2) / 2 - X0, cy = (b + d) / 2 - Y0, R2 = Math.hypot(c2 - a, d - b) / 2 + 2, co = Math.cos(ang), si = Math.sin(ang);
-    x.beginPath();
-    for (let t = -R2; t <= R2; t += sp) { const px = cx - si * t, py = cy + co * t; x.moveTo(px - co * R2, py - si * R2); x.lineTo(px + co * R2, py + si * R2); }
-    x.strokeStyle = col; x.lineWidth = lw; x.stroke(); x.restore();
-  }
   // grasvlakken minder leeg: zachte vlekken licht/donker (maaipatroon, droge plekken), dichtbij grasplukjes en in weides/parken wat bloemetjes
   const GRASSY = { gras: 1, weide: 1, park: 1, sport: 1, kerkhof: 1, tuin: 1, boomgaard: 1, struik: 1 };
   const FLOWERS = { weide: 1, park: 1, tuin: 1 };
-  function grassy(x, f, col, fine) {
-    const [a, b, c2, d] = f.bb, W = c2 - a, Hh = d - b, A = W * Hh; if (A < 60) return;
-    let sd = (f.n * 2654435761 ^ Math.round(a * 7 + b * 13)) >>> 0; const r = () => ((sd = (sd * 1664525 + 1013904223) >>> 0) / 4294967296);
-    x.save(); path(x, f.rs); x.clip('evenodd');
-    const dark = shade(col, 0.88), light = shade(col, 1.07), dry = shade(col, 1.12).replace('rgb', 'rgba').replace(')', ',.55)');
-    x.globalAlpha = 0.45;
-    for (let k = 0, n = Math.min(500, A / 260); k < n; k++) { // vlekken 4–16 m
-      const cx = a + r() * W - X0, cy = b + r() * Hh - Y0, rx = 4 + r() * 12, ry = rx * (0.5 + r() * 0.5);
-      x.beginPath(); x.ellipse(cx, cy, rx, ry, r() * Math.PI, 0, 7); x.fillStyle = r() < 0.55 ? dark : r() < 0.7 ? dry : light; x.fill();
-    }
-    x.globalAlpha = 1;
-    if (fine) {
-      x.beginPath(); // plukjes: korte streepjes, donkerder
-      for (let k = 0, n = Math.min(4000, A / 18); k < n; k++) { const px0 = a + r() * W - X0, py0 = b + r() * Hh - Y0, l = 0.5 + r() * 0.5; x.moveTo(px0, py0); x.lineTo(px0 + (r() - 0.5) * 0.4, py0 + l); }
-      x.strokeStyle = shade(col, 0.8); x.lineWidth = 0.18; x.stroke();
-      if (FLOWERS[f.c]) for (let k = 0, n = Math.min(900, A / 120); k < n; k++) { // bloemetjes in groepjes
-        const gx = a + r() * W - X0, gy = b + r() * Hh - Y0; x.fillStyle = r() < 0.5 ? '#fffaf0' : r() < 0.6 ? '#ffd84a' : '#e98bb0';
-        for (let m = 0; m < 4; m++) { x.beginPath(); x.arc(gx + (r() - 0.5) * 2.4, gy + (r() - 0.5) * 2.4, 0.22, 0, 7); x.fill(); }
-      }
-    }
-    x.restore();
-  }
   function pitchLines(x, f) {
     const r = f.box; if (!r) return;
     const O = H.areaInfo.origin, [cx, cy, L, W, ang] = r, sp = f.c;
@@ -195,11 +159,11 @@
   }
   const scaleRing = (I, rr) => { const o = [], k = rr / I.r; for (let i = 0; i < I.a.length; i += 2) o.push(I.cx + (I.a[i] - I.cx) * k, I.cy + (I.a[i + 1] - I.cy) * k); return o; };
   // rotondes "Grafisch wit": echte vorm uit OSM, licht eiland met inktrand + witte binnenstreep. Rijbaan = de ringstraten zelf.
-  function islands2D(x, F, ink, fine) {
+  function islands2D(x, F) {
     for (const I of F.isl) {
       const ri = I.r - 7.6 / 2 - 0.2;
-      x.fillStyle = ST.road.isle; path(x, [scaleRing(I, ri)]); x.fill(); x.strokeStyle = ST.rib.ink; x.lineWidth = ink * 1.6; x.stroke();
-      if (fine) { const a = scaleRing(I, I.r - 7.6 / 2 + 0.55); x.beginPath(); x.moveTo(a[0] - X0, a[1] - Y0); for (let k = 2; k < a.length; k += 2) x.lineTo(a[k] - X0, a[k + 1] - Y0); x.lineWidth = 0.15; x.strokeStyle = ST.road.paint; x.stroke(); }
+      x.fillStyle = ST.road.isle; path(x, [scaleRing(I, ri)]); x.fill(); x.strokeStyle = ST.rib.ink; x.lineWidth = 0.48; x.stroke();
+      x.fine = 1; const a = scaleRing(I, I.r - 7.6 / 2 + 0.55); x.beginPath(); x.moveTo(a[0] - X0, a[1] - Y0); for (let k = 2; k < a.length; k += 2) x.lineTo(a[k] - X0, a[k + 1] - Y0); x.lineWidth = 0.15; x.strokeStyle = ST.road.paint; x.stroke(); x.fine = 0;
     }
   }
   // oversteken "Per soort": zebra voor voetgangers (ook onbekend), rode fietsoversteek met blokken, met lichten = alleen blokjeslijnen, ongemarkeerd = niets
@@ -213,28 +177,31 @@
       else if (c.k !== 'g') for (let t = 0.5; t < len - 0.2; t += 1) rect(x, ax + ux * t, ay + uy * t, ux, uy, 0.5, 3, P);
     }
   }
-  function paint(c, res) {
-    const F = feats(c), s = res / KM, px = 1 / s;
-    const cv = c.gCv && c.gCv.width === res ? c.gCv : (c.gCv = Object.assign(document.createElement('canvas'), { width: res, height: res }));
-    const x = cv.getContext('2d');
-    X0 = c.x0; Y0 = c.y0;
-    x.setTransform(1, 0, 0, 1, 0, 0); x.fillStyle = ST.base; x.fillRect(0, 0, res, res);
-    x.setTransform(s, 0, 0, -s, 0, res); x.lineJoin = x.lineCap = 'round';
-    for (const f of F.land) { const col = pick(ST.land[f.c] || ST.base, f.n); x.fillStyle = col; path(x, f.rs); x.fill('evenodd'); if (GRASSY[f.c]) grassy(x, f, col, px <= 1.01); }
+
+  // ---------- tekenen: alles in schilder-volgorde (zelfde als design/3_grond.html paint()) ----------
+  // Breedtes die op het canvas van de resolutie afhingen (Math.max(w, 1,6 · px)) → minPx: de shader maakt de lijn ver weg minstens zoveel texels breed.
+  // fine = 1 → pas vanaf ±1 texel/m (was: vanaf 1024 px/km). Generator: bouwt in stukjes (yield), zie startBuild.
+  function* paintAll(x, F) {
+    let w = 0; const Y = () => (++w & 31) === 0;
+    x.lineJoin = x.lineCap = 'round';
+    for (const f of F.land) { x.fillStyle = pick(ST.land[f.c] || ST.base, f.n); x.kind = GRASSY[f.c] ? (FLOWERS[f.c] ? 2 : 1) : 0; path(x, f.rs); x.fill('evenodd'); if (Y()) yield; }
+    x.kind = 0;
     for (const f of F.area) {
       if (isWat(f)) continue;
       x.fillStyle = ST.area[f.c] || ST.base; path(x, f.rs); x.fill('evenodd');
       if (f.c === 'baan') { x.strokeStyle = ST.chalk; x.lineWidth = 0.3; x.stroke(); }
+      if (Y()) yield;
     }
     for (const f of F.pitch) {
-      const col = pitchSurf(f); x.fillStyle = col; path(x, f.rs); x.fill('evenodd');
-      if (/gras/.test(f.surf || 'gras') && f.box && !/tennis|equestrian|boules|basketball|skateboard|chess/.test(f.c)) stripes(x, f, f.box[4] + Math.PI / 2, 5, shade(col, 1 + ST.mow), 2.5);
-      pitchLines(x, f);
+      const mow = /gras/.test(f.surf || 'gras') && f.box && !/tennis|equestrian|boules|basketball|skateboard|chess/.test(f.c);
+      x.fillStyle = pitchSurf(f); x.kind = mow ? 3 : 0; if (mow) { const a = f.box[4] + Math.PI / 2; x.dir = [Math.cos(a), Math.sin(a)]; }
+      path(x, f.rs); x.fill('evenodd'); x.kind = 0;
+      pitchLines(x, f); if (Y()) yield;
     }
     for (const f of F.area) if (isWat(f)) { x.fillStyle = ST.area[f.c]; path(x, f.rs); x.fill('evenodd'); }
+    yield;
     // lijnen: beken, wegen, spoor, rotondes; bruggen als laatste (met donkere rand)
-    // wegen/spoor/rotondes in de stijl van de oude linten (app.js streetTex/laneTex/railTex): stoeprand, donker asfalt met witte randen, ballast + dwarsliggers
-    const stroke = (f, w, col) => { const a = f.a; x.beginPath(); x.moveTo(a[0] - X0, a[1] - Y0); for (let k = 2; k < a.length; k += 2) x.lineTo(a[k] - X0, a[k + 1] - Y0); x.lineWidth = w; x.strokeStyle = col; x.stroke(); };
+    const stroke = (f, wd, col, mp = 0) => { const a = f.a; x.beginPath(); x.moveTo(a[0] - X0, a[1] - Y0); for (let k = 2; k < a.length; k += 2) x.lineTo(a[k] - X0, a[k + 1] - Y0); x.lineWidth = wd; x.minPx = mp; x.strokeStyle = col; x.stroke(); x.minPx = 0; };
     const offset = (a, d) => { // polylijn d m opzij (links +), hoeken via gemiddelde normaal
       const o = [], n = a.length / 2;
       for (let k = 0; k < n; k++) {
@@ -244,40 +211,39 @@
       }
       return { a: o };
     };
-    const RT = ST.rib, RD = ST.road, ink = Math.max(0.3, 0.6 * px); // inktrand: de linten lagen hoger en kregen een omlijning van de nabewerking
-    const fine = px <= 1.01; // strepen, haaientanden, zebra's pas vanaf 1024 px/km (anders pap; ver weg rustiger)
-    const wOf = f => Math.max(f.w + RT.extra, 1.6 * px), aw = f => wOf(f) * RT.kerb, asp = f => RANK[f.c] >= 1 ? RD.asp : RD.aspSoft;
+    const RT = ST.rib, RD = ST.road, ink = 0.3, IK = 1.6 + 1.2; // inkt 0,3 m per kant; ver weg wegdek ≥ 1,6 texel + inkt ≥ 0,6 texel per kant
+    const wOf = f => f.w + RT.extra, aw = f => wOf(f) * RT.kerb, asp = f => RANK[f.c] >= 1 ? RD.asp : RD.aspSoft;
     for (const br of [0, 1]) {
       const L = F.line.filter(f => f.br === br);
       if (br) for (const f of L) if (f.c !== 'beek') stroke(f, (RT.street[f.c] || f.c === 'snelweg' ? f.w + RT.extra : f.w) + 2.2, ST.bridge);
-      for (const f of L) if (f.c === 'beek') stroke(f, Math.max(f.w, 1.6 * px), ST.line.beek);
-      // overige paden e.d. (hadden geen lint): oude grondstijl
-      for (const f of L) { if (/^(beek|spoor|tram|snelweg|fiets|stoep)$/.test(f.c) || RT.street[f.c]) continue; stroke(f, Math.max(f.w, 1.2 * px), ST.line[f.c] || ST.line.pad); }
-      // stoepen "Volgens OSM": losse stoeplijnen + stoep langs straten met sidewalk=left/right/both; verder asfalt tot de tuin
-      for (const f of L) if (f.c === 'stoep') { stroke(f, Math.max(f.w, 1.8) + 0.35, RD.walkEdge); stroke(f, Math.max(f.w, 1.8), RD.walk); }
+      for (const f of L) if (f.c === 'beek') stroke(f, f.w, ST.line.beek, 1.6);
+      yield;
+      for (const f of L) { if (/^(beek|spoor|tram|snelweg|fiets|stoep)$/.test(f.c) || RT.street[f.c]) continue; stroke(f, f.w, ST.line[f.c] || ST.line.pad, 1.2); if (Y()) yield; }
+      for (const f of L) if (f.c === 'stoep') { const sw = Math.max(f.w, 1.8); stroke(f, sw + 0.35, RD.walkEdge); stroke(f, sw, RD.walk); }
       const S = L.filter(f => RT.street[f.c]);
       for (const f of S) if (f.sw) {
         const d = (f.w + RT.extra) / 2 + 0.9;
         for (const [bit, o] of [[1, d], [2, -d]]) if (f.sw & bit) { const g = offset(f.a, o); stroke(g, 2.15, RD.walkEdge); stroke(g, 1.8, RD.walk); }
       }
-      // fietspaden "Zacht terracotta": gedempt rood, iets smaller, geen rand
-      for (const f of L) if (f.c === 'fiets') stroke(f, Math.max(f.w, 1.2 * px) * 0.85, RD.bike);
-      // straten "Belijnd asfalt": inkt, stoeprand, donker asfalt (eerst alle randen, dan alle wegdekken → kruisingen lopen in elkaar over)
-      for (const f of S) stroke(f, wOf(f) + 2 * ink, RT.ink);
-      for (const f of S) stroke(f, wOf(f), RT.street[f.c][1]);
-      for (const f of S) stroke(f, aw(f), asp(f));
-      // markering: kantstrepen + middenstreep op doorgaande wegen (rang ≥ 3), strepen stoppen op de kruising, haaientanden waar een lagere weg aansluit
+      yield;
+      for (const f of L) if (f.c === 'fiets') stroke(f, f.w * 0.85, RD.bike, 1.02);
+      // straten "Belijnd asfalt": eerst alle randen, dan alle wegdekken → kruisingen lopen in elkaar over
+      for (const f of S) { stroke(f, wOf(f) + 2 * ink, RT.ink, IK); if (Y()) yield; }
+      for (const f of S) { stroke(f, wOf(f), RT.street[f.c][1], 1.6); if (Y()) yield; }
+      for (const f of S) { stroke(f, aw(f), asp(f), 1.6 * RT.kerb); if (Y()) yield; }
+      // markering (fijn): kantstrepen + middenstreep op doorgaande wegen, kruisingsvlak, haaientanden waar een lagere weg aansluit
       const J = br ? [] : F.jn;
-      if (fine) {
-        for (const f of S) if (RANK[f.c] >= 3 && aw(f) >= 5) { stroke(f, aw(f) - 0.7, RD.paint); stroke(f, aw(f) - 0.98, asp(f)); }
-        x.lineCap = 'butt'; x.setLineDash([3, 6]); for (const f of S) if (RANK[f.c] >= 3) stroke(f, 0.15, RD.paint); x.setLineDash([]); x.lineCap = 'round';
-        for (const n of J) { x.beginPath(); x.arc(n.x - X0, n.y - Y0, Math.max(0, n.maxW * RT.kerb / 2 - 0.1), 0, Math.PI * 2); x.fillStyle = asp(n.arms.find(a => RANK[a.f.c] === n.maxR).f); x.fill(); }
-        for (const n of J) if (n.maxR >= 3 && !n.ring) for (const a of n.arms) { const r = RANK[a.f.c]; if (r < n.maxR && r >= 1) { const d = n.maxW / 2 + 1; teeth(x, n.x + a.dx * d, n.y + a.dy * d, a.dx, a.dy, aw(a.f) - 0.6); } }
-      }
+      x.fine = 1;
+      for (const f of S) if (RANK[f.c] >= 3 && aw(f) >= 5) { stroke(f, aw(f) - 0.7, RD.paint); stroke(f, aw(f) - 0.98, asp(f)); }
+      x.lineCap = 'butt'; x.setLineDash([3, 6]); for (const f of S) if (RANK[f.c] >= 3) stroke(f, 0.15, RD.paint); x.setLineDash([]); x.lineCap = 'round';
+      for (const n of J) { x.beginPath(); x.arc(n.x - X0, n.y - Y0, Math.max(0, n.maxW * RT.kerb / 2 - 0.1), 0, Math.PI * 2); x.fillStyle = asp(n.arms.find(a => RANK[a.f.c] === n.maxR).f); x.fill(); }
+      for (const n of J) if (n.maxR >= 3 && !n.ring) for (const a of n.arms) { const r = RANK[a.f.c]; if (r < n.maxR && r >= 1) { const d = n.maxW / 2 + 1; teeth(x, n.x + a.dx * d, n.y + a.dy * d, a.dx, a.dy, aw(a.f) - 0.6); } }
+      x.fine = 0;
+      yield;
       // snelwegen: lichte berm, donker asfalt, witte kantstrepen, middenstreep 3 m / gat 9 m (alleen ≥ 2 stroken)
       const M = L.filter(f => f.c === 'snelweg');
-      for (const f of M) stroke(f, f.w + 2 * ink, RT.ink);
-      for (const f of M) stroke(f, f.w, RT.berm);
+      for (const f of M) stroke(f, f.w + 2 * ink, RT.ink, IK);
+      for (const f of M) stroke(f, f.w, RT.berm, 1.6);
       for (const f of M) stroke(f, f.w - 0.96, RT.asphalt);
       for (const f of M) { stroke(f, f.w - 2.04, RT.paint); stroke(f, f.w - 2.76, RT.asphalt); }
       x.lineCap = 'butt'; x.setLineDash([3, 9]); for (const f of M) if (f.w >= 7) stroke(f, 0.24, RT.paint); x.setLineDash([]); x.lineCap = 'round';
@@ -287,123 +253,304 @@
         x.lineCap = 'butt'; stroke(f, 1.75, ST.rails); stroke(f, 1.2, ST.line.tram); x.lineCap = 'round';
       }
       const R = L.filter(f => f.c === 'spoor');
-      for (const f of R) stroke(f, RT.railW + 2 * ink, RT.ink);
+      for (const f of R) stroke(f, RT.railW + 2 * ink, RT.ink, IK);
       for (const f of R) stroke(f, RT.railW, RT.ballast);
       x.lineCap = 'butt'; x.setLineDash([0.27, 0.38]); for (const f of R) stroke(f, RT.railW * 0.46, RT.sleeper); x.setLineDash([]);
-      for (const f of R) for (const d of [-0.75, 0.75]) stroke(offset(f.a, d), Math.max(0.19, 0.8 * px), RT.rail);
+      for (const f of R) for (const d of [-0.75, 0.75]) stroke(offset(f.a, d), 0.19, RT.rail, 0.8);
       x.lineCap = 'round';
-      if (!br) { islands2D(x, F, ink, fine); if (fine) zebras(x, F); }
+      if (!br) { islands2D(x, F); x.fine = 1; zebras(x, F); x.fine = 0; }
+      yield;
     }
-    if (!c.gTex || c.gTex.image !== cv) {
-      c.gTex?.dispose(); c.gTex = new THREE.CanvasTexture(cv); c.gTex.colorSpace = THREE.SRGBColorSpace; c.gTex.anisotropy = 8; // three kapt af op het maximum
-    }
-    c.gTex.needsUpdate = true; c.gRes = res; H.freeAfterUpload(c.gTex); // canvas na upload vrij (2048² = 16 MB); volgende keer nieuw canvas
-  }
-  // watermasker per vak (±1 px/m)
-  function waterMask(c) {
-    const F = feats(c), res = 1024, s = res / KM;
-    const W = F.area.filter(isWat), B = F.line.filter(f => f.c === 'beek');
-    c.gMDone = true; if (!W.length && !B.length) return;
-    const mk = () => Object.assign(document.createElement('canvas'), { width: res, height: res });
-    const a = mk(), x = a.getContext('2d', { willReadFrequently: true });
-    X0 = c.x0; Y0 = c.y0; x.fillStyle = '#000'; x.fillRect(0, 0, res, res);
-    x.setTransform(s, 0, 0, -s, 0, res); x.fillStyle = x.strokeStyle = '#fff'; x.lineCap = x.lineJoin = 'round';
-    for (const f of W) { path(x, f.rs); x.fill('evenodd'); }
-    for (const f of B) { const p = f.a; x.beginPath(); x.moveTo(p[0] - X0, p[1] - Y0); for (let k = 2; k < p.length; k += 2) x.lineTo(p[k] - X0, p[k + 1] - Y0); x.lineWidth = Math.max(f.w, 1.5); x.stroke(); }
-    const blur = r => { const b = mk(), y = b.getContext('2d', { willReadFrequently: true }); y.fillStyle = '#000'; y.fillRect(0, 0, res, res); y.filter = `blur(${r}px)`; y.drawImage(a, 0, 0); return y.getImageData(0, 0, res, res).data; };
-    const d0 = x.getImageData(0, 0, res, res).data, d1 = blur(2.5), d2 = blur(9), out = new Uint8Array(res * res * 4), row = res * 4;
-    for (let r = 0; r < res; r++) { // DataTexture: rij 0 = onderkant → canvas (rij 0 = noord) omdraaien
-      const si = r * row, di = (res - 1 - r) * row;
-      for (let k = 0; k < row; k += 4) { out[di + k] = d0[si + k]; out[di + k + 1] = d1[si + k]; out[di + k + 2] = d2[si + k]; out[di + k + 3] = 255; }
-    }
-    c.mTex = new THREE.DataTexture(out, res, res); c.mTex.magFilter = c.mTex.minFilter = THREE.LinearFilter; c.mTex.needsUpdate = true; H.freeAfterUpload(c.mTex);
   }
 
-  // ---------- shader (terrein + ondergrond; alleen in iso) ----------
-  const tex1 = hex => { const n = parseInt(hex.slice(1), 16), t = new THREE.DataTexture(new Uint8Array([n >> 16, n >> 8 & 255, n & 255, 255]), 1, 1); t.colorSpace = THREE.SRGBColorSpace; t.needsUpdate = true; return t; };
-  const BASE = tex1(ST.base), BLACK = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1); BLACK.needsUpdate = true;
-  const GU = { uGrT: { value: 0 } };
-  H.patchTerrain('ground', (s, m) => {
-    const c = m.userData.groundChunk, O = H.areaInfo.origin;
-    Object.assign(s.uniforms, GU, {
-      tGr: { get value() { return c?.gTex || BASE; } }, tGrM: { get value() { return c?.mTex || BLACK; } },
-      uGrC0: { value: new THREE.Vector2(c ? c.x0 - O[0] : 0, c ? c.y0 - O[1] : 0) }, uGrKm: { value: H.areaInfo?.km || 1000 },
+  // ---------- vector-'canvas': deel van CanvasRenderingContext2D, uitvoer = driehoeken in Buf ----------
+  const DASH = { '3,6': [4, 9, 3], '3,9': [5, 12, 3], '0.3,0.55': [6, 0.85, 0.3], '0.27,0.38': [7, 0.65, 0.27] }; // [soort, periode, aan] (zelfde tabel in GMAT)
+  const COL = new Map();
+  function rgba(s, ga) {
+    let c = COL.get(s);
+    if (!c) {
+      if (s[0] === '#') { const n = parseInt(s.slice(1), 16); c = [n >> 16, n >> 8 & 255, n & 255, 1]; }
+      else { const m = s.match(/[\d.]+/g).map(Number); c = [m[0], m[1], m[2], m[3] ?? 1]; }
+      COL.set(s, c);
+    }
+    return [c[0], c[1], c[2], Math.round(255 * c[3] * ga)];
+  }
+  // hoekpunt: xy (f32, m t.o.v. origin) · aC kleur sRGB + alfa · aK [soort, fijn, halve breedte dm, minPx·20] · aO richting (i8) · aU afstand langs de lijn (cm)
+  function Buf() {
+    let cap = 1 << 16, icap = 1 << 17, n = 0, ni = 0;
+    let P = new Float32Array(cap * 2), C = new Uint8Array(cap * 4), K = new Uint8Array(cap * 4), O = new Int8Array(cap * 2), U = new Uint16Array(cap), I = new Uint32Array(icap);
+    const g = (A, k, m) => { const b = new A.constructor(m * k); b.set(A); return b; };
+    return {
+      get n() { return n; },
+      v(x, y, s, ox, oy, u) {
+        if (n === cap) { cap *= 2; P = g(P, 2, cap); C = g(C, 4, cap); K = g(K, 4, cap); O = g(O, 2, cap); U = g(U, 1, cap); }
+        P[2 * n] = x; P[2 * n + 1] = y; C.set(s.c, 4 * n);
+        K[4 * n] = s.k; K[4 * n + 1] = s.f; K[4 * n + 2] = s.hw; K[4 * n + 3] = s.mp;
+        O[2 * n] = Math.round(ox * 127); O[2 * n + 1] = Math.round(oy * 127); U[n] = u; return n++;
+      },
+      t(a, b, c) { if (ni + 3 > icap) { icap *= 2; I = g(I, 1, icap); } I[ni++] = a; I[ni++] = b; I[ni++] = c; },
+      out: () => ({ P: P.slice(0, 2 * n), C: C.slice(0, 4 * n), K: K.slice(0, 4 * n), O: O.slice(0, 2 * n), U: U.slice(0, n), I: I.slice(0, ni), n, ni }),
+    };
+  }
+  const pip = (px, py, a) => { let ins = false; for (let i = 0, j = a.length - 2; i < a.length; j = i, i += 2) { const yi = a[i + 1], yj = a[j + 1]; if ((yi > py) !== (yj > py) && px < (a[j] - a[i]) * (py - yi) / (yj - yi) + a[i]) ins = !ins; } return ins; };
+  const bbR = a => { let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity; for (let k = 0; k < a.length; k += 2) { if (a[k] < x0) x0 = a[k]; if (a[k] > x1) x1 = a[k]; if (a[k + 1] < y0) y0 = a[k + 1]; if (a[k + 1] > y1) y1 = a[k + 1]; } return [x0, y0, x1, y1]; };
+  // even-oneven: ring binnen een oneven aantal andere ringen = gat in de ring die er direct omheen ligt
+  function evenOdd(R) {
+    if (R.length === 1) return [[R[0], []]];
+    const bb = R.map(bbR), inside = (i, j) => { const a = bb[i], b = bb[j]; return a[0] >= b[0] && a[2] <= b[2] && a[1] >= b[1] && a[3] <= b[3] && pip(R[i][0], R[i][1], R[j]); };
+    const d = R.map((_, i) => R.reduce((s, _b, j) => s + (j !== i && inside(i, j) ? 1 : 0), 0)), out = new Map();
+    R.forEach((a, i) => { if (d[i] % 2 === 0) out.set(i, [a, []]); });
+    R.forEach((a, i) => { if (d[i] % 2) for (let j = 0; j < R.length; j++) if (out.has(j) && d[j] === d[i] - 1 && inside(i, j)) { out.get(j)[1].push(a); break; } });
+    return [...out.values()];
+  }
+  const V2 = a => { const o = []; for (let k = 0; k < a.length; k += 2) o.push(new THREE.Vector2(a[k], a[k + 1])); return o; };
+  function VCtx(B) {
+    let T = [1, 0, 0, 1, 0, 0], subs = [], cur = null; const stack = [];
+    const KEYS = ['fillStyle', 'strokeStyle', 'lineWidth', 'lineCap', 'globalAlpha', 'dash', 'fine', 'minPx', 'kind', 'dir'];
+    const x = { fillStyle: '#000', strokeStyle: '#000', lineWidth: 1, lineCap: 'butt', lineJoin: 'round', globalAlpha: 1, dash: null, fine: 0, minPx: 0, kind: 0, dir: [1, 0] };
+    const pt = (px, py) => { const X = T[0] * px + T[2] * py + T[4], Y = T[1] * px + T[3] * py + T[5], a = cur.a, m = a.length; if (m && Math.abs(a[m - 2] - X) < 1e-4 && Math.abs(a[m - 1] - Y) < 1e-4) return; a.push(X, Y); };
+    const sc = () => Math.sqrt(Math.abs(T[0] * T[3] - T[1] * T[2]));
+    function fillRings(R) {
+      if (!R.length) return;
+      const s = { c: rgba(x.fillStyle, x.globalAlpha), k: x.kind, f: x.fine ? 1 : 0, hw: 0, mp: 0 }, [dx, dy] = x.kind === 3 ? x.dir : [0, 0];
+      for (const [outer, holes] of evenOdd(R)) {
+        const cont = V2(outer), hv = holes.map(V2);
+        let tri; try { tri = THREE.ShapeUtils.triangulateShape(cont, hv); } catch (e) { continue; } // haalt dubbele eindpunten weg (in place)
+        const b0 = B.n; for (const p of cont.concat(...hv)) B.v(p.x, p.y, s, dx, dy, 0);
+        for (const t of tri) B.t(b0 + t[0], b0 + t[1], b0 + t[2]);
+      }
+    }
+    // lint met ronde hoeken (taartpunten aan de buitenkant) en ronde/platte kappen; aO = eenheidsrichting vanaf de hartlijn → shader kan verbreden
+    function ribbon(a, closed, hw) {
+      const mp = x.minPx; if (hw <= 0 && !mp) return;
+      let n = a.length / 2;
+      if (n > 2 && Math.abs(a[0] - a[2 * n - 2]) < 1e-4 && Math.abs(a[1] - a[2 * n - 1]) < 1e-4) { n--; closed = true; }
+      if (n < 2) return;
+      const s = { c: rgba(x.strokeStyle, x.globalAlpha), k: x.dash ? x.dash[0] : 0, f: x.fine ? 1 : 0, hw: Math.min(255, Math.round(hw * 10)), mp: Math.min(255, Math.round(mp * 20)) };
+      const per = x.dash ? x.dash[1] : 0, round = x.lineCap === 'round', m = closed ? n : n - 1;
+      const ucm = (v, b) => Math.min(65535, Math.round((v - b) * 100));
+      const fan = (cx, cy, a0, da, uu) => {
+        const k = Math.max(1, Math.ceil(Math.abs(da) / (Math.PI / 8))), c0 = B.v(cx, cy, s, 0, 0, uu); let prev = -1;
+        for (let i = 0; i <= k; i++) { const an = a0 + da * i / k, ox = Math.cos(an), oy = Math.sin(an), v = B.v(cx + ox * hw, cy + oy * hw, s, ox, oy, uu); if (prev >= 0) B.t(c0, prev, v); prev = v; }
+      };
+      let u = 0, pdx = 0, pdy = 0, pb = 0, fdx = 0, fdy = 0, have = false;
+      const join = (px, py, dx, dy, uu) => {
+        const cr = pdx * dy - pdy * dx, an = Math.atan2(cr, pdx * dx + pdy * dy); if (Math.abs(an) < 1e-3) return;
+        const a0 = cr > 0 ? Math.atan2(-pdx, pdy) : Math.atan2(pdx, -pdy); // buitenkant: rechts bij een bocht naar links en omgekeerd
+        fan(px, py, a0, an, uu);
+      };
+      for (let i = 0; i < m; i++) {
+        const q = (i + 1) % n, ax = a[2 * i], ay = a[2 * i + 1], bx = a[2 * q], by = a[2 * q + 1];
+        let dx = bx - ax, dy = by - ay; const L = Math.hypot(dx, dy); if (L < 1e-6) continue; dx /= L; dy /= L;
+        const nx = -dy, ny = dx, base = per ? Math.floor(u / per) * per : 0;
+        if (have) join(ax, ay, dx, dy, ucm(u, pb));
+        else { fdx = dx; fdy = dy; if (round && !closed) fan(ax, ay, Math.atan2(ny, nx), Math.PI, 0); }
+        const v0 = B.v(ax + nx * hw, ay + ny * hw, s, nx, ny, ucm(u, base)), v1 = B.v(ax - nx * hw, ay - ny * hw, s, -nx, -ny, ucm(u, base));
+        const v2 = B.v(bx + nx * hw, by + ny * hw, s, nx, ny, ucm(u + L, base)), v3 = B.v(bx - nx * hw, by - ny * hw, s, -nx, -ny, ucm(u + L, base));
+        B.t(v0, v1, v2); B.t(v2, v1, v3);
+        u += L; pdx = dx; pdy = dy; pb = base; have = true;
+        if (i === m - 1) {
+          if (closed) join(a[0], a[1], fdx, fdy, ucm(u, pb));
+          else if (round) fan(bx, by, Math.atan2(-ny, -nx), Math.PI, ucm(u, pb));
+        }
+      }
+    }
+    return Object.assign(x, {
+      setTransform(a, b, c, d, e, f) { T = [a, b, c, d, e, f]; },
+      translate(a, b) { T[4] += T[0] * a + T[2] * b; T[5] += T[1] * a + T[3] * b; },
+      rotate(r) { const c = Math.cos(r), s = Math.sin(r), [a, b, cc, d] = T; T[0] = a * c + cc * s; T[1] = b * c + d * s; T[2] = cc * c - a * s; T[3] = d * c - b * s; },
+      scale(a, b) { T[0] *= a; T[1] *= a; T[2] *= b; T[3] *= b; },
+      save() { stack.push([T.slice(), KEYS.map(k => x[k])]); },
+      restore() { const s = stack.pop(); if (s) { T = s[0]; KEYS.forEach((k, i) => { x[k] = s[1][i]; }); } },
+      setLineDash(a) { x.dash = a.length ? DASH[a.join(',')] || null : null; },
+      beginPath() { subs = []; cur = null; },
+      moveTo(px, py) { cur = { a: [], closed: false }; subs.push(cur); pt(px, py); },
+      lineTo(px, py) { if (!cur) x.moveTo(px, py); else pt(px, py); },
+      closePath() { if (cur) { cur.closed = true; cur = null; } },
+      arc(cx, cy, r, a0, a1) {
+        const TAU = Math.PI * 2; let d = a1 - a0; d = d >= TAU - 1e-9 ? TAU : ((d % TAU) + TAU) % TAU;
+        const rw = r * sc(), st = rw > 0.05 ? Math.min(Math.PI / 4, 2 * Math.acos(Math.max(-1, 1 - 0.03 / rw))) : Math.PI / 2, n = Math.max(2, Math.ceil(d / st));
+        for (let i = 0; i <= n; i++) { const a = a0 + d * i / n, px = cx + Math.cos(a) * r, py = cy + Math.sin(a) * r; if (!cur) x.moveTo(px, py); else pt(px, py); }
+      },
+      strokeRect(px, py, w, h) { x.beginPath(); x.moveTo(px, py); x.lineTo(px + w, py); x.lineTo(px + w, py + h); x.lineTo(px, py + h); x.closePath(); x.stroke(); },
+      fill() { fillRings(subs.map(s => s.a).filter(a => a.length >= 6)); },
+      stroke() { const w = x.lineWidth * sc(); for (const s of subs) if (s.a.length >= 4) ribbon(s.a, s.closed, w / 2); },
     });
+  }
+
+  // ---------- grond-pass: mesh van bovenaf in één schermgroot doel (alleen iso) ----------
+  const hex3 = h => { const n = parseInt(h.slice(1), 16); return [(n >> 16) / 255, (n >> 8 & 255) / 255, (n & 255) / 255].map(v => v.toFixed(4)).join(', '); };
+  const W1 = hex3(ST.area.water), W2 = hex3(ST.area.zwembad), BASEV = hex3(ST.base);
+  const GT = { uTpm: { value: 1 } };
+  const GMAT = new THREE.ShaderMaterial({
+    uniforms: GT, transparent: true, depthTest: false, depthWrite: false,
+    vertexShader: `attribute vec4 aC, aK; attribute vec2 aO; attribute float aU; uniform float uTpm;
+      varying vec4 vC; varying vec2 vP, vD; varying float vU, vKind, vFine;
+      void main() {
+        vec2 p = position.xy;
+        if (aK.x < 2.5 || aK.x > 3.5) p += aO * max(0.0, 0.025 * aK.w / uTpm - 0.1 * aK.z); // minPx: ver weg niet dunner dan zoveel texels
+        vP = p; vD = aO; vU = aU / 100.0; vC = aC; vKind = aK.x; vFine = aK.y;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 0.0, 1.0);
+      }`,
+    fragmentShader: `uniform float uTpm; varying vec4 vC; varying vec2 vP, vD; varying float vU, vKind, vFine;
+      float h12(vec2 p) { vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
+      float vn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(h12(i), h12(i + vec2(1, 0)), f.x), mix(h12(i + vec2(0, 1)), h12(i + vec2(1, 1)), f.x), f.y); }
+      float seg(vec2 p, vec2 a, vec2 b) { vec2 pa = p - a, ba = b - a; return length(pa - ba * clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0)); }
+      void main() {
+        vec4 c = vC; float k = floor(vKind + 0.5), fk = smoothstep(0.8, 1.0, uTpm), aa = 0.5 / uTpm;
+        if (vFine > 0.5) c.a *= fk;
+        if (k > 3.5) { // streepjes (DASH in ground.js)
+          float P = k < 4.5 ? 9.0 : k < 5.5 ? 12.0 : k < 6.5 ? 0.85 : 0.65, on = k < 5.5 ? 3.0 : k < 6.5 ? 0.3 : 0.27;
+          if (mod(vU, P) > on) discard;
+        } else if (k > 2.5) { // maaistrepen 5 m (2,5 m lichter)
+          if (fract(dot(vP, vec2(-vD.y, vD.x)) / 5.0) < 0.5) c.rgb = min(c.rgb * 1.06, 1.0);
+        } else if (k > 0.5) { // gras: vlekken licht/donker/droog, dichtbij plukjes (en bloemetjes)
+          vec3 col = c.rgb; vec2 p = vP;
+          float n = vn(p / 8.0 + 13.1) * 0.65 + vn(p / 3.1 - 4.2) * 0.35, m = vn(p / 12.0 + 71.0);
+          c.rgb = mix(c.rgb, col * 0.88, 0.45 * smoothstep(0.42, 0.32, n));
+          c.rgb = mix(c.rgb, min(col * 1.07, 1.0), 0.45 * smoothstep(0.64, 0.74, n));
+          c.rgb = mix(c.rgb, min(col * 1.12, 1.0), 0.3 * smoothstep(0.7, 0.8, m));
+          if (fk > 0.0) {
+            vec2 g = floor(p / 4.2), o = g * 4.2 + vec2(h12(g), h12(g + 17.3)) * 4.2;
+            float d = seg(p, o, o + vec2((h12(g + 5.7) - 0.5) * 0.4, 0.5 + 0.5 * h12(g + 3.1)));
+            c.rgb = mix(c.rgb, col * 0.8, fk * smoothstep(0.09 + aa, 0.09 - aa, d));
+            if (k > 1.5) {
+              vec2 f = floor(p / 11.0), fc = f * 11.0 + 1.2 + vec2(h12(f + 2.2), h12(f + 9.4)) * 8.6;
+              float r = h12(f + 4.4); vec3 fl = r < 0.5 ? vec3(1.0, 0.98, 0.94) : r < 0.8 ? vec3(1.0, 0.847, 0.29) : vec3(0.914, 0.545, 0.69);
+              for (int i = 0; i < 4; i++) { vec2 dp = fc + (vec2(h12(f + float(i) * 3.1), h12(f + float(i) * 7.7 + 1.3)) - 0.5) * 2.4;
+                c.rgb = mix(c.rgb, fl, fk * smoothstep(0.22 + aa, 0.22 - aa, length(p - dp))); }
+            }
+          }
+        }
+        if (c.a < 0.004) discard;
+        gl_FragColor = c; // sRGB-waarden ongewijzigd; terrein decodeert (grLin)
+      }`,
+  });
+  const gScene = new THREE.Scene(), top = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 20000);
+  const G = { mesh: null, ready: false, gen: null };
+  const tmp = new THREE.Vector3(), dir = new THREE.Vector3(), fw = new THREE.Vector3(), pts = Array.from({ length: 8 }, () => new THREE.Vector3()), clr = new THREE.Color();
+  let rtG = null, lastKey = '', gDirty = true;
+  const boxOf = c => c.gBox || (c.gBox = new THREE.Box3().setFromObject(c.terrain));
+  function foot(cam, h0, h1) { // schermhoeken → grond op hoogte h0 en h1
+    let k = 0;
+    for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
+      tmp.set(sx, sy, -1).unproject(cam);
+      for (const h of [h0, h1]) pts[k++].copy(tmp).addScaledVector(dir, (h - tmp.y) / dir.y);
+    }
+  }
+  function gPass(cam) {
+    if (!iso() || !G.mesh || !cam.isOrthographicCamera) { GU.uGrOn.value = 0; return; }
+    const r = H.renderer, gl = r.getContext(), W = gl.drawingBufferWidth, Hh = gl.drawingBufferHeight;
+    cam.updateMatrixWorld();
+    const key = cam.matrixWorld.elements.join() + '|' + cam.projectionMatrix.elements.join() + '|' + W + 'x' + Hh;
+    if (!gDirty && key === lastKey) return;
+    lastKey = key; gDirty = false;
+    cam.getWorldDirection(dir); if (Math.abs(dir.y) < 0.05) { GU.uGrOn.value = 0; return; }
+    // hoogtebereik: eerst alle vakken, dan alleen de vakken onder het beeld (kleiner gebied = meer texels per m)
+    let h0 = Infinity, h1 = -Infinity;
+    for (const c of H.chunks.values()) if (c.terrain) { const b = boxOf(c); h0 = Math.min(h0, b.min.y); h1 = Math.max(h1, b.max.y); }
+    if (!(h1 >= h0)) { h0 = 0; h1 = 1; }
+    foot(cam, h0, h1);
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (const p of pts) { x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); z0 = Math.min(z0, p.z); z1 = Math.max(z1, p.z); }
+    let l0 = Infinity, l1 = -Infinity;
+    for (const c of H.chunks.values()) if (c.terrain) { const b = boxOf(c); if (b.max.x < x0 || b.min.x > x1 || b.max.z < z0 || b.min.z > z1) continue; l0 = Math.min(l0, b.min.y); l1 = Math.max(l1, b.max.y); }
+    if (l1 >= l0) foot(cam, l0 - 2, l1 + 2);
+    // camera recht van boven; 'boven' in het doel = kijkrichting over de grond → doel ligt net als het scherm
+    fw.set(dir.x, 0, dir.z).normalize();
+    let cx = 0, cz = 0; for (const p of pts) { cx += p.x / 8; cz += p.z / 8; }
+    top.position.set(cx, 10000, cz); top.up.copy(fw); top.lookAt(cx, 0, cz); top.updateMatrixWorld();
+    let L = Infinity, R = -Infinity, B = Infinity, T = -Infinity;
+    for (const p of pts) { tmp.copy(p).applyMatrix4(top.matrixWorldInverse); L = Math.min(L, tmp.x); R = Math.max(R, tmp.x); B = Math.min(B, tmp.y); T = Math.max(T, tmp.y); }
+    L -= 2; R += 2; B -= 2; T += 2;
+    Object.assign(top, { left: L, right: R, bottom: B, top: T }); top.updateProjectionMatrix();
+    // doel: breedte = scherm, hoogte 1,5× (grond loopt naar achter langer door dan het scherm hoog is). Alleen groeien (bewegen tekent op pixelratio 1 →
+    // anders bij elk begin/einde opnieuw aanmaken). MSAA 4× alleen bij pixelratio < 1,5 (bij 1600×900 × 1,5: zonder ±20 MB, met ±100 MB).
+    const mx = Math.min(4096, r.capabilities.maxTextureSize);
+    let w = Math.min(mx, W), h = Math.min(mx, Math.ceil(Hh * 1.5 / 16) * 16);
+    if (!rtG) { rtG = new THREE.WebGLRenderTarget(w, h, { samples: r.capabilities.isWebGL2 && r.getPixelRatio() < 1.5 ? 4 : 0, depthBuffer: false }); GU.tGr.value = rtG.texture; }
+    else if (w > rtG.width || h > rtG.height) rtG.setSize(Math.max(w, rtG.width), Math.max(h, rtG.height));
+    w = rtG.width; h = rtG.height;
+    const tpm = w / (R - L);
+    GT.uTpm.value = tpm;
+    r.getClearColor(clr); const ca = r.getClearAlpha(), at = r.getRenderTarget();
+    r.setRenderTarget(rtG); r.setClearColor(0x000000, 0); r.clear(true, false, false); r.render(gScene, top);
+    r.setClearColor(clr, ca); r.setRenderTarget(at);
+    GU.uGrVP.value.multiplyMatrices(top.projectionMatrix, top.matrixWorldInverse);
+    GU.uGrM.value.set(1 / (R - L), 1 / (T - B)); GU.uGrTpm.value = tpm; GU.uGrOn.value = 1;
+  }
+  H.addPreScene?.(gPass);
+  H.groundMB = () => G.mb || 0;
+
+  // ---------- opbouw in stukjes (±12 ms per tik) ----------
+  function startBuild() {
+    if (G.gen || G.ready) return;
+    const t0 = performance.now(), B = Buf(), x = VCtx(B), F = prep();
+    X0 = H.areaInfo.origin[0]; Y0 = H.areaInfo.origin[1];
+    G.gen = paintAll(x, F);
+    const tick = () => {
+      const t = performance.now();
+      try { while (performance.now() - t < 12) if (G.gen.next().done) return finish(B, t0); }
+      catch (e) { console.error('heerlen-3d grond:', e); return; }
+      setTimeout(tick, 0);
+    };
+    tick();
+  }
+  function finish(B, t0) {
+    const o = B.out(), g = new THREE.BufferGeometry();
+    const at = (a, k, nm) => new THREE.BufferAttribute(a, k, nm).onUpload(function () { this.array = null; }); // JS-kopie weg na upload
+    g.setAttribute('position', at(o.P, 2)); g.setAttribute('aC', at(o.C, 4, true)); g.setAttribute('aK', at(o.K, 4, false));
+    g.setAttribute('aO', at(o.O, 2, true)); g.setAttribute('aU', at(o.U, 1, false)); g.setIndex(at(o.I, 1));
+    g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
+    const m = new THREE.Mesh(g, GMAT); m.rotation.x = -Math.PI / 2; m.frustumCulled = false; gScene.add(m); // (x, y) → wereld (x, 0, −y)
+    G.mesh = m; G.ready = true; gDirty = true;
+    G.mb = (o.P.byteLength + o.C.byteLength + o.K.byteLength + o.O.byteLength + o.U.byteLength + o.I.byteLength) / 1048576;
+    console.info(`heerlen-3d grond: ${o.n} hoekpunten, ${o.ni / 3} driehoeken, ${G.mb.toFixed(1)} MB, ${Math.round(performance.now() - t0)} ms`);
+    for (const c of H.chunks.values()) if (c.gOn) H.emit?.('ground', c); // iso/laden.js: inkleuren; app.js: panden mogen komen
+    H.redraw();
+  }
+
+  // ---------- shader terrein (alleen iso): kleur uit het grond-doel op wereldpositie ----------
+  const GU = { tGr: { value: new THREE.DataTexture(new Uint8Array(4), 1, 1) }, uGrVP: { value: new THREE.Matrix4() }, uGrM: { value: new THREE.Vector2(1, 1) },
+    uGrTpm: { value: 1 }, uGrOn: { value: 0 }, uGrT: { value: 0 } };
+  GU.tGr.value.needsUpdate = true;
+  H.patchTerrain('ground', s => {
+    Object.assign(s.uniforms, GU);
     s.vertexShader = s.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vGrW;')
       .replace('#include <project_vertex>', '#include <project_vertex>\nvGrW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
     s.fragmentShader = s.fragmentShader.replace('#include <common>', `#include <common>
-      varying vec3 vGrW; uniform sampler2D tGr, tGrM; uniform vec2 uGrC0; uniform float uGrT, uGrKm;
+      varying vec3 vGrW; uniform sampler2D tGr; uniform mat4 uGrVP; uniform vec2 uGrM; uniform float uGrT, uGrTpm, uGrOn;
+      const vec3 GR_BASE = vec3(${BASEV});
       float grH(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-      float grN(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(grH(i), grH(i + vec2(1, 0)), f.x), mix(grH(i + vec2(0, 1)), grH(i + vec2(1, 1)), f.x), f.y); }`)
+      float grN(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(grH(i), grH(i + vec2(1, 0)), f.x), mix(grH(i + vec2(0, 1)), grH(i + vec2(1, 1)), f.x), f.y); }
+      vec3 grAt(vec2 uv) { if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) return GR_BASE; vec4 t = texture2D(tGr, uv); return t.rgb + GR_BASE * (1.0 - t.a); }
+      vec3 grLin(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)); }
+      float grWat(vec3 c) { vec3 a = c - vec3(${W1}), b = c - vec3(${W2}); return 1.0 - smoothstep(0.03, 0.08, sqrt(min(dot(a, a), dot(b, b)))); }`)
       // na color_fragment én na het iso-kaartfilter van terrMat (anders kleurt dat filter de grond mee)
-      .replace('#include <alphamap_fragment>', `vec4 grM = vec4(0.0); float grW = 0.0;
+      .replace('#include <alphamap_fragment>', `float grK = 0.0;
       if (uIso > 0.5) {
-        vec2 grUv = (vec2(vGrW.x, -vGrW.z) - uGrC0) / uGrKm;
-        diffuseColor.rgb = texture2D(tGr, grUv).rgb;
-        grM = texture2D(tGrM, grUv); grW = smoothstep(0.35, 0.65, grM.r);
+        vec2 grUv = (uGrVP * vec4(vGrW, 1.0)).xy * 0.5 + 0.5;
+        vec3 grC = uGrOn > 0.5 ? grAt(grUv) : GR_BASE;
+        diffuseColor.rgb = grLin(grC);
+        float grW = grWat(grC) * smoothstep(0.8, 1.0, uGrTpm) * uGrOn;
+        if (grW > 0.0) { // schuimrand: aandeel water binnen 1,6 m (smal) en 8 m (geen schuim op smalle beken)
+          float s1 = 0.0, s2 = 0.0;
+          for (int i = 0; i < 8; i++) { float a = float(i) * 0.7853982; vec2 d = vec2(cos(a), sin(a)) * uGrM;
+            s1 += grWat(grAt(grUv + d * 1.6)); s2 += grWat(grAt(grUv + d * 8.0)); }
+          float wid = 0.3 + 0.08 * sin(uGrT * 1.4 + grN(vGrW.xz / 6.0) * 6.0);
+          grK = (1.0 - smoothstep(wid * 0.75, wid, s1 / 16.0)) * smoothstep(0.28, 0.42, s2 / 8.0) * 0.92 * grW;
+        }
       }
       #include <alphamap_fragment>`)
-      .replace('#include <opaque_fragment>', `if (grW > 0.0) { // schuimrand: smal, ademend, met wat ruis; niet op smalle beken (brede vervaging B blijft laag)
+      .replace('#include <opaque_fragment>', `if (grK > 0.0) {
         float lit = dot(outgoingLight, vec3(0.3, 0.59, 0.11)) / max(dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11)), 0.001);
-        float wid = 0.3 + 0.08 * sin(uGrT * 1.4 + grN(vGrW.xz / 6.0) * 6.0);
-        float k = (1.0 - smoothstep(wid * 0.75, wid, grM.g - 0.5)) * smoothstep(0.28, 0.42, grM.b) * 0.92;
-        outgoingLight = mix(outgoingLight, vec3(0.97, 0.99, 1.0) * clamp(lit, 0.3, 1.1), k * grW);
+        outgoingLight = mix(outgoingLight, vec3(0.97, 0.99, 1.0) * clamp(lit, 0.3, 1.1), grK);
       }
       #include <opaque_fragment>`);
   });
 
-  // ---------- resolutie naar beeldschaal + schilderwachtrij (één vak per tik, dichtbij eerst) ----------
   const iso = () => H.getMode?.() === 'iso';
-  const Q = new Map(); let busy = false, refT = 0;
-  function want(c) {
-    const [tx, ty] = H.target(), vd = Math.max(H.viewDist(), 1);
-    const dx = Math.max(c.x0 - tx, 0, tx - c.x0 - KM), dy = Math.max(c.y0 - ty, 0, ty - c.y0 - KM), dt = Math.hypot(dx, dy);
-    // iso: meters per schermpixel ≈ 0,77 · viewDist / schermhoogte (px) → texels per km die nodig zijn
-    let need = 1300 * innerHeight * Math.min(devicePixelRatio || 1, 2) / vd;
-    if (dt > vd * 0.9 + 300) need /= 4; // buiten beeld
-    // vakken onder/naast het midden mogen 4096 px/km (strepen 0,15 m, zebra's 0,5 m); dat zijn er hooguit ±4 (64 MB elk op de GPU)
-    const max = dt < 120 && (H.renderer?.capabilities.maxTextureSize || 0) >= 4096 ? 4096 : 2048;
-    let r = 256; while (r < max && r < need * 0.8) r *= 2;
-    c.gDt = dt;
-    return r;
-  }
-  function refresh() {
-    refT = 0; if (!iso()) return;
-    // tijdens zoomen/schuiven alleen nog-kale vakken (grond gaat voor, mooi laden onthult pas ná het schilderen); fijner pas bij stilstand ('still')
-    const mv = H.moving?.() && !H.intro?.();
-    for (const c of H.chunks.values()) {
-      if (!c.terrain || !c.gOn || (mv && c.gTex)) continue;
-      const r = want(c), cur = c.gRes || 0;
-      if (!cur || r > cur || r <= cur / 4 || (cur > 2048 && r <= 2048)) Q.set(c, r); // 4096 meteen terug als het vak niet meer in het midden ligt else Q.delete(c);
-    }
-    pump(); water();
-  }
-  const later = () => { if (!refT) refT = setTimeout(refresh, 150); };
-  function pump() { if (!busy && Q.size) { busy = true; setTimeout(step, 0); } }
-  function step() {
-    busy = false; if (!iso() || !Q.size) return;
-    const mv = H.moving?.() && !H.intro?.(); // midden in een beweging alleen kale vakken (grof); bijwerken pas bij stilstand
-    let c = null; for (const k of Q.keys()) if ((!mv || !k.gTex) && (!c || (!k.gTex && c.gTex) || (!!k.gTex === !!c.gTex && k.gDt < c.gDt))) c = k;
-    if (!c) return;
-    let r = Q.get(c); Q.delete(c);
-    const first = !c.gTex;
-    if (first && r > 512) { Q.set(c, r); r = 512; } // mooi laden: eerst grof (snel), daarna de echte resolutie
-    paint(c, r);
-    if (r >= 1024 && !c.gMDone && feats(c).wat) { waterMask(c); water(); }
-    if (first) H.emit?.('ground', c); // iso/laden.js: nu pas inkleuren; app.js: panden mogen komen
-    H.redraw();
-    if (mv) { if (!busy && Q.size) { busy = true; setTimeout(step, 30); } } else pump(); // tijdens bewegen wat lucht tussen de vakken
-  }
-  H.groundReady = c => !iso() || !!c.gTex; // app.js loadTick: panden pas na de grond
-
-  // ---------- water: statisch schuimrandje (geen animatie = geen hele scène-render per stap; wens gebruiker: zo min mogelijk kosten aan water) ----------
-  // uGrT blijft vast → breedte varieert alleen met de ruis langs de oever. Vroeger 'ademde' het (sin(uGrT)), dat kostte 6–30 hele beelden/s.
-  function water() {}
-
-  H.on('terrain', c => { c.gOn = true; c.terrain.material.userData.groundChunk = c; c.terrain.material.needsUpdate = true; if (iso()) { Q.set(c, 512); want(c); pump(); } later(); }); // meteen in de rij (niet wachten op refresh)
-  H.on('detail', later);
-  H.on('still', () => { later(); pump(); });
-  H.on('mode', () => { later(); water(); });
-  H.on('layers', () => { for (const c of H.chunks.values()) c.gRes = 0; later(); }); // rotondes komen uit layers.js: vakken die eerder geschilderd waren opnieuw
-  H.on('turn', later);
+  H.groundReady = c => !iso() || G.ready; // app.js loadTick: panden pas na de grond
+  H.on('terrain', c => { c.gOn = true; if (iso()) { startBuild(); if (G.ready) setTimeout(() => H.emit?.('ground', c), 0); } });
+  H.on('mode', () => { if (iso()) startBuild(); gDirty = true; H.redraw(); });
 })();

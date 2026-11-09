@@ -128,7 +128,7 @@
   H.on('terrain', c => {
     if (!grid && !init()) return;
     const k = kOf(c);
-    if (c.gTex) start(k); else if (data[k * 4] === 0 && !pend.has(k)) terr.set(k, now());
+    if (H.groundReady?.(c)) start(k); else if (data[k * 4] === 0 && !pend.has(k)) terr.set(k, now());
   });
   H.on('ground', c => { if (grid || init()) start(kOf(c)); });
 })();

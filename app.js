@@ -71,6 +71,7 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
   const GROW = { dur: 0.5, spread: 1.8, jitter: 0.15 }; GROW.end = GROW.dur + GROW.spread + GROW.jitter;
   const T0 = performance.now(), nowS = () => (performance.now() - T0) / 1000;
   const GU = { uGT: { value: 0 }, uGOn: { value: 0 }, uGDur: { value: GROW.dur } };
+  const TREE_U = { uTT: { value: 1e4 } }; let treeFadeEnd = 0; // bomen groeien (treesFor/updateDetail)
   const GROW_GLSL = `
 uniform float uGT, uGOn, uGDur; attribute float aGrow, aGBase;
 vec3 growB(vec3 p) {
@@ -408,7 +409,8 @@ vec3 growB(vec3 p) {
           if (gr === geo.groups[1]) { gr.start = c.nr * 3; gr.count = c.nw * 3; } else gr.count = 0;
         };
         c.mesh.onAfterShadow = (r, o, cam, sc, geo, dm, gr) => { if (gr && gr._n !== undefined) { gr.start = gr._s; gr.count = gr._n; gr._n = undefined; } };
-        if (h.nv1) { c.lo = build('v1', 'roof1', 'wall1', h.nv1, h.nr1, h.nw1); c.lo.visible = false; c.lo.castShadow = false; }
+        // LoD 1.2 alleen buiten iso (iso toont hem nooit, ±32 MB); vak in iso geladen en later naar een oude modus = daar overal LoD 2.2
+        if (h.nv1 && mode !== 'iso') { c.lo = build('v1', 'roof1', 'wall1', h.nv1, h.nr1, h.nw1); c.lo.visible = false; c.lo.castShadow = false; }
         c.growing = true; c.mesh.castShadow = false; growing.add(c);
         if (c.lo) c.lo.visible = false;
         applyHidden(c);
@@ -421,6 +423,9 @@ vec3 growB(vec3 p) {
   // groeien klaar → schaduw aan, opgelichte plekken (kopieën zonder groei-animatie), gebakken licht (iso/bake.js luistert naar 'grown')
   function growDone(c) {
     c.growing = false; growing.delete(c); lastLod = 0; shadowDirty = true;
+    // groei-attributen weg (8 B/hoekpunt JS + GPU): shader leest dan 0 = staat al. dispose geeft de GPU-buffers vrij; volgende beeld laadt positie/index opnieuw
+    const g = c.mesh && c.mesh.geometry;
+    if (g && g.attributes.aGrow) { g.deleteAttribute('aGrow'); g.deleteAttribute('aGBase'); g.dispose(); }
     chunkMarks(c); emit('grown', c);
   }
 
@@ -485,7 +490,8 @@ vec3 growB(vec3 p) {
         for (const im of c.trees) {
           const g = lo ? im.geoLo : im.geoHi; if (im.geometry !== g && (lo || !mv)) { im.geometry = g; ch = true; }
           const n = Math.round(im.full * f), cs = cast && f === 1;
-          if (im.count !== n && (n < im.count || !mv)) { im.count = n; ch = true; }
+          if (n > im.count) { const t = nowS(); TREE_U.uTT.value = t; const A = im.aTA.array; for (let k = im.count; k < n; k++) A[k] = t + Math.random() * TREE_SPREAD; im.aTA.needsUpdate = true; treeFadeEnd = t + TREE_SPREAD + TREE_FADE; im.count = n; ch = true; }
+          else if (n < im.count) { im.count = n; ch = true; }
           if (im.castShadow !== cs && !mv) { im.castShadow = cs; ch = true; }
         }
       }
@@ -1244,12 +1250,17 @@ vec3 growB(vec3 p) {
   // De laatste stap tekent op het scherm → fragment shader altijd eindigen met #include <colorspace_fragment>. enabled = false → overgeslagen.
   const posts = [];
   H.addPost = p => { posts.push(p); posts.sort((a, b) => (a.order || 0) - (b.order || 0)); redraw(); return p; };
+  // H.addPreScene(fn(camera)): vlak vóór elke iso-scène-render (iso/ground.js tekent daar de grond-mesh in zijn eigen doel)
+  const preScene = [];
+  H.addPreScene = fn => { preScene.push(fn); redraw(); };
   const dbs = new THREE.Vector2(), clr = new THREE.Color();
-  // kleur (half-float RGBA) + normaal/diepte (RG32F, zie NRM_GLSL); NearestFilter: gepakte normaal mag niet geïnterpoleerd worden
+  // kleur (sRGB8: 4 B/px i.p.v. 8 bij half-float; hardware codeert/decodeert, dus geen banden in donker; >1 wordt wel afgekapt)
+  // + normaal/diepte (RG32F, zie NRM_GLSL); NearestFilter: gepakte normaal mag niet geïnterpoleerd worden
+  const COL = { type: THREE.UnsignedByteType, colorSpace: THREE.SRGBColorSpace };
   function makeTargets() {
-    const nOpt = { type: THREE.FloatType, format: THREE.RGFormat, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, depthBuffer: false };
-    if (useMRT) { const c = new THREE.WebGLMultipleRenderTargets(4, 4, 2, { type: THREE.HalfFloatType }), t = c.texture[1]; Object.assign(t, nOpt); delete t.depthBuffer; return { c, n: { texture: t, setSize() {} } }; }
-    return { c: new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType }), n: new THREE.WebGLRenderTarget(4, 4, nOpt) };
+    const nOpt = { type: THREE.FloatType, format: THREE.RGFormat, colorSpace: THREE.NoColorSpace, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, depthBuffer: false };
+    if (useMRT) { const c = new THREE.WebGLMultipleRenderTargets(4, 4, 2, COL), t = c.texture[1]; Object.assign(t, nOpt); delete t.depthBuffer; return { c, n: { texture: t, setSize() {} } }; }
+    return { c: new THREE.WebGLRenderTarget(4, 4, COL), n: new THREE.WebGLRenderTarget(4, 4, nOpt) };
   }
   // iso-omlijning vraagt float32-doelen + highp in de fragmentshader (normaal zit exact in 24 bits gepakt, diepte in meters).
   // Veel telefoons kunnen dat niet → ruis → strepen. Dan iso zonder nabewerking (cel-look blijft, geen inktlijnen/wolken/tilt). ?nopost = forceren (test)
@@ -1263,6 +1274,7 @@ vec3 growB(vec3 p) {
   }
   H.postOk = () => canPost();
   function draw() {
+    if (camera === ortho) for (const fn of preScene) fn(camera);
     if (camera === ortho && !canPost()) { camera.layers.enable(1); renderer.render(scene, camera); camera.layers.set(0); return; } // bewegende laag (verkeer) direct mee
     if (camera !== ortho) { renderer.render(scene, camera); return; }
     if (!rtC) {
@@ -1357,7 +1369,7 @@ vec3 growB(vec3 p) {
     const on = posts.filter(p => p.enabled !== false); for (const p of on) p.before?.();
     const steps = [post, ...on.map(p => p.material)];
     if (steps.length > 1) {
-      if (!rtA) { rtA = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType }); rtB = rtA.clone(); }
+      if (!rtA) { rtA = new THREE.WebGLRenderTarget(4, 4, Object.assign({ depthBuffer: false }, COL)); rtB = rtA.clone(); }
       if (rtA.width !== dbs.x || rtA.height !== dbs.y) { rtA.setSize(dbs.x, dbs.y); rtB.setSize(dbs.x, dbs.y); }
     }
     let src = null, dst = rtA;
@@ -1557,6 +1569,7 @@ vec3 growB(vec3 p) {
       const t = nowS(); GU.uGT.value = t; GU.uGOn.value = 1; dirty = true;
       for (const c of growing) if (t >= c.growEnd) growDone(c);
     } else if (GU.uGOn.value) { GU.uGOn.value = 0; dirty = true; }
+    if (treeFadeEnd) { const t = nowS(); TREE_U.uTT.value = Math.min(t, treeFadeEnd); dirty = true; if (t >= treeFadeEnd) treeFadeEnd = 0; }
     if (selMesh) { // knipperen: 3 s, daarna rustig
       const t = (now - pulseT0) / 1000;
       const o = t < 3 ? 0.15 + 0.4 * (0.5 + 0.5 * Math.sin(t * 7)) : 0.3;
@@ -1782,6 +1795,7 @@ vec3 growB(vec3 p) {
   }
   // bomen per vak (zodra het terrein er is): punten één keer voor heel Heerlen (scanlijn, vaste volgorde), hoogte + meshes per vak
   let treePts = null, treeRes = null;
+  const TREE_FADE = 0.9, TREE_SPREAD = 0.8; // s: groeien per boom, willekeurige wachttijd ervoor (bos komt geleidelijk op)
   function treePoints(woods) {
     let seed = 1234567;
     const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
@@ -1809,7 +1823,16 @@ vec3 growB(vec3 p) {
     let seed = 7654321 + c.i * 1013 + c.j * 7919;
     const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
     const L = []; for (let k = 0; k < P.length; k += 3) L.push(P[k], P[k + 1], heightAt(P[k], P[k + 1]), P[k + 2]);
-    if (!treeRes) treeRes = { geo: [treeGeo(false), treeGeo(true)], geoLo: [treeGeo(false, true), treeGeo(true, true)], mat: celify(new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), 'tree') };
+    if (!treeRes) {
+      const m = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+      m.onBeforeCompile = sh => { // bijkomende bomen groeien zacht uit de grond (aTA = starttijd per boom) i.p.v. ineens te verschijnen
+        sh.uniforms.uTT = TREE_U.uTT;
+        sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nuniform float uTT; attribute float aTA;')
+          .replace('#include <begin_vertex>', `#include <begin_vertex>
+          { float k = clamp((uTT - aTA) / ${TREE_FADE.toFixed(2)}, 0.0, 1.0); k = k * k * (3.0 - 2.0 * k); transformed *= k; }`);
+      };
+      treeRes = { geo: [treeGeo(false), treeGeo(true)], geoLo: [treeGeo(false, true), treeGeo(true, true)], mat: celify(m, 'tree') };
+    }
     const { geo, geoLo, mat } = treeRes;
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), ps = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0), col = new THREE.Color();
     {
@@ -1817,14 +1840,17 @@ vec3 growB(vec3 p) {
       for (let k = n - 1; k > 0; k--) { const j = Math.floor(rnd() * (k + 1)); [ord[k], ord[j]] = [ord[j], ord[k]]; }
       for (const kind of [0, 1]) {
         const idx = ord.filter(k => L[k * 4 + 3] === kind); if (!idx.length) continue;
-        const im = new THREE.InstancedMesh(geo[kind], mat, idx.length);
+        const aTA = new THREE.InstancedBufferAttribute(new Float32Array(idx.length), 1);
+        const own = g => { const n = new THREE.BufferGeometry(); for (const k in g.attributes) n.setAttribute(k, g.attributes[k]); n.setAttribute('aTA', aTA); n.boundingSphere = g.boundingSphere; return n; }; // zelfde buffers, eigen aTA
+        const gHi = own(geo[kind]), gLo = own(geoLo[kind]);
+        const im = new THREE.InstancedMesh(gHi, mat, idx.length);
         idx.forEach((k, i) => {
           const h = (kind ? 13 : 11) + rnd() * 9, w = 0.85 + rnd() * 0.35;
           ps.set(L[k * 4] - O[0], L[k * 4 + 2] - 0.4, -(L[k * 4 + 1] - O[1])); q.setFromAxisAngle(up, rnd() * 6.28); sc.set(h * w, h, h * w);
           im.setMatrixAt(i, m4.compose(ps, q, sc));
           const t = rnd(); im.setColorAt(i, kind ? col.setHSL(0.36 + rnd() * 0.04, 0.38, 0.22 + rnd() * 0.06) : t < 0.12 ? col.setHSL(0.06 + rnd() * 0.07, 0.6, 0.42 + rnd() * 0.08) : col.setHSL(0.22 + rnd() * 0.08, 0.46 + rnd() * 0.14, 0.3 + rnd() * 0.1)); // ±12% herfst
         });
-        im.computeBoundingSphere(); im.receiveShadow = true; im.full = idx.length; im.geoHi = geo[kind]; im.geoLo = geoLo[kind];
+        im.computeBoundingSphere(); im.receiveShadow = true; im.full = idx.length; im.geoHi = gHi; im.geoLo = gLo; im.aTA = aTA; im.count = 0; // updateDetail zet de dichtheid (en laat ze groeien)
         im.visible = !!layerOn.bomen; scene.add(im); (layerObjs.bomen ||= []).push(im); c.trees.push(im);
       }
     }
