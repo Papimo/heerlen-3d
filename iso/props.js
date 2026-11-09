@@ -125,8 +125,9 @@
     lamp: [merge([part(cyl(0.08, 0.06, 4.8, 6), '#4a4d55'), part(cyl(0.34, 0.12, 0.32, 4), '#4a4d55', { p: [0, 4.9, 0], r: [0, Math.PI / 4, 0] }), part(box(0.42, 0.06, 0.42), GLASS, { p: [0, 4.85, 0], tint: 1, glow: 1 })]),
            merge([part(cyl(0.12, 0.07, 8, 6), '#8a9098'), rod([0, 7.8, 0], [1.6, 8.1, 0], 0.05, '#8a9098', 5), part(box(0.8, 0.12, 0.3), '#8a9098', { p: [1.8, 8.0, 0] }), part(box(0.7, 0.04, 0.24), GLASS, { p: [1.8, 7.97, 0], tint: 1, glow: 1 })])],
     // ver weg (< TREE_LO_PPM px/m, = startzoom iso): blokjes zonder onderkant. Auto 60 → 10, lantaarn 52/68 → 20/30 driehoeken (scheelde ±1,2 M driehoeken in beeld)
-    lampLo: [merge([part(bx0(0.12, 4.8, 0.12), '#4a4d55'), part(bx0(0.42, 0.12, 0.42), GLASS, { p: [0, 4.8, 0], tint: 1, glow: 1 })]),
-             merge([part(bx0(0.18, 8, 0.18), '#8a9098'), part(bx0(2.0, 0.12, 0.3), '#8a9098', { p: [1.0, 8.0, 0] }), part(bx0(0.7, 0.06, 0.26), GLASS, { p: [1.8, 7.95, 0], tint: 1, glow: 1 })])],
+    // paal/arm bewust dikker dan echt (±0,5 m): dunner dan ±½ px flitste bij schuiven (stand 700, gebruiker)
+    lampLo: [merge([part(bx0(0.45, 4.8, 0.45), '#4a4d55'), part(bx0(0.8, 0.3, 0.8), GLASS, { p: [0, 4.8, 0], tint: 1, glow: 1 })]),
+             merge([part(bx0(0.55, 8, 0.55), '#8a9098'), part(bx0(2.0, 0.35, 0.45), '#8a9098', { p: [1.0, 8.0, 0] }), part(bx0(0.9, 0.2, 0.5), GLASS, { p: [1.8, 7.85, 0], tint: 1, glow: 1 })])],
     carLo: merge([part(bx0(4.3, 1.35, 1.8), '#fff', { tint: 1 })]),
     stoneLo: { slab: merge([part(bx0(0.62, 0.95, 0.15), '#fff', { tint: 1 })]), round: merge([part(bx0(0.6, 0.95, 0.15), '#fff', { tint: 1 })]),
                cross: merge([part(bx0(0.14, 1.25, 0.13), '#fff', { tint: 1 }), part(bx0(0.6, 0.14, 0.13), '#fff', { p: [0, 0.83, 0], tint: 1 })]), broken: merge([part(bx0(0.6, 0.45, 0.15), '#fff', { tint: 1 })]) },

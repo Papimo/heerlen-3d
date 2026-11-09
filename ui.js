@@ -120,7 +120,7 @@
     // bekend gebouw gaat voor; dichte plekken (filter "nu open") achteraan en grijs
     const order = Object.keys(CATS), rank = it => key(it) === sk ? -3 : it.cat === 'lm' ? -2 : it.cat === 'mijn' ? -1 : order.indexOf(it.cat) + (isShut(it) ? 20 : 0);
     const lmOn = H3D.layerOn('gebouwen');
-    for (const it of allItems()) if ((it.cat === 'lm' ? lmOn : state.on.has(it.cat)) || key(it) === sk) want.set(key(it), it);
+    for (const it of allItems()) if ((it.cat === 'lm' ? lmOn : state.on.has(it.cat)) || key(it) === sk || inWijk(it)) want.set(key(it), it);
     const list = [...want.values()].sort((a, b) => rank(a) - rank(b));
     H3D.setMarks(list.map(it => ({ key: key(it), x: it.x, y: it.y, color: isShut(it) ? SHUT : colorOf(it) })));
     for (const [k, p] of pinEls) if (!want.has(k)) { p.el.remove(); pinEls.delete(k); }
@@ -432,6 +432,39 @@
 
   // bouwjaar-filter aan/uit: chip bij de categorieën met × ; de rest krimpt de grond in (H3D.setEra)
   let eraChip = null, eraDimmed = false;
+  // ---------- Wijk aanklikken (labels.js): alle plekken in die wijk aan; nog een keer = uit ----------
+  // Wijken zijn alleen OSM-namen op een punt (geen grens) → plek hoort bij de dichtstbijzijnde naam van hetzelfde niveau (binnen WIJK_R m)
+  const WIJK_BIG = new Set(['suburb', 'town', 'village']), WIJK_R = { big: 2500, small: 1000 };
+  let wijkChip = null;
+  const lvl = p => WIJK_BIG.has(p.kind) ? 'big' : 'small';
+  function inWijk(it) {
+    const w = H3D.wijkOn; if (!w) return false;
+    if (!w.has) { // per wijk één keer uitrekenen
+      const L = lvl(w), peers = (H3D.wijkPlaces || []).filter(p => lvl(p) === L), R2 = WIJK_R[L] ** 2;
+      w.has = new Set();
+      for (const p of allItems()) {
+        let best = null, bd = R2;
+        for (const q of peers) { const d = (q.x - p.x) ** 2 + (q.y - p.y) ** 2; if (d < bd) { bd = d; best = q; } }
+        if (best === w) w.has.add(key(p));
+      }
+    }
+    return w.has.has(key(it));
+  }
+  function setWijk(w) {
+    if (H3D.wijkOn) H3D.wijkOn.has = null;
+    H3D.wijkOn = H3D.wijkOn === w ? null : w;
+    wijkChip?.remove(); wijkChip = null;
+    rebuildPins();
+    if (H3D.wijkOn) {
+      wijkChip = Object.assign(document.createElement('button'), { className: 'chip', title: 'Plekken van deze wijk weer verbergen' });
+      wijkChip.style.setProperty('--c', '#7a6a55');
+      wijkChip.innerHTML = `<span>📍</span>${esc(w.name)} <small>${H3D.wijkOn.has.size}</small> ×`;
+      wijkChip.addEventListener('click', () => setWijk(H3D.wijkOn));
+      $('chips').appendChild(wijkChip);
+    }
+  }
+  H3D.onWijk = setWijk;
+
   function setEra(e) {
     const n = H3D.setEra(e ? e[0] : 0, e ? e[1] : 0);
     if (eraDimmed) { H3D.setDim(false); eraDimmed = false; showDim(); } // vroeger: dimmen; nu krimpt de rest de grond in (app.js uEra)

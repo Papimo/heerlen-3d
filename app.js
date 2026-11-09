@@ -103,7 +103,7 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
   const redraw = () => { dirty = true; };
   const BUILD = 'anime-1 licht randje, daken op bouwjaar, middag zacht, bolle bomen (2026-11-09)', DBG_U = { value: new THREE.Vector2(1, 1) }; // ?gpu: versie zichtbaar + schakelaars omlijning (x = vlaklijnen, y = dieptelijnen)
   H.redraw = redraw;
-  H.VERSION = '0.6.3'; // getoond onderaan (ui.js #attr); bij release ophogen
+  H.VERSION = '0.6.4'; // getoond onderaan (ui.js #attr); bij release ophogen
   // na de upload naar de GPU de kopie in het werkgeheugen weggooien (canvas → 1×1, DataTexture-data → null). Opnieuw tekenen = nieuw canvas/nieuwe textuur
   H.freeAfterUpload = tex => { tex.onUpdate = () => { tex.onUpdate = null; const im = tex.image; if (im && im.getContext) im.width = im.height = 1; else if (im && im.data) im.data = null; }; return tex; };
 
@@ -716,6 +716,7 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
     dom.addEventListener('pointerdown', e => { down = [e.clientX, e.clientY, performance.now()]; });
     dom.addEventListener('pointerup', e => {
       if (!e.isTrusted || !down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5 || performance.now() - down[2] > 600) return;
+      if (H.clickLabel?.(e.clientX, e.clientY)) return; // wijknaam aangeklikt (labels.js → ui.js wijk-filter)
       const r = dom.getBoundingClientRect();
       ndc.set((e.clientX - r.left) / r.width * 2 - 1, -(e.clientY - r.top) / r.height * 2 + 1);
       ray.setFromCamera(ndc, camera);
@@ -1483,7 +1484,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
       controls.minPolarAngle = controls.maxPolarAngle = ISO_POLAR;
       controls.minDistance = 0; controls.maxDistance = Infinity;
       controls.minZoom = ISO_H0 / ISO_LEVELS[ISO_LEVELS.length - 1]; controls.maxZoom = ISO_H0 / ISO_LEVELS[0];
-      const h = !animate && savedZoom ? ISO_H0 / savedZoom : isoHalf();
+      const h = !animate ? ISO_LEVELS[1] : isoHalf(); // openen: altijd de één-na-dichtste stand (wens gebruiker; helemaal ingezoomd leek niet te laden)
       H.flyTo(x, y, { half: Math.min(ISO_H0 / controls.minZoom, Math.max(ISO_H0 / controls.maxZoom, h)), ms: animate ? 700 : 1 });
       redraw(); return;
     }
@@ -1624,7 +1625,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
               for (int i = 0; i < 24; i++) { float an = float(i) * 2.39996 + rot, r = sqrt((float(i) + 0.5) / 24.0) * 22.0;
                 bl += max(texture2D(tC, vUv + vec2(cos(an), sin(an)) * r / uRes).rgb - 0.72, 0.0); }
               c.rgb += bl / 24.0 * 2.2;
-              if (n0.w > 0.0) c.rgb = mix(c.rgb, texture2D(tSky, vec2(0.5, 0.6)).rgb, smoothstep(0.5, 1.0, vUv.y) * 0.16);
+              if (n0.w > 0.0) c.rgb = mix(c.rgb, texture2D(tSky, vec2(0.5, 0.6)).rgb, smoothstep(0.7, 1.0, vUv.y) * 0.05); // was 0.5–1 × 0.16: te opvallend (gebruiker)
               vec3 x = c.rgb * 1.2, t = clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
               c.rgb = mix(vec3(dot(t, vec3(0.2126, 0.7152, 0.0722))), t, 1.15); }
             float ed = smoothstep(1.7, 2.1, dd) * uDbg.y;

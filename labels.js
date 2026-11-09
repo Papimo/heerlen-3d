@@ -28,9 +28,12 @@
       }
     }
     places = d.places.filter(p => PLACE[p[1]]).map(([name, kind, x, y]) => ({ name, kind, x, y, size: PLACE[kind][0], max: PLACE[kind][1], w: 12 + name.length * PLACE[kind][0] * 0.8, h: null }));
+    H3D.wijkPlaces = places;
     stations = d.stations.map(([name, x, y]) => ({ name: 'Station ' + name, x, y, w: 30 + name.length * 7, h: null }));
   }
 
+  // wijknaam aanklikken → H3D.onWijk(wijk) (ui.js). Klik loopt via de canvas (app.js setupPicking), zodat slepen over een naam blijft werken
+  H3D.clickLabel = (x, y) => { const h = hits.find(([b]) => x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3]); if (!h || !H3D.onWijk) return false; H3D.onWijk(h[1]); return true; };
   const box = document.createElement('div'); box.id = 'labels';
   const els = [];
   let used = 0;
@@ -62,11 +65,11 @@
     for (const D of [R, F]) { P.copy(base).addScaledVector(D, L).project(cam); out.push(((P.x + 1) / 2 * W - s[0]) / L, ((1 - P.y) / 2 * Hh - s[1]) / L); }
     return out;
   }
-  const boxes = [];
+  const boxes = [], hits = []; // hits: [vakje, wijk] van geplaatste wijknamen (aanklikbaar via H3D.clickLabel)
   const free = b => !boxes.some(q => b[0] < q[2] && b[2] > q[0] && b[1] < q[3] && b[3] > q[1]);
 
   function place() {
-    used = 0; boxes.length = 0;
+    used = 0; boxes.length = 0; hits.length = 0;
     if (streets) {
       const cam = H3D.camera(), W = innerWidth, Hh = innerHeight, camD = H3D.cameraDistance() * H3D.lens();
       // pins en hun namen gaan voor: hun plek telt als bezet
@@ -92,7 +95,8 @@
           const b = [sx - hw, sy - hh, sx + hw, sy + hh];
           if (!free(b)) continue;
           boxes.push(b);
-          const e = el(st === 0 ? 'lb st' : 'lb pl', it.name);
+          const e = el(st === 0 ? 'lb st' : H3D.wijkOn === it ? 'lb pl on' : 'lb pl', it.name);
+          if (it.size) hits.push([b, it]);
           if (it.size) { e.style.fontSize = PF + 'px'; e.style.transform = `translate(${sx.toFixed(1)}px,${sy.toFixed(1)}px) matrix(${it.m.map(q => q.toFixed(4)).join(',')},0,0) translate(-50%,-50%)`; }
           else e.style.transform = `translate(${sx.toFixed(1)}px,${sy.toFixed(1)}px) translate(-50%,-50%)`;
         }
