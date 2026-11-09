@@ -113,7 +113,7 @@ vec3 growB(vec3 p) {
     el.appendChild(renderer.domElement);
     if (QS.has('gpu')) { // diagnose (telefoonstrepen): GPU + precisie op scherm
       const gl = renderer.getContext(), di = gl.getExtension('WEBGL_debug_renderer_info'), pf = (s, t) => { const p = gl.getShaderPrecisionFormat(s, t); return p ? p.precision + '/' + p.rangeMax : '-'; };
-      const d = document.createElement('pre'); d.style.cssText = 'position:fixed;left:4px;top:160px;z-index:99;background:#fffc;font:11px monospace;padding:4px;max-width:96vw;white-space:pre-wrap;pointer-events:none';
+      const d = document.createElement('pre'); d.style.cssText = 'position:fixed;left:4px;top:35vh;z-index:999;background:#fffc;font:11px monospace;padding:4px;max-width:96vw;white-space:pre-wrap;pointer-events:none';
       d.textContent = [di ? gl.getParameter(di.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER), 'webgl2 ' + renderer.capabilities.isWebGL2,
         'frag high ' + pf(gl.FRAGMENT_SHADER, gl.HIGH_FLOAT) + ' med ' + pf(gl.FRAGMENT_SHADER, gl.MEDIUM_FLOAT), 'vert high ' + pf(gl.VERTEX_SHADER, gl.HIGH_FLOAT),
         'cbf ' + !!gl.getExtension('EXT_color_buffer_float') + ' floatblend ' + !!gl.getExtension('EXT_float_blend'), 'dpr ' + devicePixelRatio, 'nopost ' + QS.has('nopost')].join('\n');
