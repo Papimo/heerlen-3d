@@ -1,7 +1,7 @@
 // Service worker (alleen online, niet via file://): tweede bezoek laadt app + vakken uit de cache.
-// Eén cache per versie; tools/publish-site.sh vervangt b3d67536e9 door een hash van de site → nieuwe versie = nieuwe cache, oude weg.
+// Eén cache per versie; tools/publish-site.sh vervangt 270a0d5b6d door een hash van de site → nieuwe versie = nieuwe cache, oude weg.
 // Strategie: eigen bestanden cache-first binnen de versie (app en data altijd van dezelfde versie, nooit gemengd). Andere domeinen: ongemoeid.
-const CACHE = 'h3d-b3d67536e9';
+const CACHE = 'h3d-270a0d5b6d';
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', e => e.waitUntil((async () => {
   for (const k of await caches.keys()) if (k.startsWith('h3d-') && k !== CACHE) await caches.delete(k);
@@ -13,7 +13,7 @@ self.addEventListener('fetch', e => {
   e.respondWith((async () => {
     const c = await caches.open(CACHE), hit = await c.match(r, { ignoreSearch: true });
     if (hit) return hit;
-    const res = await fetch(r);
+    const res = await fetch(r.url, { cache: 'no-cache', credentials: 'same-origin' }); // no-cache: anders kon de nieuwe versiecache oude bestanden uit de http-cache krijgen
     if (res.ok && res.type === 'basic') c.put(r, res.clone()).catch(() => {}); // vol = gewoon niet bewaren
     return res;
   })());

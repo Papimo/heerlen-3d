@@ -95,6 +95,7 @@ vec3 growB(vec3 p) {
   let dirty = true;
   const QS = new URLSearchParams(location.search); // testschakelaars: ?nopost ?noshadow
   const redraw = () => { dirty = true; };
+  const BUILD = 'diag-4 (2026-11-09)', DBG_U = { value: new THREE.Vector2(1, 1) }; // ?gpu: versie zichtbaar + schakelaars omlijning (x = vlaklijnen, y = dieptelijnen)
   H.redraw = redraw;
   // na de upload naar de GPU de kopie in het werkgeheugen weggooien (canvas → 1×1, DataTexture-data → null). Opnieuw tekenen = nieuw canvas/nieuwe textuur
   H.freeAfterUpload = tex => { tex.onUpdate = () => { tex.onUpdate = null; const im = tex.image; if (im && im.getContext) im.width = im.height = 1; else if (im && im.data) im.data = null; }; return tex; };
@@ -111,12 +112,23 @@ vec3 growB(vec3 p) {
     renderer.shadowMap.autoUpdate = false; // zie renderlus: alleen bij stilstand + verandering
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     el.appendChild(renderer.domElement);
-    if (QS.has('gpu')) { // diagnose (telefoonstrepen): GPU + precisie op scherm
+    if (QS.has('gpu')) { // diagnose (telefoonstrepen): GPU + precisie + schakelaars op scherm
       const gl = renderer.getContext(), di = gl.getExtension('WEBGL_debug_renderer_info'), pf = (s, t) => { const p = gl.getShaderPrecisionFormat(s, t); return p ? p.precision + '/' + p.rangeMax : '-'; };
-      const d = document.createElement('pre'); d.style.cssText = 'position:fixed;left:4px;top:35vh;z-index:999;background:#fffc;font:11px monospace;padding:4px;max-width:96vw;white-space:pre-wrap;pointer-events:none';
-      d.textContent = [di ? gl.getParameter(di.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER), 'webgl2 ' + renderer.capabilities.isWebGL2,
-        'frag high ' + pf(gl.FRAGMENT_SHADER, gl.HIGH_FLOAT) + ' med ' + pf(gl.FRAGMENT_SHADER, gl.MEDIUM_FLOAT), 'vert high ' + pf(gl.VERTEX_SHADER, gl.HIGH_FLOAT),
-        'cbf ' + !!gl.getExtension('EXT_color_buffer_float') + ' floatblend ' + !!gl.getExtension('EXT_float_blend'), 'dpr ' + devicePixelRatio, 'nopost ' + QS.has('nopost')].join('\n');
+      const d = document.createElement('div'); d.style.cssText = 'position:fixed;left:4px;top:35vh;z-index:999;background:#fffe;font:12px monospace;padding:6px;max-width:94vw;border:1px solid #888';
+      const pre = document.createElement('pre'); pre.style.cssText = 'margin:0 0 6px;white-space:pre-wrap';
+      pre.textContent = ['versie ' + BUILD, di ? gl.getParameter(di.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER),
+        'frag high ' + pf(gl.FRAGMENT_SHADER, gl.HIGH_FLOAT) + ' · cbf ' + !!gl.getExtension('EXT_color_buffer_float') + ' · fblend ' + !!gl.getExtension('EXT_float_blend'),
+        'dpr ' + devicePixelRatio + ' · nopost ' + QS.has('nopost') + ' · nomrt ' + QS.has('nomrt')].join('\n');
+      d.appendChild(pre);
+      const btn = (label, get, set) => { const b = document.createElement('button'); b.style.cssText = 'display:block;margin:3px 0;font:13px sans-serif;padding:6px 8px;width:100%;text-align:left';
+        const upd = () => { b.textContent = (get() ? '✅ ' : '⬜ ') + label; }; b.onclick = () => { set(!get()); upd(); redraw(); shadowDirty = true; }; upd(); d.appendChild(b); };
+      btn('1 · lijnen: knik (normaal)', () => DBG_U.value.x > 0, v => { DBG_U.value.x = v ? 1 : 0; });
+      btn('2 · lijnen: diepte', () => DBG_U.value.y > 0, v => { DBG_U.value.y = v ? 1 : 0; });
+      for (const [n, label] of [['laden', '3 · laadscherm'], ['wolken', '4 · wolkschaduw'], ['randen', '5 · zachte randen']])
+        btn(label, () => { const p = posts.find(p => p.material.name === n); return !!p && p.enabled !== false; }, v => { const p = posts.find(p => p.material.name === n); if (p) p.enabled = v; });
+      btn('6 · zonschaduw', () => sun.castShadow, v => { sun.castShadow = v; });
+      const lk = (q, label) => { const a = document.createElement('a'); a.href = '?gpu' + q; a.textContent = label; a.style.cssText = 'display:inline-block;margin:4px 8px 0 0'; d.appendChild(a); };
+      lk('', 'normaal'); lk('&nomrt', '7 · zonder MRT'); lk('&nopost', '8 · zonder post');
       document.body.appendChild(d);
     }
 
@@ -1378,7 +1390,7 @@ vec3 growB(vec3 p) {
     if (camera !== ortho) { renderer.render(scene, camera); return; }
     if (!rtC) {
       // geen MSAA: omlijning dekt de randen (stap 9). Diepte heeft float32 nodig (half-float gaf streepruis); blenden op float32 vraagt EXT_float_blend
-      useMRT = renderer.capabilities.isWebGL2 && !!renderer.getContext().getExtension('EXT_float_blend');
+      useMRT = !QS.has('nomrt') && renderer.capabilities.isWebGL2 && !!renderer.getContext().getExtension('EXT_float_blend');
       RTS.f = makeTargets(); ({ c: rtC, n: rtN } = RTS.f);
       NRM =new THREE.ShaderMaterial({ // normaal (uit de afgeleiden) + diepte; bomen via instanceMatrix; groeiende panden (aGrow ontbreekt = 0 = staat al)
         uniforms: GU,
@@ -1390,9 +1402,9 @@ vec3 growB(vec3 p) {
         fragmentShader: 'varying vec3 vMrtV;' + MRT_OFF + NRM_GLSL + 'void main() { gl_FragColor = vec4(nrmPack(normalize(cross(dFdx(vMrtV), dFdy(vMrtV))), mrtOff() - vMrtV.z), 0.0, 1.0); }',
       });
       post = new THREE.ShaderMaterial({
-        uniforms: { tC: { value: useMRT ? rtC.texture[0] : rtC.texture }, tN: { value: rtN.texture }, tSky: { value: skyTex }, uMrt: { value: useMRT ? 1 : 0 }, tD: { value: null }, tDN: { value: null }, uDyn: { value: 0 }, uRes: { value: new THREE.Vector2() }, uW: { value: 2 }, uK: { value: 0.85 }, uInk: { value: H.isoColors.ink } },
+        uniforms: { tC: { value: useMRT ? rtC.texture[0] : rtC.texture }, tN: { value: rtN.texture }, tSky: { value: skyTex }, uMrt: { value: useMRT ? 1 : 0 }, tD: { value: null }, tDN: { value: null }, uDyn: { value: 0 }, uRes: { value: new THREE.Vector2() }, uW: { value: 2 }, uK: { value: 0.85 }, uInk: { value: H.isoColors.ink }, uDbg: DBG_U },
         vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
-        fragmentShader: `varying vec2 vUv; uniform sampler2D tC, tN, tD, tDN, tSky; uniform vec2 uRes; uniform float uW, uK, uDyn, uMrt; uniform vec3 uInk;
+        fragmentShader: `varying vec2 vUv; uniform sampler2D tC, tN, tD, tDN, tSky; uniform vec2 uRes; uniform float uW, uK, uDyn, uMrt; uniform vec3 uInk; uniform vec2 uDbg;
           ${NRM_GLSL}
           ivec2 tq(sampler2D t, vec2 o) { return clamp(ivec2(gl_FragCoord.xy + o), ivec2(0), textureSize(t, 0) - 1); } // exacte pixel (vUv+o/uRes rondde op telefoons af → strepen)
           vec4 N(vec2 o) { ivec2 u = tq(tN, o); vec2 s = texelFetch(tN, u, 0).xy; // xyz = normaal, w = diepte
@@ -1405,7 +1417,7 @@ vec3 growB(vec3 p) {
             vec4 n0 = N(vec2(0.0)), a = N(vec2(uW, 0.0)), b = N(vec2(-uW, 0.0)), d = N(vec2(0.0, uW)), e = N(vec2(0.0, -uW));
             float nd = 4.0 - dot(n0.xyz, a.xyz) - dot(n0.xyz, b.xyz) - dot(n0.xyz, d.xyz) - dot(n0.xyz, e.xyz);
             float dd = abs(a.w + b.w - 2.0 * n0.w) + abs(d.w + e.w - 2.0 * n0.w);
-            float k = max(smoothstep(0.42, 0.52, nd), smoothstep(1.7, 2.1, dd)); // smalle overgang = strakke lijn i.p.v. vlekkerige rand
+            float k = max(smoothstep(0.42, 0.52, nd) * uDbg.x, smoothstep(1.7, 2.1, dd) * uDbg.y); // smalle overgang = strakke lijn i.p.v. vlekkerige rand
             c.rgb = mix(c.rgb, uInk, k * uK);
             gl_FragColor = c;
             #include <colorspace_fragment>
