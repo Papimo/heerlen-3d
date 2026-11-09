@@ -46,7 +46,7 @@
         gl_FragColor = vec4(vis, 0.0, hi / 255.0, (e - hi * 256.0) / 255.0);
       }`,
     });
-    aoMat = new THREE.ShaderMaterial({ // contactschaduw: hoe ver steekt de omgeving boven dit punt uit (24 monsters, 4–14 m)
+    aoMat = new THREE.ShaderMaterial({ // contactschaduw: hoe ver steekt de omgeving boven dit punt uit (24 monsters, 2–6 m, zacht)
       uniforms: { tTop: { value: null }, uOff: { value: new THREE.Vector2() } }, depthTest: false, depthWrite: false,
       vertexShader: 'void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }',
       fragmentShader: `uniform sampler2D tTop; uniform vec2 uOff;
@@ -55,7 +55,7 @@
         ivec2 g = ivec2(gl_FragCoord.xy - uOff) + ${M};
         vec4 t0 = texelFetch(tTop, g, 0); float h0 = hOf(t0, 0.0), occ = 0.0;
         for (int r = 0; r < 3; r++) {
-          float rad = r == 0 ? 2.0 : r == 1 ? 4.0 : 7.0;
+          float rad = r == 0 ? 1.0 : r == 1 ? 2.0 : 3.0; // 2–6 m (was 4–14 m: brede vale vlekken)
           for (int a = 0; a < 8; a++) {
             float an = float(a) * 0.7854 + float(r) * 0.39;
             ivec2 o = ivec2(round(vec2(cos(an), sin(an)) * rad));
@@ -63,7 +63,7 @@
             occ += clamp((h - h0 - 0.3) / (rad * ${TX.toFixed(4)}), 0.0, 1.0);
           }
         }
-        gl_FragColor = t0 == vec4(0.0) ? vec4(0.0) : vec4(t0.r, 1.0 - 0.75 * occ / 24.0, t0.b, t0.a);
+        gl_FragColor = t0 == vec4(0.0) ? vec4(0.0) : vec4(t0.r, 1.0 - 0.45 * occ / 24.0, t0.b, t0.a);
       }`,
     });
     aoScene = new THREE.Scene(); aoCam = new THREE.Camera();

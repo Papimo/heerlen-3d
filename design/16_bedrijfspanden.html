@@ -1,0 +1,584 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Heerlen 3D · bedrijfspanden</title>
+<style>
+  :root { --paper: #fbf8f2; --paper2: #f1ece2; --ink: #2b2620; --ink2: #6f665b; --line: #e2d9ca; --accent: #c2410c; --serif: Georgia, 'Times New Roman', serif; --sans: system-ui, sans-serif; }
+  @media (prefers-color-scheme: dark) { :root { --paper: #24211d; --paper2: #2e2a25; --ink: #f1ebe1; --ink2: #b3a898; --line: #3d3832; --accent: #fb923c; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper2); color: var(--ink); font: 14px/1.45 var(--sans); }
+  main { max-width: 1320px; margin: 0 auto; padding: 24px 16px 110px; }
+  h1 { font: 600 28px/1.2 var(--serif); margin: 0 0 4px; }
+  h2 { font: 600 22px var(--serif); margin: 34px 0 4px; }
+  .lead, .sub { color: var(--ink2); max-width: 860px; margin: 0 0 14px; }
+  #load { color: var(--accent); font-weight: 600; }
+  .cmp { position: relative; border-radius: 14px; overflow: hidden; border: 1px solid var(--line); background: #ccc; aspect-ratio: 16 / 10; user-select: none; }
+  .cmp img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+  .cmp #bNew { clip-path: inset(0 0 0 var(--x, 50%)); }
+  .cmp .bar { position: absolute; top: 0; bottom: 0; left: var(--x, 50%); width: 2px; background: #fff; box-shadow: 0 0 6px #0006; pointer-events: none; }
+  .cmp .lab { position: absolute; top: 10px; font: 600 12px var(--sans); background: #000a; color: #fff; padding: 3px 9px; border-radius: 999px; }
+  .cmp .lab.l { left: 10px; } .cmp .lab.r { right: 10px; }
+  .cmp input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: ew-resize; margin: 0; }
+  .tools { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0 0; align-items: center; }
+  .tools button { border: 1px solid var(--line); background: var(--paper); color: var(--ink); border-radius: 999px; padding: 5px 12px; cursor: pointer; font-weight: 600; }
+  .tools button.on { background: var(--ink); color: var(--paper); }
+  .tools span { color: var(--ink2); margin-left: 8px; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .opt { background: var(--paper); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; }
+  .opt.picked { outline: 3px solid var(--accent); }
+  .opt img { display: block; width: 100%; aspect-ratio: 16 / 11; object-fit: cover; background: #ddd; cursor: zoom-in; }
+  .body { padding: 12px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
+  .body h3 { margin: 0; font: 600 17px var(--serif); }
+  .body h3 small { font: 600 12px var(--sans); color: var(--ink2); margin-right: 6px; }
+  .body p { margin: 0; color: var(--ink2); font-size: 13px; }
+  .body ul { margin: 0; padding-left: 18px; font-size: 13px; }
+  .tags { display: flex; gap: 5px; flex-wrap: wrap; }
+  .tags span { font-size: 11px; border-radius: 999px; padding: 1px 8px; background: var(--paper2); border: 1px solid var(--line); color: var(--ink2); }
+  .tags span.warn { color: #a5552a; border-color: #e3b58f; }
+  .kies { margin-top: auto; border: 1px solid var(--line); background: var(--paper2); color: var(--ink); border-radius: 8px; padding: 7px 12px; cursor: pointer; font-weight: 600; }
+  .kies.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .later { background: var(--paper); border: 1px dashed var(--line); border-radius: 14px; padding: 16px; color: var(--ink2); }
+  #pick { position: fixed; left: 0; right: 0; bottom: 0; background: var(--paper); border-top: 1px solid var(--line); padding: 10px 16px; display: flex; gap: 12px; align-items: center; z-index: 5; }
+  #pick code { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #pick button { border: 0; background: var(--accent); color: #fff; border-radius: 8px; padding: 8px 16px; font-weight: 600; cursor: pointer; }
+  #zoomv { position: fixed; inset: 0; background: #000d; display: none; z-index: 9; cursor: zoom-out; }
+  #zoomv img { width: 100%; height: 100%; object-fit: contain; }
+  @media (max-width: 1000px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 600px) { .grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Heerlen 3D · bedrijfspanden</h1>
+  <p class="lead">Hallen en platte daken levendiger maken, vooral van boven (iso). Echte 3D BAG-panden op <b>De Beitel</b> (hallen tot 62 000 m²) en in het <b>centrum</b> (kantoren/winkels). BAG kent geen functie, dus herkenning gaat zo: <i>hal</i> = plat dak &gt; 2500 m² en lager dan 16 m; <i>kantoor/winkel</i> = elk ander plat dak. Elke kaart toont die ene keuze binnen je huidige combinatie; kiezen = alles opnieuw tekenen. Grond = benadering (PDOK-kaart), stijl = anime-1 (licht randje, bouwjaarkleuren). <span id="load">Laden…</span></p>
+
+  <h2>Jouw combinatie</h2>
+  <p class="sub">Links huidig (zoals de app nu), rechts je keuze. Sleep de schuif.</p>
+  <div class="cmp" id="cmp"><img id="bOld" alt="huidig"><img id="bNew" alt="nieuw"><div class="bar"></div><span class="lab l">Huidig</span><span class="lab r">Nieuw</span><input id="slide" type="range" min="0" max="100" value="50"></div>
+  <div class="tools">
+    <button data-z="ver" class="on">Overzicht</button><button data-z="dicht">Dichtbij</button>
+    <button data-l="0" class="on">De Beitel</button><button data-l="1">De Beitel noord</button><button data-l="2">Centrum</button>
+    <span id="busy"></span>
+  </div>
+
+  <div id="secs"></div>
+  <h2>4 · Losse ideeën (later)</h2>
+  <div class="later">Waterplassen na regen (alleen shader, staat in 3C) · plint-verloop per gevel · dock-luifels boven laaddeuren · reclamezuil bij de entree · 's avonds lichtstraten en lichtband laten gloeien (past bij de avondramen). Zeg welke je wilt zien, dan komt er een ronde 2.</div>
+</main>
+<div id="pick"><code id="picktxt"></code><button id="copy">Kopieer</button></div>
+<div id="zoomv"><img alt=""></div>
+
+<script src="../vendor/three.js"></script>
+<script>window.THREE || document.write('<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"><\/script>')</script>
+<script>
+let AREA; const RAW = [];
+const H3D = { area: a => { AREA = a; }, pois: () => {}, chunk: (h, b64) => RAW.push([h, b64]) };
+</script>
+<script src="../data/area.js"></script>
+<script src="../data/props.js"></script>
+<script src="../data/tiles/c_197_317.js"></script>
+<script src="../data/tiles/c_198_317.js"></script>
+<script src="../data/tiles/c_199_317.js"></script>
+<script src="../data/tiles/c_197_318.js"></script>
+<script src="../data/tiles/c_198_318.js"></script>
+<script src="../data/tiles/c_198_316.js"></script>
+<script src="../data/tiles/c_199_316.js"></script>
+<script src="../data/tiles/c_195_321.js"></script>
+<script src="../data/tiles/c_196_321.js"></script>
+<script src="../data/tiles/c_197_321.js"></script>
+<script src="../data/tiles/c_195_322.js"></script>
+<script src="../data/tiles/c_196_322.js"></script>
+<script src="../data/tiles/c_197_322.js"></script>
+<script src="../data/tiles/c_196_323.js"></script>
+<script>
+// ================= secties en opties =================
+const SECS = [
+  { k: 'hal', n: '1 · Daken hallen', sub: 'Het grootste vlak in beeld. Nu één middengrijs geribbeld dak per hal. Echte vormen (panelen, kasten, zaagtand, auto\'s) staan als losse stukjes op het dak, alleen binnen de dakrand.', opts: [
+    { id: '0', name: 'Huidig', line: 'Middengrijs geribbeld (#a7a39a), overal hetzelfde.', pts: ['Wat de app nu doet'], tags: [] },
+    { id: 'A', name: 'Lichtstraten & zonnepanelen', line: 'Witte lichtstraten om de 18 m, daartussen blokken zonnepanelen, dakrand in een Mijnstreek-kleur.', pts: ['Meest herkenbaar als bedrijfsdak', 'Blauw + wit breekt het grijs', 'Dakrand = gevel-top, geen afstand-tot-rand nodig'], tags: ['kosten: veel kleine stukjes (1 InstancedMesh per soort)', 'kosten: shader voor de rand'] },
+    { id: 'B', name: 'Grind & installaties', line: 'Licht grind met luchtbehandelingskasten, ventilatoren en een opbouw/trappenhuis.', pts: ['Rustig en echt', 'Kasten werpen kleine schaduwen'], tags: ['kosten: echte vormen, weinig'] },
+    { id: 'C', name: 'Groendak', line: 'Sedum in groen, olijf en roodbruin, met grindpaden voor onderhoud.', pts: ['Kleurrijkst van boven', 'Kan mee met seizoenen (rood in de herfst)'], tags: ['kosten: alleen shader', 'afwijking: echt Heerlen heeft er weinig'] },
+    { id: 'D', name: 'Zaagtand (Mijnstreek)', line: 'Sheddak: rijen glas naar het noorden, roestbruine schuine vlakken.', pts: ['Oude fabriek / mijngebouw-gevoel', 'Sterk ritme in iso'], tags: ['kosten: echte vormen, veel driehoeken', 'in de app alleen oud + groot'] },
+    { id: 'E', name: 'Logo-vlak / parkeerdak', line: 'Helft van de hallen: grote cirkel in een kleur op het dak; andere helft parkeerdak met vakken en auto\'s.', pts: ['Speels, "speelgoedmat"-achtig', 'In de app: kleur van de plek erin (POI)'], tags: ['kosten: shader + auto\'s', 'risico: druk bij veel hallen'] } ] },
+  { k: 'gevel', n: '2 · Gevels hallen', sub: 'Nu krijgen hallen dezelfde pleister/baksteen met raamrijen als woonhuizen: daardoor lijken het grote witte dozen.', opts: [
+    { id: '0', name: 'Huidig', line: 'Pleister of baksteen op bouwjaar, met woonhuis-ramen.', pts: ['Wat de app nu doet'], tags: [] },
+    { id: 'A', name: 'Sandwichpanelen', line: 'Staande ribbels om de meter in antraciet, grijswit, staalblauw of mosgroen.', pts: ['Echte bedrijfshal-kleuren', 'Geen woonhuis-ramen meer'], tags: ['kosten: alleen shader'] },
+    { id: 'B', name: 'Panelen + lichtband + laaddeuren', line: 'Als A, met een glazen band onder de dakrand en roldeuren aan de voet.', pts: ['Leest meteen als "hal"', 'Deuren om de 14 m, niet op elke gevel'], tags: ['kosten: alleen shader'] },
+    { id: 'C', name: 'Plint & kleurstreep', line: 'Lichtgrijze panelen, donkere plint, een streep en dakrand in Mijnstreek-kleur.', pts: ['Strak, huisstijl-achtig', 'Kleur per pand verschilt'], tags: ['kosten: alleen shader'] },
+    { id: 'D', name: 'Baksteen & roest', line: 'Onder baksteen, raamband, erboven cortenstaal.', pts: ['Mijnstreek-industrie', 'Warm i.p.v. grijs'], tags: ['kosten: alleen shader', 'past vooral bij oude hallen'] } ] },
+  { k: 'plat', n: '3 · Platte daken kantoren & winkels', sub: 'Vooral in het centrum (knop Centrum). Nu donkergrijs vlak per pand.', opts: [
+    { id: '0', name: 'Huidig', line: 'Donker grind/bitumen, vier grijzen.', pts: ['Wat de app nu doet'], tags: [] },
+    { id: 'A', name: 'Bitumen-banen + kraal', line: 'Banen van 1 m met naden, aluminium dakrand.', pts: ['Fijn ritme, blijft rustig'], tags: ['kosten: alleen shader'] },
+    { id: 'B', name: 'Grind & installaties', line: 'Licht grind, 1–5 airco-kasten en een liftopbouw op hoge panden.', pts: ['Daken worden "bewoond"', 'Kleine schaduwen'], tags: ['kosten: echte vormen, weinig'] },
+    { id: 'C', name: 'Groen & plassen', line: 'Helft sedum, helft grind met regenplassen.', pts: ['Levendig, natuurlijk'], tags: ['kosten: alleen shader'] },
+    { id: 'D', name: 'Mix per pand', line: 'Elk pand kiest A, B of C.', pts: ['Meest gevarieerd'], tags: ['kosten: som van A–C'] } ] },
+];
+const CFG = { hal: 'A', gevel: 'B', plat: 'D' };
+const HUIDIG = { hal: '0', gevel: '0', plat: '0' };
+
+// ================= shaders gebouwen (huidig = app.js ANIME_ROOF/ANIME_WALL) =================
+const C = h => { const c = new THREE.Color(h); return `vec3(${c.r.toFixed(3)}, ${c.g.toFixed(3)}, ${c.b.toFixed(3)})`; }; // lineair
+const pickV = (v, list, s) => list.map((h, k) => `${k ? 'else ' : ''}${k < list.length - 1 ? `if (${s} < ${((k + 1) / list.length).toFixed(3)}) ` : ''}${v} = ${C(h)};`).join(' ');
+const pick = (list, s) => pickV('col', list, s);
+const MIJN = ['#6b4a36', '#a8432e', '#c8963a', '#5f6b3a', '#4a5f72', '#7a4e5e', '#2f5f6b', '#b5713a'];
+const COMMON = `
+varying vec3 vW; varying float vS, vB, vT, vY, vA, vX, vF, vG; varying vec2 vC;
+float h2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float vn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(h2(i), h2(i + vec2(1, 0)), f.x), mix(h2(i + vec2(0, 1)), h2(i + vec2(1, 1)), f.x), f.y); }
+vec2 loc() { vec2 d = vec2(cos(vG), sin(vG)); return vec2(dot(vW.xz, d), dot(vW.xz, vec2(-d.y, d.x))); }   // langs / dwars op de lange as
+bool isHal() { return vF > 0.6 && vA > 2500.0 && vT - vB < 16.0; }
+vec3 accent() { vec3 ac; ${pickV('ac', MIJN, 'fract(vS * 5.7)')} return ac; }
+`;
+const ROOF_PRE = `vec3 n = normalize(cross(dFdx(vW), dFdy(vW))); if (n.y < 0.0) n = -n;
+  bool isFlat = n.y > 0.97; float s = fract(vS * 13.7); vec3 col = vec3(1); vec2 L = loc();
+  float yr = vY > 1000.0 ? vY : 1930.0 + vS * 70.0;`;
+const WALL_PRE = `vec3 n = normalize(cross(dFdx(vW), dFdy(vW)));
+  float u = abs(n.x) > abs(n.z) ? vW.z : vW.x, hb = vW.y - vB, ht = vT - vW.y; vec3 col = vec3(1);
+  float yr = vY > 1000.0 ? vY : 1930.0 + vS * 70.0;`;
+const W_BRICK = ['#c4836a', '#b5745c', '#d59c7e', '#ead8c2', '#e4cfae', '#c99a7c'], W_PALE = ['#e9d9b8', '#dcc79a', '#e3b99a', '#c9d1b4', '#bfcbd3', '#e6dccb', '#d8bfa0'];
+const W_MOD = ['#c9a86e', '#a7826a', '#8f6f6a', '#b99a7a'];
+const R_OLD = ['#a8463a', '#b5503d', '#93412f'], R_MID = ['#d06a3e', '#de7c48', '#c75f38'], R_NEW = ['#454952', '#5a616c', '#6f7378'];
+const WALL0 = `if (yr < 1965.0) { ${pick(W_BRICK, 'vS')} } else if (fract(vS * 5.3) < 0.35) { ${pick(W_MOD, 'fract(vS * 3.7)')} } else { ${pick(W_PALE, 'vS')} }
+  { vec2 f = vec2(fract(u / 3.2), fract((vW.y - 1.0) / 3.1));
+    float inW = step(0.8, hb) * step(1.1, ht) * step(4.0, vT - vB);
+    float gl = step(0.25, f.x) * step(f.x, 0.75) * step(0.3, f.y) * step(f.y, 0.8);
+    col = mix(col, ${C('#6f8299')}, inW * gl * 0.85);
+    col *= 1.0 - 0.16 * step(ht, 0.35) * step(4.0, vT - vB); }`;
+const HAL0 = `col = ${C('#a7a39a')}; { float rc = vX > 0.5 ? vW.z : vW.x; col *= 0.92 + 0.08 * step(0.5, fract(rc / 3.0)); }`;
+const GRIND = (a, b, k) => `col = mix(${C(a)}, ${C(b)}, h2(floor(vW.xz * ${k}))) * (0.9 + 0.12 * vn(vW.xz * 0.15));`;
+const SEDUM = `col = mix(${C('#6f8f3e')}, ${C('#9aa64c')}, vn(vW.xz * 0.25));
+  col = mix(col, ${C('#a4583c')}, smoothstep(0.6, 0.72, vn(vW.xz * 0.11 + 9.0)) * 0.8);
+  col *= 0.86 + 0.22 * vn(vW.xz * 1.3 + 5.0);`;
+const PLASSEN = `${GRIND('#a6a196', '#c2bcaf', '3.0')} col = mix(col, ${C('#8ea3b3')}, smoothstep(0.7, 0.74, vn(vW.xz * 0.12 + vS * 40.0)));`;
+const BITUMEN = `col = ${C('#4c4b49')} * (0.9 + 0.14 * h2(vec2(floor(L.y), vS * 9.0))); col *= 1.0 - 0.3 * step(fract(L.y), 0.06);`;
+const HAL = {
+  '0': HAL0,
+  'A': `col = ${C('#cfccc4')} * (0.95 + 0.05 * step(0.5, fract(L.y)));`,
+  'B': GRIND('#b3ada0', '#cfc9bc', '4.0'),
+  'C': `${SEDUM} col = mix(col, ${C('#b9b3a6')}, step(abs(mod(L.y, 24.0) - 12.0), 0.8));`,
+  'D': `col = ${C('#6e4c3c')};`,
+  'E': `if (fract(vS * 7.7) < 0.5) {
+      col = ${C('#dcd8cf')}; vec3 ac = accent(); float r = clamp(sqrt(vA) * 0.2, 8.0, 26.0); vec2 q = vW.xz - vC; float dd = length(q);
+      col = mix(col, ac, step(dd, r)); col = mix(col, vec3(0.92), step(r + 0.6, dd) * step(dd, r + 2.0));
+      col = mix(col, vec3(0.92), step(dd, r * 0.72) * step(abs(dot(q, vec2(0.7071))), r * 0.13));
+    } else {
+      col = ${C('#55565a')} * (0.95 + 0.06 * vn(vW.xz * 0.3)); float m = mod(L.y, 16.0);
+      float ln = step(m, 10.0) * step(fract(L.x / 2.5), 0.05) + step(m, 0.15) + step(abs(m - 10.0), 0.15);
+      col = mix(col, vec3(0.88), clamp(ln, 0.0, 1.0)); }`,
+};
+const PLAT = {
+  '0': `if (vA > 2500.0) { ${HAL0} } else { ${pick(['#8a8780', '#6f6d69', '#5d5b58', '#9a958c'], 's')} }`,
+  'A': BITUMEN,
+  'B': GRIND('#aaa498', '#c6c0b3', '5.0'),
+  'C': `if (fract(vS * 2.3) < 0.5) { ${SEDUM} } else { ${PLASSEN} }`,
+};
+PLAT.D = `{ float mk = fract(vS * 3.1); if (mk < 0.34) { ${PLAT.A} } else if (mk < 0.67) { ${PLAT.B} } else { ${PLAT.C} } }`;
+const PANEL = `{ vec3 gc; ${pickV('gc', ['#3e4247', '#d9dad6', '#4f6f8f', '#5f7a5a', '#b9bcbd'], 'fract(vS * 4.3)')}
+  col = gc * (0.88 + 0.12 * step(0.5, fract(u))); col *= 1.0 - 0.07 * step(fract(hb / 1.2), 0.04); }`;
+const GEVEL = {
+  '0': '',
+  'A': PANEL,
+  'B': `${PANEL}
+    col = mix(col, ${C('#9fb4c4')} * (0.9 + 0.1 * step(0.5, fract(u / 1.5))), step(0.9, ht) * step(ht, 2.1));
+    { float cl = floor(u / 14.0), door = step(abs(fract(u / 14.0) - 0.5) * 14.0, 1.9) * step(hb, 4.2) * step(0.45, h2(vec2(cl, floor(n.x * 2.0 + n.z * 3.0) + vS * 17.0)));
+      col = mix(col, ${C('#70757a')} * (0.86 + 0.14 * step(0.5, fract(hb / 0.45))), door);
+      col = mix(col, ${C('#e2b13c')}, step(abs(fract(u / 14.0) - 0.5) * 14.0, 2.2) * step(1.9, abs(fract(u / 14.0) - 0.5) * 14.0) * step(hb, 4.2) * step(0.45, h2(vec2(cl, floor(n.x * 2.0 + n.z * 3.0) + vS * 17.0)))); }`,
+  'C': `col = ${C('#cfd0cc')} * (0.92 + 0.08 * step(0.5, fract(u))); col = mix(col, ${C('#3b3c3e')}, step(hb, 1.2));
+    col = mix(col, accent(), clamp(step(3.2, hb) * step(hb, 3.9) + step(ht, 0.7), 0.0, 1.0));`,
+  'D': `if (hb < 3.6) { col = ${C('#9a5a44')} * (0.92 + 0.1 * h2(floor(vec2(u / 0.9 + floor(hb / 0.3) * 0.5, hb / 0.3))));
+      col = mix(col, ${C('#cbbba6')}, step(fract(hb / 0.3), 0.15)); }
+    else if (hb < 4.5) { col = mix(${C('#3d4650')}, ${C('#7d93a6')}, step(0.12, fract(u / 1.8))); }
+    else { col = ${C('#8a4a2a')} * (0.85 + 0.15 * step(0.5, fract(u * 1.2))) * (0.9 + 0.15 * vn(vec2(u, hb) * 0.4)); }`,
+};
+const roofGlsl = c => `${ROOF_PRE}
+  if (isFlat) { if (isHal()) { ${HAL[c.hal]} } else { ${PLAT[c.plat]} } }
+  else { if (yr < 1940.0) { ${pick(R_OLD, 's')} } else if (yr < 1975.0) { ${pick(R_MID, 's')} } else { ${pick(R_NEW, 's')} }
+    col *= 1.0 - 0.12 * (1.0 - smoothstep(0.0, fwidth(vW.y / 0.42) * 1.5 + 0.04, fract(vW.y / 0.42))); }`;
+const wallGlsl = c => `${WALL_PRE} ${WALL0}
+  if (isHal()) { ${GEVEL[c.gevel]} ${c.gevel !== 'C' && /[AE]/.test(c.hal) ? 'col = mix(col, accent(), step(ht, 0.7));' : ''} }
+  else if (vF > 0.6) { ${c.plat === 'A' ? `col = mix(col, ${C('#cdd1d4')}, step(ht, 0.35));` : c.plat === 'D' ? `col = mix(col, ${C('#cdd1d4')}, step(ht, 0.35) * step(fract(vS * 3.1), 0.34));` : ''} }`;
+
+// ================= renderer, scène =================
+const R = new THREE.WebGLRenderer({ antialias: false, preserveDrawingBuffer: true });
+R.outputColorSpace = THREE.SRGBColorSpace; R.shadowMap.enabled = true; R.shadowMap.type = THREE.PCFSoftShadowMap;
+const scene = new THREE.Scene();
+const hemi = new THREE.HemisphereLight('#a9c8ef', '#c2b79f', 1.6 * 0.8); scene.add(hemi);
+const sun = new THREE.DirectionalLight('#fff4e0', 3.0 * 0.8); sun.castShadow = true;
+sun.shadow.mapSize.set(4096, 4096); sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.5; sun.shadow.radius = 3;
+Object.assign(sun.shadow.camera, { left: -560, right: 560, top: 560, bottom: -560, near: 10, far: 6000 }); sun.shadow.camera.updateProjectionMatrix();
+scene.add(sun, sun.target);
+const SUN_DIR = new THREE.Vector3(-0.55, 0.62, 0.35).normalize();   // = app.js SUN_DIR
+
+const VS = s => s.replace('#include <common>', '#include <common>\nattribute float aSeed, aBase, aTop, aYear, aArea, aAx, aFlat, aAng; attribute vec2 aCen; varying vec3 vW; varying float vS, vB, vT, vY, vA, vX, vF, vG; varying vec2 vC;')
+  .replace('#include <project_vertex>', '#include <project_vertex>\nvW = (modelMatrix * vec4(transformed, 1.0)).xyz; vS = aSeed; vB = aBase; vT = aTop; vY = aYear; vA = aArea; vX = aAx; vF = aFlat; vG = aAng; vC = aCen;');
+function bMat(glsl, key) {
+  const m = new THREE.MeshLambertMaterial({ flatShading: true });
+  m.side = THREE.DoubleSide; m.customProgramCacheKey = () => key;
+  m.onBeforeCompile = s => {
+    s.vertexShader = VS(s.vertexShader);
+    s.fragmentShader = s.fragmentShader.replace('#include <common>', '#include <common>\n' + COMMON)
+      .replace('#include <color_fragment>', `#include <color_fragment>\n{ ${glsl}\n diffuseColor.rgb = col; }`);
+  };
+  return m;
+}
+const MATS = {};
+const matsFor = c => { const k = c.hal + c.gevel + c.plat; return MATS[k] ||= [bMat(roofGlsl(c), 'r' + k), bMat(wallGlsl(c), 'w' + k)]; };
+
+// ================= vakken decoderen (formaat app.js H.chunk) =================
+const LOCS = [[198443, 317637], [198700, 318250], [196600, 322190]];   // De Beitel (grote hal), De Beitel noord, Promenade
+let O; const CH = [], BLDS = [];   // BLDS = platte daken dicht bij een LOC (voor dakstukjes)
+function b64bytes(s) { const bin = atob(s), n = bin.length, u = new Uint8Array(n); for (let k = 0; k < n; k++) u[k] = bin.charCodeAt(k); return u; }
+async function decode(h, b64) {
+  const buf = await new Response(new Blob([b64bytes(b64)]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
+  const A = (T, k) => new T(buf, h.lay[k][0], h.lay[k][1]);
+  const c = { i: h.i, j: h.j, x0: h.i * AREA.km, y0: h.j * AREA.km, nr: h.nr, nw: h.nw, demN: h.demN, demStep: h.demStep,
+    ids: A(Float64Array, 'ids'), bR: A(Uint32Array, 'bR'), bW: A(Uint32Array, 'bW'), dem: A(Uint16Array, 'dem'), year: A(Int16Array, 'year') };
+  const ax = h.ox - O[0], az = h.oy - O[1], V = A(Uint16Array, 'v'), pos = new Float32Array(h.nv * 3);
+  for (let k = 0; k < h.nv; k++) { pos[k * 3] = ax + V[k * 3] * h.qxy; pos[k * 3 + 1] = V[k * 3 + 2] * h.qz; pos[k * 3 + 2] = -(az + V[k * 3 + 1] * h.qxy); }
+  const idx = new Uint32Array((h.nr + h.nw) * 3); let w = 0;
+  for (const key of ['roof', 'wall']) { const D = A(Int32Array, key); let p = 0; for (let k = 0; k < D.length; k++) idx[w++] = (p += D[k]); }
+  const nv = h.nv, n = c.ids.length, F = k => new Float32Array(nv * (k || 1));
+  const seed = F(), base = F(), top = F(), year = F(), area = F(), axis = F(), flat = F(), ang = F(), cen = F(2);
+  const rEnd = b => b + 1 < n ? c.bR[b + 1] : c.nr, wEnd = b => b + 1 < n ? c.bW[b + 1] : c.nw;
+  const near = (x, z) => LOCS.some(l => Math.hypot(x - (l[0] - O[0]), z + (l[1] - O[1])) < 750);
+  for (let b = 0; b < n; b++) {
+    const vs = [], rt = []; let lo = Infinity, hi = -Infinity, ar = 0, fa = 0, x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity, sx = 0, sz = 0, sn = 0;
+    for (let f = c.bW[b]; f < wEnd(b); f++) for (let t = 0; t < 3; t++) vs.push(idx[(c.nr + f) * 3 + t]);
+    for (let f = c.bR[b]; f < rEnd(b); f++) {
+      const a = idx[f * 3], bb = idx[f * 3 + 1], cc = idx[f * 3 + 2];
+      const ux = pos[bb * 3] - pos[a * 3], uy = pos[bb * 3 + 1] - pos[a * 3 + 1], uz = pos[bb * 3 + 2] - pos[a * 3 + 2];
+      const wx = pos[cc * 3] - pos[a * 3], wy = pos[cc * 3 + 1] - pos[a * 3 + 1], wz = pos[cc * 3 + 2] - pos[a * 3 + 2];
+      const nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx, nl = Math.hypot(nx, ny, nz) || 1, a2 = Math.abs(ny) / 2;
+      ar += a2; if (Math.abs(ny) / nl > 0.97) { fa += a2; rt.push(a, bb, cc); }
+      for (const v of [a, bb, cc]) { vs.push(v); const X = pos[v * 3], Z = pos[v * 3 + 2]; x0 = Math.min(x0, X); x1 = Math.max(x1, X); z0 = Math.min(z0, Z); z1 = Math.max(z1, Z); sx += X; sz += Z; sn++; }
+    }
+    for (const v of vs) { const y = pos[v * 3 + 1]; lo = Math.min(lo, y); hi = Math.max(hi, y); }
+    const mx = sn ? sx / sn : 0, mz = sn ? sz / sn : 0; let cxx = 0, czz = 0, cxz = 0;
+    for (let f = c.bR[b]; f < rEnd(b); f++) for (let t = 0; t < 3; t++) { const v = idx[f * 3 + t], dx = pos[v * 3] - mx, dz = pos[v * 3 + 2] - mz; cxx += dx * dx; czz += dz * dz; cxz += dx * dz; }
+    const th = 0.5 * Math.atan2(2 * cxz, cxx - czz), fl = ar ? fa / ar : 0;
+    const sd = Math.abs((Math.sin(c.ids[b] * 12.9898) * 43758.5453) % 1), xa = (x1 - x0) > (z1 - z0) ? 1 : 0;
+    for (const v of vs) { seed[v] = sd; base[v] = lo + 1; top[v] = hi; year[v] = c.year[b]; area[v] = ar; axis[v] = xa; flat[v] = fl; ang[v] = th; cen[v * 2] = mx; cen[v * 2 + 1] = mz; }
+    if (fl > 0.6 && rt.length && near(mx, mz)) {
+      const T = new Float32Array(rt.length * 3);
+      rt.forEach((v, k) => { T[k * 3] = pos[v * 3]; T[k * 3 + 1] = pos[v * 3 + 1]; T[k * 3 + 2] = pos[v * 3 + 2]; });
+      BLDS.push({ T, sd, th, ar, cx: mx, cz: mz, lo, hi, yr: c.year[b], hal: ar > 2500 && hi - lo - 1 < 16 });
+    }
+  }
+  const g = new THREE.BufferGeometry(), at = (k, a, s) => g.setAttribute(k, new THREE.BufferAttribute(a, s || 1));
+  at('position', pos, 3); g.setIndex(new THREE.BufferAttribute(idx, 1));
+  at('aSeed', seed); at('aBase', base); at('aTop', top); at('aYear', year); at('aArea', area); at('aAx', axis); at('aFlat', flat); at('aAng', ang); at('aCen', cen, 2);
+  g.addGroup(0, h.nr * 3, 0); g.addGroup(h.nr * 3, h.nw * 3, 1); g.computeBoundingSphere();
+  c.mesh = new THREE.Mesh(g, matsFor(HUIDIG)); c.mesh.castShadow = c.mesh.receiveShadow = true; scene.add(c.mesh);
+  const N = h.demN, s = h.demStep, tp = new Float32Array(N * N * 3), ti = [];
+  for (let r = 0; r < N; r++) for (let q = 0; q < N; q++) { const k = r * N + q; tp[k * 3] = c.x0 + q * s - O[0]; tp[k * 3 + 1] = c.dem[k] / 100; tp[k * 3 + 2] = -(c.y0 + AREA.km - r * s - O[1]); }
+  for (let r = 0; r < N - 1; r++) for (let q = 0; q < N - 1; q++) { const a = r * N + q; ti.push(a, a + N, a + 1, a + 1, a + N, a + N + 1); }
+  const tg = new THREE.BufferGeometry(); tg.setAttribute('position', new THREE.BufferAttribute(tp, 3));
+  tg.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(N * N * 2), 2)); tg.setIndex(ti); tg.computeVertexNormals();
+  c.terrain = new THREE.Mesh(tg); c.terrain.receiveShadow = true; scene.add(c.terrain);
+  return c;
+}
+function heightAt(x, y) {
+  const c = CH.find(c => c.i === Math.floor(x / AREA.km) && c.j === Math.floor(y / AREA.km)); if (!c) return 100;
+  const N = c.demN, s = c.demStep, gx = (x - c.x0) / s, gy = (c.y0 + AREA.km - y) / s;
+  const cx = Math.min(N - 2, Math.max(0, Math.floor(gx))), cy = Math.min(N - 2, Math.max(0, Math.floor(gy))), fx = gx - cx, fy = gy - cy, d = c.dem, k = cy * N + cx;
+  return ((d[k] * (1 - fx) + d[k + 1] * fx) * (1 - fy) + (d[k + N] * (1 - fx) + d[k + N + 1] * fx) * fy) / 100;
+}
+
+// ================= dakstukjes: alleen binnen de platte dakvlakken van het pand =================
+function roofY(B, x, z) {   // hoogte van het platte dak op (x, z), of null
+  const T = B.T;
+  for (let k = 0; k < T.length; k += 9) {
+    const ax = T[k], az = T[k + 2], bx = T[k + 3], bz = T[k + 5], cx = T[k + 6], cz = T[k + 8];
+    const d = (bz - cz) * (ax - cx) + (cx - bx) * (az - cz); if (!d) continue;
+    const l1 = ((bz - cz) * (x - cx) + (cx - bx) * (z - cz)) / d, l2 = ((cz - az) * (x - cx) + (ax - cx) * (z - cz)) / d, l3 = 1 - l1 - l2;
+    if (l1 >= 0 && l2 >= 0 && l3 >= 0) return l1 * T[k + 1] + l2 * T[k + 4] + l3 * T[k + 7];
+  }
+  return null;
+}
+// raster in eigen assen (a langs, c dwars; zelfde als loc() in de shader), fn(x, y, z, a, c) als alle hoekjes [da, dc] ook op hetzelfde dak liggen
+function scatter(B, sa, sc, oa, oc, corners, fn) {
+  const d0 = Math.cos(B.th), d1 = Math.sin(B.th), p0 = -d1, p1 = d0, T = B.T;
+  let a0 = Infinity, a1 = -Infinity, c0 = Infinity, c1 = -Infinity;
+  for (let k = 0; k < T.length; k += 3) { const a = T[k] * d0 + T[k + 2] * d1, c = T[k] * p0 + T[k + 2] * p1; a0 = Math.min(a0, a); a1 = Math.max(a1, a); c0 = Math.min(c0, c); c1 = Math.max(c1, c); }
+  for (let a = Math.ceil((a0 - oa) / sa) * sa + oa; a <= a1; a += sa) for (let c = Math.ceil((c0 - oc) / sc) * sc + oc; c <= c1; c += sc) {
+    const x = a * d0 + c * p0, z = a * d1 + c * p1, y = roofY(B, x, z); if (y === null) continue;
+    if (corners.every(([da, dc]) => { const yy = roofY(B, x + da * d0 + dc * p0, z + da * d1 + dc * p1); return yy !== null && Math.abs(yy - y) < 0.3; })) fn(x, y, z, a, c);
+  }
+}
+const box4 = (w, l) => [[-w, -l], [w, -l], [-w, l], [w, l]];
+const rng = s => (k => () => (k = (k * 16807) % 2147483647) / 2147483647)(Math.floor(s * 1e6) + 1);
+const PARTS = [];   // { mesh, when(cfg) }
+function instanced(geo, mat, list, when) {
+  if (!list.length) return;
+  const im = new THREE.InstancedMesh(geo, mat, list.length), m = new THREE.Matrix4(), col = new THREE.Color();
+  list.forEach((it, k) => { m.compose(it.p, it.q, it.s); im.setMatrixAt(k, m); if (it.c) im.setColorAt(k, col.set(it.c)); });
+  im.castShadow = im.receiveShadow = true; im.frustumCulled = false; im.visible = false; scene.add(im);
+  PARTS.push({ mesh: im, when });
+}
+function prismGeo() {   // sheddak: glas staand op z = 0, schuin vlak naar z = 8; x van -0.5 tot 0.5
+  const H = 2.6, P = [], Cl = [], glass = new THREE.Color('#8fb0c4'), slope = new THREE.Color('#8a4f33'), end = new THREE.Color('#6b4a3c');
+  const tri = (a, b, c, k) => { P.push(...a, ...b, ...c); for (let i = 0; i < 3; i++) Cl.push(k.r, k.g, k.b); };
+  const A = [-0.5, 0, 0], B = [0.5, 0, 0], Ct = [-0.5, H, 0], D = [0.5, H, 0], E = [-0.5, 0, 8], Fv = [0.5, 0, 8];
+  tri(A, Ct, B, glass); tri(B, Ct, D, glass); tri(Ct, E, D, slope); tri(D, E, Fv, slope); tri(A, E, Ct, end); tri(B, D, Fv, end);
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(Cl, 3)); g.computeVertexNormals();
+  return g;
+}
+function buildParts() {
+  const V = (x, y, z) => new THREE.Vector3(x, y, z), qy = th => new THREE.Quaternion().setFromAxisAngle(V(0, 1, 0), -th);
+  const qt = (th, tilt) => qy(th).multiply(new THREE.Quaternion().setFromAxisAngle(V(1, 0, 0), tilt));
+  const L = { strip: [], panel: [], prism: [], car: [], halBox: [], halFan: [], platB: [], platDB: [] };
+  const units = (B, out, fans, big) => {   // installaties op een dak
+    const cand = []; scatter(B, big ? 6 : 2.5, big ? 6 : 2.5, 0, 0, box4(big ? 3.5 : 1.3, big ? 3.5 : 1.3), (x, y, z) => cand.push([x, y, z]));
+    if (!cand.length) return;
+    const r = rng(B.sd), nU = big ? Math.min(45, Math.ceil(B.ar / 700)) : Math.min(5, 1 + Math.floor(B.ar / 250));
+    for (let k = cand.length - 1; k > 0; k--) { const j = Math.floor(r() * (k + 1)); [cand[k], cand[j]] = [cand[j], cand[k]]; }
+    cand.slice(0, nU).forEach(([x, y, z], k) => {
+      if (k === 0 && (big || B.hi - B.lo > 12)) { const s = big ? V(5, 4, 3.2) : V(2.8, 2.8, 2.6); out.push({ p: V(x, y + s.y / 2, z), q: qy(B.th), s, c: '#bdb7aa' }); return; }
+      if (big && fans && r() < 0.35) { for (let f = -1; f <= 1; f++) fans.push({ p: V(x + f * 2.2 * Math.cos(B.th), y + 0.4, z + f * 2.2 * Math.sin(B.th)), q: qy(0), s: V(0.9, 0.8, 0.9) }); return; }
+      const s = big ? (r() < 0.5 ? V(6, 2.4, 2.6) : V(3, 1.8, 1.8)) : V(1.4, 1.1, 1.0);
+      out.push({ p: V(x, y + s.y / 2, z), q: qy(B.th + (r() < 0.5 ? 0 : Math.PI / 2)), s, c: r() < 0.6 ? '#cfd1d3' : '#8e9296' });
+    });
+  };
+  const CARS = ['#c23b3b', '#3b5bc2', '#ececec', '#2a2a2a', '#9aa0a6', '#2f6b4a', '#d9b23a', '#ececec'];
+  for (const B of BLDS) {
+    if (B.hal) {
+      // A: lichtstraten om de 18 m + panelen in blokken
+      scatter(B, 3, 18, 0, 9, box4(1.5, 1.2), (x, y, z) => L.strip.push({ p: V(x, y + 0.3, z), q: qy(B.th), s: V(3.05, 0.6, 1.8) }));
+      scatter(B, 1.1, 2.4, 0, 0, box4(1.6, 1.6), (x, y, z, a, c) => {
+        if (Math.abs((((c % 18) + 18) % 18) - 9) < 2.6) return;
+        if (Math.abs(Math.sin(Math.floor(a / 24) * 12.99 + Math.floor(c / 18) * 78.23 + B.sd * 99) * 43758.5) % 1 > 0.72) return;
+        L.panel.push({ p: V(x, y + 0.45, z), q: qt(B.th, 0.22), s: V(1.02, 0.05, 1.65) });
+      });
+      units(B, L.halBox, L.halFan, true);
+      scatter(B, 4, 8, 0, 0, [[-2, 0.3], [2, 0.3], [-2, 7.8], [2, 7.8]], (x, y, z) => L.prism.push({ p: V(x, y, z), q: qy(B.th), s: V(4.02, 1, 1) }));
+      const fr = ((B.sd * 7.7) % 1);
+      if (fr >= 0.5) for (const oc of [2.5, 7.5]) scatter(B, 2.5, 16, 1.25, oc, box4(1.1, 2.4), (x, y, z) => {
+        const r = Math.abs(Math.sin(x * 12.9898 + z * 78.233) * 43758.5453) % 1;
+        if (r < 0.65) L.car.push({ p: V(x, y + 0.7, z), q: qy(B.th), s: V(1.8, 1.3, 4.1), c: CARS[Math.floor(r * 12.3) % CARS.length] });
+      });
+    } else {
+      const mine = []; units(B, mine, null, false); L.platB.push(...mine);
+      const mk = (B.sd * 3.1) % 1; if (mk >= 0.34 && mk < 0.67) L.platDB.push(...mine);
+    }
+  }
+  const BOX = new THREE.BoxGeometry(1, 1, 1), lam = c => new THREE.MeshLambertMaterial({ color: c, flatShading: true });
+  instanced(BOX, lam('#e9f1f5'), L.strip, c => c.hal === 'A');
+  instanced(BOX, lam('#2d3f5c'), L.panel, c => c.hal === 'A');
+  instanced(BOX, lam('#ffffff'), L.halBox, c => c.hal === 'B');
+  instanced(new THREE.CylinderGeometry(1, 1, 1, 10), lam('#7a7e82'), L.halFan, c => c.hal === 'B');
+  instanced(prismGeo(), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, side: THREE.DoubleSide }), L.prism, c => c.hal === 'D');
+  instanced(BOX, lam('#ffffff'), L.car, c => c.hal === 'E');
+  instanced(BOX, lam('#ffffff'), L.platB, c => c.plat === 'B');
+  instanced(BOX, lam('#ffffff'), L.platDB, c => c.plat === 'D');
+}
+
+// ================= grond: PDOK pastel (benadering iso-kaartfilter) =================
+function rd2wgs(x, y) {
+  const dX = (x - 155000) * 1e-5, dY = (y - 463000) * 1e-5;
+  const N = 3235.65389 * dY - 32.58297 * dX ** 2 - 0.2475 * dY ** 2 - 0.84978 * dX ** 2 * dY - 0.0655 * dY ** 3 - 0.01709 * dX ** 2 * dY ** 2 - 0.00738 * dX + 0.0053 * dX ** 4 - 0.00039 * dX ** 2 * dY ** 3 + 0.00033 * dX ** 4 * dY - 0.00012 * dX * dY;
+  const E = 5260.52916 * dX + 105.94684 * dX * dY + 2.45656 * dX * dY ** 2 - 0.81885 * dX ** 3 + 0.05594 * dX * dY ** 3 - 0.05607 * dX ** 3 * dY + 0.01199 * dY - 0.00256 * dX ** 3 * dY ** 2 + 0.00128 * dX * dY ** 4 + 0.00022 * dY ** 2 - 0.00022 * dX ** 2 + 0.00026 * dX ** 5;
+  return [52.1551744 + N / 3600, 5.38720621 + E / 3600];
+}
+const TS = 256, lon2px = (lon, z) => (lon + 180) / 360 * TS * 2 ** z;
+const lat2py = (lat, z) => { const f = lat * Math.PI / 180; return (1 - Math.log(Math.tan(f) + 1 / Math.cos(f)) / Math.PI) / 2 * TS * 2 ** z; };
+function texture(c, z) {
+  const corners = [[c.x0, c.y0], [c.x0 + AREA.km, c.y0], [c.x0, c.y0 + AREA.km], [c.x0 + AREA.km, c.y0 + AREA.km]].map(([x, y]) => rd2wgs(x, y));
+  const pxs = corners.map(([la, lo]) => lon2px(lo, z)), pys = corners.map(([la]) => lat2py(la, z));
+  const tx0 = Math.floor(Math.min(...pxs) / TS), tx1 = Math.floor(Math.max(...pxs) / TS), ty0 = Math.floor(Math.min(...pys) / TS), ty1 = Math.floor(Math.max(...pys) / TS);
+  const cv = document.createElement('canvas'); cv.width = (tx1 - tx0 + 1) * TS; cv.height = (ty1 - ty0 + 1) * TS;
+  const ctx = cv.getContext('2d'); ctx.fillStyle = '#e6e8dc'; ctx.fillRect(0, 0, cv.width, cv.height);
+  const jobs = [];
+  for (let tx = tx0; tx <= tx1; tx++) for (let ty = ty0; ty <= ty1; ty++) jobs.push(new Promise(ok => {
+    const img = new Image(); img.crossOrigin = 'anonymous';
+    img.onload = () => { ctx.drawImage(img, (tx - tx0) * TS, (ty - ty0) * TS); ok(1); }; img.onerror = () => ok(0);
+    img.src = `https://service.pdok.nl/brt/achtergrondkaart/wmts/v2_0/pastel/EPSG:3857/${z}/${tx}/${ty}.png`;
+  }));
+  return Promise.all(jobs).then(r => {
+    const m = new THREE.MeshLambertMaterial({ color: '#e6e8dc' });
+    c.terrain.material = m;
+    if (!r.some(Boolean)) return;
+    const N = c.demN, s = c.demStep, uv = c.terrain.geometry.attributes.uv;
+    for (let r = 0; r < N; r++) for (let q = 0; q < N; q++) {
+      const [la, lo] = rd2wgs(c.x0 + q * s, c.y0 + AREA.km - r * s);
+      uv.setXY(r * N + q, (lon2px(lo, z) - tx0 * TS) / cv.width, 1 - (lat2py(la, z) - ty0 * TS) / cv.height);
+    }
+    uv.needsUpdate = true;
+    const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = R.capabilities.getMaxAnisotropy();
+    m.color.set('#ffffff'); m.map = t;
+    m.onBeforeCompile = s => { s.fragmentShader = s.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
+      { vec3 t = diffuseColor.rgb; float l = dot(t, vec3(0.299, 0.587, 0.114)); t = mix(vec3(l), t, 1.25); diffuseColor.rgb = mix(vec3(0.6), t, 0.85) * 0.78; }`); };
+  });
+}
+
+// ================= bomen (anime-1: bolle klont) =================
+function blobGeo(blobs, seed) {
+  const P = [], rnd = (k => () => (k = (k * 16807) % 2147483647) / 2147483647)(seed);
+  for (let b = 0; b < blobs; b++) {
+    const a = b / blobs * Math.PI * 2 + rnd(), r = b ? 0.55 : 0, sc = b ? 0.62 + rnd() * 0.15 : 0.78;
+    const ox = Math.cos(a) * r, oz = Math.sin(a) * r, oy = b ? -0.05 + rnd() * 0.3 : 0.25;
+    const g = new THREE.IcosahedronGeometry(sc, 2).attributes.position.array;
+    for (let k = 0; k < g.length; k += 3) P.push(g[k] + ox, g[k + 1] + oy, g[k + 2] + oz);
+  }
+  const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); geo.computeVertexNormals();
+  return geo;
+}
+function leafMat(cols) {
+  const m = new THREE.MeshLambertMaterial(), [lo, mid, hi] = cols.map(C);
+  m.onBeforeCompile = s => {
+    s.vertexShader = s.vertexShader.replace('#include <common>', '#include <common>\nvarying float vLy;').replace('#include <begin_vertex>', '#include <begin_vertex>\nvLy = position.y;');
+    s.fragmentShader = s.fragmentShader.replace('#include <common>', '#include <common>\nvarying float vLy;')
+      .replace('#include <color_fragment>', `#include <color_fragment>\n{ float t = clamp((vLy + 0.6) / 1.5, 0.0, 1.0); diffuseColor.rgb = mix(mix(${lo}, ${mid}, smoothstep(0.0, 0.5, t)), ${hi}, smoothstep(0.6, 1.0, t)); }`);
+  };
+  return m;
+}
+function buildTrees(cens) {
+  const T = H3D_DATA.props.trees, L = [];
+  for (let k = 0; k < T.length; k += 4) if (cens.some(c => Math.abs(T[k] - c[0]) < 700 && Math.abs(T[k + 1] - c[1]) < 700)) L.push([T[k], T[k + 1], T[k + 2], T[k + 3] || 9]);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), p = new THREE.Vector3();
+  const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.15, 0.2, 1, 6), new THREE.MeshLambertMaterial({ color: '#6b4a36' }), L.length);
+  const cones = new THREE.InstancedMesh(new THREE.ConeGeometry(1, 2.2, 7), new THREE.MeshLambertMaterial({ color: '#3f8a3a', flatShading: true }), L.length);
+  const crowns = new THREE.InstancedMesh(blobGeo(4, 7), leafMat(['#2f6e2c', '#4f9e3a', '#8cc85a']), L.length);
+  let nb = 0, nc = 0;
+  L.forEach(([x, y, needle, h], k) => {
+    const gy = heightAt(x, y), X = x - O[0], Z = -(y - O[1]), r = Math.max(2, h * 0.32);
+    m.compose(p.set(X, gy + h * 0.35 / 2, Z), q.identity(), sc.set(1, h * 0.35, 1)); trunks.setMatrixAt(k, m);
+    if (needle) { m.compose(p.set(X, gy + h * 0.6, Z), q, sc.set(r * 0.7, h * 0.32, r * 0.7)); cones.setMatrixAt(nc++, m); return; }
+    const R2 = r * 1.35; m.compose(p.set(X, gy + h * 0.62, Z), q.setFromEuler(new THREE.Euler(0, k, 0)), sc.set(R2, R2 * 0.85, R2)); crowns.setMatrixAt(nb++, m);
+  });
+  crowns.count = nb; cones.count = nc;
+  for (const im of [crowns, cones, trunks]) { im.castShadow = im.receiveShadow = true; scene.add(im); }
+}
+
+// ================= nabewerking: licht randje (anime-1, inkt uit) =================
+const NRM = new THREE.MeshNormalMaterial({ flatShading: true });
+const camO = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 8000);
+let rtC, rtN;
+function targets(w, h) {
+  if (rtC && rtC.width === w && rtC.height === h) return;
+  rtC?.dispose(); rtN?.dispose();
+  rtC = new THREE.WebGLRenderTarget(w, h, { samples: 4 }); rtC.texture.colorSpace = THREE.SRGBColorSpace;
+  rtN = new THREE.WebGLRenderTarget(w, h, { depthTexture: new THREE.DepthTexture(w, h) });
+  for (const t of [rtC.texture, rtN.texture, rtN.depthTexture]) t.minFilter = t.magFilter = THREE.NearestFilter;
+}
+const PQ = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
+  uniforms: { tC: { value: null }, tN: { value: null }, tD: { value: null }, uRes: { value: new THREE.Vector2() }, uDT: { value: 0.0005 }, uBg: { value: new THREE.Color('#dfe8e4') } },
+  vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+  fragmentShader: `
+    uniform sampler2D tC, tN, tD; uniform vec2 uRes; uniform float uDT; uniform vec3 uBg;
+    varying vec2 vUv;
+    void main() {
+      vec2 px = 1.0 / uRes, uv = vUv;
+      vec3 c = texture2D(tC, uv).rgb; float d0 = texture2D(tD, uv).x; vec3 n0 = texture2D(tN, uv).xyz;
+      bool sky = d0 > 0.9999;
+      vec2 ox = vec2(px.x, 0.0), oy = vec2(0.0, px.y);
+      float dl = texture2D(tD, uv - ox).x, dr = texture2D(tD, uv + ox).x, dd = texture2D(tD, uv - oy).x, du = texture2D(tD, uv + oy).x;
+      float e = max(step(uDT, dl + dr - 2.0 * d0), step(uDT, du + dd - 2.0 * d0));
+      float en = 0.0;
+      for (int k = 0; k < 4; k++) {
+        vec2 o = k == 0 ? ox : k == 1 ? -ox : k == 2 ? oy : -oy;
+        float d = texture2D(tD, uv + o).x; vec3 n = texture2D(tN, uv + o).xyz;
+        if (d < 0.9999 && !sky) en = max(en, smoothstep(0.25, 0.45, length(n - n0)));
+      }
+      e = max(e, en);
+      vec3 o = sky ? uBg : c;
+      o = mix(o, min(vec3(1.0), o * 1.35 + 0.06), e * 0.85);
+      gl_FragColor = vec4(o, 1.0);
+      #include <colorspace_fragment>
+    }`,
+  depthTest: false, depthWrite: false,
+}));
+const PS = new THREE.Scene(); PS.add(PQ); const PC = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+// ================= tekenen =================
+const ISO_POLAR = Math.PI / 2 - Math.atan(0.5), AZ = Math.PI / 4 + Math.PI / 2;
+let TGT = new THREE.Vector3(), LOC = 0, ZOOM = 'ver';
+function setLoc(i) { LOC = i; const c = LOCS[i]; TGT.set(c[0] - O[0], heightAt(...c), -(c[1] - O[1])); }
+function apply(cfg) {
+  for (const c of CH) c.mesh.material = matsFor(cfg);
+  for (const p of PARTS) p.mesh.visible = p.when(cfg);
+}
+function render(cfg, w, h, half) {
+  apply(cfg); targets(w, h);
+  const a = w / h; Object.assign(camO, { left: -half * a, right: half * a, top: half, bottom: -half }); camO.updateProjectionMatrix();
+  camO.position.copy(TGT).add(new THREE.Vector3().setFromSpherical(new THREE.Spherical(3000, ISO_POLAR, AZ))); camO.lookAt(TGT);
+  sun.position.copy(TGT).add(SUN_DIR.clone().multiplyScalar(3000)); sun.target.position.copy(TGT); sun.target.updateMatrixWorld();
+  R.setSize(w, h, false);
+  R.setRenderTarget(rtC); R.setClearColor(0x000000, 1); R.render(scene, camO);
+  scene.overrideMaterial = NRM; R.setRenderTarget(rtN); R.setClearColor(0x8080ff, 1); R.render(scene, camO); scene.overrideMaterial = null;
+  const u = PQ.material.uniforms;
+  u.tC.value = rtC.texture; u.tN.value = rtN.texture; u.tD.value = rtN.depthTexture; u.uRes.value.set(w, h); u.uDT.value = 2.0 / (camO.far - camO.near);
+  R.setRenderTarget(null); R.render(PS, PC);
+  return R.domElement.toDataURL('image/jpeg', 0.9);
+}
+
+// ================= pagina =================
+const $ = id => document.getElementById(id);
+$('secs').innerHTML = SECS.map(s => `<h2>${s.n}</h2><p class="sub">${s.sub}</p><div class="grid">${s.opts.map(o => `
+  <article class="opt" data-k="${s.k}" data-id="${o.id}"><img alt="${o.name}">
+    <div class="body"><h3><small>${o.id}</small>${o.name}</h3><p>${o.line}</p>
+      <ul>${o.pts.map(p => `<li>${p}</li>`).join('')}</ul>
+      <div class="tags">${o.tags.map(t => `<span${/risico|afwijking|veel/.test(t) ? ' class="warn"' : ''}>${t}</span>`).join('')}</div>
+      <button class="kies">Kies deze</button></div></article>`).join('')}</div>`).join('');
+function marks() {
+  for (const a of document.querySelectorAll('.opt')) { const on = CFG[a.dataset.k] === a.dataset.id; a.classList.toggle('picked', on); a.querySelector('.kies').classList.toggle('on', on); }
+  $('picktxt').textContent = 'Bedrijfspanden: ' + SECS.map(s => { const o = s.opts.find(o => o.id === CFG[s.k]); return `${s.n.split(' · ')[1].toLowerCase()} ${o.id} (${o.name})`; }).join(' · ');
+}
+let gen = 0; const oldCache = {};
+const frame = () => new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
+async function redraw(skipKey) {
+  const my = ++gen; $('busy').textContent = 'tekenen…';
+  const half = ZOOM === 'ver' ? 170 : 70, key = LOC + ZOOM;
+  await frame(); if (my !== gen) return;
+  $('bNew').src = render(CFG, 1280, 800, half);
+  if (!oldCache[key]) { await frame(); if (my !== gen) return; oldCache[key] = render(HUIDIG, 1280, 800, half); }
+  $('bOld').src = oldCache[key];
+  for (const a of document.querySelectorAll('.opt')) {
+    if (a.dataset.k === skipKey && a.querySelector('img').src) continue;
+    await frame(); if (my !== gen) return;
+    a.querySelector('img').src = render({ ...CFG, [a.dataset.k]: a.dataset.id }, 640, 440, ZOOM === 'ver' ? 110 : 50);
+  }
+  $('busy').textContent = ''; window.READY = true;
+}
+$('secs').addEventListener('click', e => {
+  const a = e.target.closest('.opt'); if (!a) return;
+  if (e.target.tagName === 'IMG') return zoomImg(e.target.src);
+  if (!e.target.closest('.kies')) return;
+  CFG[a.dataset.k] = a.dataset.id; marks(); redraw(a.dataset.k);
+});
+$('slide').oninput = e => $('cmp').style.setProperty('--x', e.target.value + '%');
+document.querySelector('.tools').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const grp = b.dataset.z ? 'z' : 'l';
+  for (const x of document.querySelectorAll(`.tools button[data-${grp}]`)) x.classList.toggle('on', x === b);
+  if (b.dataset.z) ZOOM = b.dataset.z; else setLoc(+b.dataset.l);
+  redraw();
+});
+function zoomImg(src) { $('zoomv').querySelector('img').src = src; $('zoomv').style.display = 'block'; }
+$('zoomv').onclick = () => $('zoomv').style.display = 'none';
+$('copy').onclick = () => navigator.clipboard?.writeText($('picktxt').textContent).then(() => {
+  const b = $('copy'); b.textContent = 'Gekopieerd'; setTimeout(() => b.textContent = 'Kopieer', 1500); });
+
+(async () => {
+  O = AREA.origin;
+  CH.push(...await Promise.all(RAW.map(([h, b]) => decode(h, b)))); RAW.length = 0;
+  for (const i of [0, 1]) {   // De Beitel: midden van de grootste hal in de buurt
+    const l = LOCS[i], best = BLDS.filter(B => B.hal && Math.hypot(B.cx - (l[0] - O[0]), B.cz + (l[1] - O[1])) < 450).sort((a, b) => b.ar - a.ar)[0];
+    if (best) LOCS[i] = [best.cx + O[0], O[1] - best.cz];
+  }
+  const l0 = +new URLSearchParams(location.search).get('loc') || 0; setLoc(l0);
+  for (const b of document.querySelectorAll('.tools button[data-l]')) b.classList.toggle('on', +b.dataset.l === l0);
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(30000, 30000).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: '#d8d6cc' }));
+  ground.position.y = Math.min(...CH.map(c => Math.min(...c.dem)) ) / 100 - 30; scene.add(ground);
+  buildTrees(LOCS); buildParts();
+  marks();
+  $('load').textContent = 'Kaart laden…';
+  await Promise.all(CH.map(c => texture(c, Math.hypot(c.i * 1000 + 500 - LOCS[0][0], c.j * 1000 + 500 - LOCS[0][1]) < 1200 || (c.i === 196 && c.j === 322) ? 17 : 16)));
+  $('load').textContent = '';
+  redraw();
+})();
+</script>
+</body>
+</html>

@@ -496,9 +496,9 @@ vec3 growB(vec3 p) {
   // groeien klaar → schaduw aan, opgelichte plekken (kopieën zonder groei-animatie), gebakken licht (iso/bake.js luistert naar 'grown')
   function growDone(c) {
     c.growing = false; growing.delete(c); lastLod = 0; shadowDirty = true;
-    // groei-attributen weg (8 B/hoekpunt JS + GPU): shader leest dan 0 = staat al. dispose geeft de GPU-buffers vrij; volgende beeld laadt positie/index opnieuw
+    // aGrow weg (4 B/hoekpunt): shader leest dan 0 = staat al. aGBase (voet) blijft: daglicht-ramen in ANIME_WALL rekenen ermee (weg = ramen weg na groeien)
     const g = c.mesh && c.mesh.geometry;
-    if (g && g.attributes.aGrow) { g.deleteAttribute('aGrow'); g.deleteAttribute('aGBase'); g.dispose(); }
+    if (g && g.attributes.aGrow) { g.deleteAttribute('aGrow'); g.dispose(); }
     chunkMarks(c); emit('grown', c);
   }
 
@@ -784,7 +784,7 @@ vec3 growB(vec3 p) {
     s.fragmentShader = s.fragmentShader.replace('#include <alphamap_fragment>', `{ float snUp = abs((transpose(mat3(viewMatrix)) * normalize(cross(dFdx(vViewPosition), dFdy(vViewPosition)))).y);
       diffuseColor.rgb = ${kind === 'roof' ? 'seasonRoof' : 'seasonLeaf'}(diffuseColor.rgb, snUp); }\n#include <alphamap_fragment>`);
   };
-  const SUN_DIR = new THREE.Vector3(-0.5, 0.86, 0.32); H.SUN_DIR = SUN_DIR; // hoge middagzon (design/15_anime.html licht A; was -0.55, 0.75, 0.35) — vaste zonrichting (× 3000 = zonpositie t.o.v. het doel)
+  const SUN_DIR = new THREE.Vector3(-0.55, 0.62, 0.35); H.SUN_DIR = SUN_DIR; // ±44° (schaduwen weer leesbaar; anime-1 had -0.5, 0.86, 0.32 = ±55°, daarvoor -0.55, 0.75, 0.35) — vaste zonrichting (× 3000 = zonpositie t.o.v. het doel)
   const BAKE_GLSL = `
   uniform sampler2D uBk, uBkI; uniform vec4 uBkR; uniform vec2 uBkN; uniform float uBaked, uBkAO; varying vec3 vBkW;
   vec4 bkTexel(ivec2 g) { // g = texel over het hele vakkenraster (x oost, y noord)
@@ -820,6 +820,19 @@ vec3 growB(vec3 p) {
       float w = (o.x == 1 ? f.x : 1.0 - f.x) * (o.y == 1 ? f.y : 1.0 - f.y) * (1.0 - smoothstep(tol, tol + 1.5, h - p.y));
       acc += t.rg * w; ws += w;
     }
+    // vlak naast een muur zijn alle 4 texels dak (2 m) → anders 'zon' (lichte strook = doorkijk); dan ring eromheen (12 texels) gebruiken
+    if (ws < 0.05 && tol > 0.0) {
+      vec2 a2 = vec2(0.0); float w2 = 0.0;
+      for (int y = -1; y <= 2; y++) for (int x = -1; x <= 2; x++) {
+        if (x >= 0 && x <= 1 && y >= 0 && y <= 1) continue;
+        vec4 t = bkTexel(i + ivec2(x, y));
+        if (t == vec4(0.0)) continue;
+        float h = (t.b * 65280.0 + t.a * 255.0) / 65535.0 * 1000.0 - 100.0;
+        float w = 1.0 - smoothstep(tol, tol + 1.5, h - p.y);
+        a2 += t.rg * w; w2 += w;
+      }
+      if (w2 > 0.05) return vec4(a2 / w2, mn, w2);
+    }
     return vec4(ws > 0.001 ? acc / ws : vec2(1.0), mn, ws);
   }`;
   // kind: 'wall' (alleen contactschaduw onderaan, uit de hoogte rondom), 'surf' (zon + contactschaduw), 'terr' (idem, terrein)
@@ -845,7 +858,7 @@ vec3 growB(vec3 p) {
       float bkSun = uBaked > 0.5 && ${wall ? 'false' : 'true'} ? bkV.x : 1.0;
       float bkLF = uIso > 0.5 && uBaked < 0.5 ? bkFade(vBkW) : 1.0; vec3 bkC0;
       ` + L)
-      .replace('#include <opaque_fragment>', `if (uBkAO > 0.5 && uIso > 0.5) outgoingLight *= ${wall ? 'mix(0.7, 1.0, smoothstep(0.0, 3.5, vBkW.y - bkV.z))' : 'mix(1.0, bkV.y, step(0.001, bkV.w))'};
+      .replace('#include <opaque_fragment>', `if (uBkAO > 0.5 && uIso > 0.5) outgoingLight *= ${wall ? 'mix(0.86, 1.0, smoothstep(0.0, 1.4, vBkW.y - bkV.z))' : 'mix(1.0, bkV.y, step(0.001, bkV.w))'};
       #include <opaque_fragment>`);
   }
   // ---------- Andere gebouwen dimmen (vager, platter) ----------
@@ -904,23 +917,24 @@ vec3 growB(vec3 p) {
         vec3 T[4]; T[0] = vec3(0.25, 0.26, 0.28); T[1] = vec3(0.62, 0.25, 0.17); T[2] = vec3(0.74, 0.39, 0.22); T[3] = vec3(0.36, 0.23, 0.18);
         p = dn.y > 0.97 ? (h1 < 0.6 ? vec3(0.30, 0.30, 0.31) : vec3(0.55, 0.53, 0.49)) : T[int(h1 * 3.999)] * (1.0 - 0.25 * rows);`;
   // anime (uAnime 1, design/15_anime.html kleur C "Mix op bouwjaar"): schuin dak = oud rood (<1940) / oranje (<1975) / antraciet (nieuwer),
-  // plat = licht grind, hal (> 2500 m²) geribbeld langs de lange as; gevel baksteen (< 1965) of licht pleister, met raamrijen overdag
+  // plat = donker grind/bitumen (nooit gelijk aan de gevel), hal (> 2500 m²) middengrijs geribbeld; gevel baksteen (< 1965) of na 1965 35% moderne baksteen, rest zacht gekleurd pleister (geen wit), met raamrijen overdag
   // (zelfde raster als de avondramen in MAT.wall). Zonder bouwjaar: 1930 + zaad × 70.
   const lin = h => { const c = new THREE.Color(h); return `vec3(${c.r.toFixed(3)}, ${c.g.toFixed(3)}, ${c.b.toFixed(3)})`; };
   const glPick = (list, x) => list.map((h, k) => `${k ? 'else ' : ''}${k < list.length - 1 ? `if (${x} < ${((k + 1) / list.length).toFixed(3)}) ` : ''}p = ${lin(h)};`).join(' ');
-  const W_BRICK = ['#c4836a', '#b5745c', '#d59c7e', '#ead8c2', '#f1ebe0', '#c99a7c'], W_PALE = ['#f7f3ec', '#efe4d2', '#f4ebde', '#e8d8c4', '#ffffff', '#ebe6de', '#e0cbb3'];
+  const W_BRICK = ['#c4836a', '#b5745c', '#d59c7e', '#ead8c2', '#e4cfae', '#c99a7c'], W_PALE = ['#e9d9b8', '#dcc79a', '#e3b99a', '#c9d1b4', '#bfcbd3', '#e6dccb', '#d8bfa0'];
+  const W_MOD = ['#c9a86e', '#a7826a', '#8f6f6a', '#b99a7a']; // jaren 70/80-baksteen: geelbruin, paarsbruin
   const R_OLD = ['#a8463a', '#b5503d', '#93412f'], R_MID = ['#d06a3e', '#de7c48', '#c75f38'], R_NEW = ['#454952', '#5a616c', '#6f7378'];
   const ANIME_YR = 'float yr = vI.x > 1000.0 ? vI.x : 1930.0 + vS * 70.0;';
   const ANIME_ROOF = `if (uAnime > 0.5) { ${ANIME_YR}
           if (dn.y > 0.97) {
-            if (vI.y > 2500.0) { p = ${lin('#ddd9d0')}; float rc = vI.w > 0.5 ? vRW.z : vRW.x, rf = fwidth(rc / 3.0); p *= mix(0.92 + 0.08 * step(0.5, fract(rc / 3.0)), 0.96, smoothstep(0.2, 0.6, rf)); }
-            else { ${glPick(['#e8e4dc', '#d4d1ca', '#f0ece5'], 'h1')} }
+            if (vI.y > 2500.0) { p = ${lin('#a7a39a')}; float rc = vI.w > 0.5 ? vRW.z : vRW.x, rf = fwidth(rc / 3.0); p *= mix(0.92 + 0.08 * step(0.5, fract(rc / 3.0)), 0.96, smoothstep(0.2, 0.6, rf)); }
+            else { ${glPick(['#8a8780', '#6f6d69', '#5d5b58', '#9a958c'], 'h1')} }
           } else {
             if (yr < 1940.0) { ${glPick(R_OLD, 'h1')} } else if (yr < 1975.0) { ${glPick(R_MID, 'h1')} } else { ${glPick(R_NEW, 'h1')} }
             p *= 1.0 - 0.12 * rows;
           } }`;
   const ANIME_WALL = `if (uAnime > 0.5) { ${ANIME_YR}
-          if (yr < 1965.0) { ${glPick(W_BRICK, 'vS')} } else { ${glPick(W_PALE, 'vS')} }
+          if (yr < 1965.0) { ${glPick(W_BRICK, 'vS')} } else if (fract(vS * 5.3) < 0.35) { ${glPick(W_MOD, 'fract(vS * 3.7)')} } else { ${glPick(W_PALE, 'vS')} }
           vec3 wn = normalize(cross(dFdx(vRW), dFdy(vRW)));
           float u = abs(wn.x) > abs(wn.z) ? vRW.z : vRW.x, fy = (vRW.y - 1.0) / 3.1, hb = vRW.y - vI.z, ht = vI.z + vHt - vRW.y;
           vec2 f = vec2(fract(u / 3.2), fract(fy));
