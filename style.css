@@ -193,6 +193,7 @@ body.no-webgl #nowebgl { display: grid; }
   .grp.wide > div { grid-template-columns: 1fr; min-width: 0; width: min(300px, calc(100vw - 24px)); max-height: 70vh; overflow-y: auto; }
   .grp.wide section + section { border-left: 0; padding-left: 0; border-top: 1px solid var(--line); padding-top: 6px; }
   #g-plek > div { top: 40px; bottom: auto; }
+  #menu > div { top: auto; bottom: 48px; max-height: 70vh; overflow-y: auto; } /* knop staat onderaan → omhoog openklappen */
   #tools { flex-wrap: wrap; justify-content: flex-end; max-width: calc(100vw - 24px); flex-direction: row; }
   body:has(#card:not([hidden])) #tools, body:has(#card:not([hidden])) #attr { display: none; }
 }

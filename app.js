@@ -95,7 +95,7 @@ vec3 growB(vec3 p) {
   let dirty = true;
   const QS = new URLSearchParams(location.search); // testschakelaars: ?nopost ?noshadow
   const redraw = () => { dirty = true; };
-  const BUILD = 'diag-4 (2026-11-09)', DBG_U = { value: new THREE.Vector2(1, 1) }; // ?gpu: versie zichtbaar + schakelaars omlijning (x = vlaklijnen, y = dieptelijnen)
+  const BUILD = 'diag-5 (2026-11-09)', DBG_U = { value: new THREE.Vector2(1, 1) }; // ?gpu: versie zichtbaar + schakelaars omlijning (x = vlaklijnen, y = dieptelijnen)
   H.redraw = redraw;
   // na de upload naar de GPU de kopie in het werkgeheugen weggooien (canvas → 1×1, DataTexture-data → null). Opnieuw tekenen = nieuw canvas/nieuwe textuur
   H.freeAfterUpload = tex => { tex.onUpdate = () => { tex.onUpdate = null; const im = tex.image; if (im && im.getContext) im.width = im.height = 1; else if (im && im.data) im.data = null; }; return tex; };
@@ -112,7 +112,7 @@ vec3 growB(vec3 p) {
     renderer.shadowMap.autoUpdate = false; // zie renderlus: alleen bij stilstand + verandering
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     el.appendChild(renderer.domElement);
-    if (QS.has('gpu')) { // diagnose (telefoonstrepen): GPU + precisie + schakelaars op scherm
+    if (QS.has('gpu')) setTimeout(() => { // diagnose (telefoonstrepen): GPU + precisie + schakelaars; na init (zon bestaat dan)
       const gl = renderer.getContext(), di = gl.getExtension('WEBGL_debug_renderer_info'), pf = (s, t) => { const p = gl.getShaderPrecisionFormat(s, t); return p ? p.precision + '/' + p.rangeMax : '-'; };
       const d = document.createElement('div'); d.style.cssText = 'position:fixed;left:4px;top:35vh;z-index:999;background:#fffe;font:12px monospace;padding:6px;max-width:94vw;border:1px solid #888';
       const pre = document.createElement('pre'); pre.style.cssText = 'margin:0 0 6px;white-space:pre-wrap';
@@ -130,7 +130,7 @@ vec3 growB(vec3 p) {
       const lk = (q, label) => { const a = document.createElement('a'); a.href = '?gpu' + q; a.textContent = label; a.style.cssText = 'display:inline-block;margin:4px 8px 0 0'; d.appendChild(a); };
       lk('', 'normaal'); lk('&nomrt', '7 · zonder MRT'); lk('&nopost', '8 · zonder post');
       document.body.appendChild(d);
-    }
+    }, 0);
 
     scene = H.scene = new THREE.Scene();
     scene.background = SKY;
