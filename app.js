@@ -95,7 +95,7 @@ vec3 growB(vec3 p) {
   let dirty = true;
   const QS = new URLSearchParams(location.search); // testschakelaars: ?nopost ?noshadow
   const redraw = () => { dirty = true; };
-  const BUILD = 'diag-7 wolken uit (2026-11-09)', DBG_U = { value: new THREE.Vector2(1, 1) }; // ?gpu: versie zichtbaar + schakelaars omlijning (x = vlaklijnen, y = dieptelijnen)
+  const BUILD = 'anime-1 licht randje, daken op bouwjaar, middag zacht, bolle bomen (2026-11-09)', DBG_U = { value: new THREE.Vector2(1, 1) }; // ?gpu: versie zichtbaar + schakelaars omlijning (x = vlaklijnen, y = dieptelijnen)
   H.redraw = redraw;
   // na de upload naar de GPU de kopie in het werkgeheugen weggooien (canvas → 1×1, DataTexture-data → null). Opnieuw tekenen = nieuw canvas/nieuwe textuur
   H.freeAfterUpload = tex => { tex.onUpdate = () => { tex.onUpdate = null; const im = tex.image; if (im && im.getContext) im.width = im.height = 1; else if (im && im.data) im.data = null; }; return tex; };
@@ -416,6 +416,7 @@ vec3 growB(vec3 p) {
         const seed = new Float32Array(nv).fill(0.37); // vast willekeurig getal per pand (iso: kleur per pand); ver-weg-variant één tint
         const lift = y => (EXAG - 1) * (y - H0), done = new Uint8Array(nv);
         const grow = perBuilding ? new Float32Array(nv) : null, gbase = perBuilding ? new Float32Array(nv) : null, gt0 = Math.max(nowS(), growFloor);
+        const info = perBuilding ? new Uint16Array(nv * 4) : null; // anime-look: bouwjaar, dakoppervlak m², hoogte dm, lange as (1 = x)
         if (perBuilding) for (let b = 0; b < c.bR.length; b++) {
           const r0 = c.bR[b] * 3, r1 = (b + 1 < c.bR.length ? c.bR[b + 1] : nr) * 3, w0 = (nr + c.bW[b]) * 3, w1 = (nr + (b + 1 < c.bW.length ? c.bW[b + 1] : nw)) * 3;
           let lo = Infinity;
@@ -424,7 +425,14 @@ vec3 growB(vec3 p) {
           const dy = EXAG !== 1 ? lift(lo) : 0, sd = Math.abs((Math.sin(b * 12.9898 + c.i * 78.233 + c.j * 3.71) * 43758.5453) % 1);
           // groeien op bouwjaar: oud eerst (1880 → 2020 = 0 → 1 × spreiding), onbekend = midden; klein beetje toeval tegen gelijk opploppen
           const yr = c.year[b], dY = yr > 1000 ? Math.min(1, Math.max(0, (yr - 1880) / 140)) : 0.6, gT = gt0 + dY * GROW.spread + (sd * 7.13 % 1) * GROW.jitter;
-          for (const [a, e] of [[r0, r1], [w0, w1]]) for (let k = a; k < e; k++) { const v = idx[k]; seed[v] = sd; if (!done[v]) { done[v] = 1; pos[v * 3 + 1] += dy; grow[v] = gT; gbase[v] = lo + dy; } }
+          let top = -Infinity, ar = 0, xa = Infinity, xb = -Infinity, za = Infinity, zb = -Infinity;
+          for (let k = r0; k + 2 < r1; k += 3) { // vóór het optillen: dakoppervlak (plat vlak), top, omvang
+            const p0 = idx[k] * 3, p1 = idx[k + 1] * 3, p2 = idx[k + 2] * 3;
+            ar += Math.abs((pos[p1] - pos[p0]) * (pos[p2 + 2] - pos[p0 + 2]) - (pos[p2] - pos[p0]) * (pos[p1 + 2] - pos[p0 + 2])) / 2;
+            for (const q of [p0, p1, p2]) { top = Math.max(top, pos[q + 1]); xa = Math.min(xa, pos[q]); xb = Math.max(xb, pos[q]); za = Math.min(za, pos[q + 2]); zb = Math.max(zb, pos[q + 2]); }
+          }
+          const iY = yr > 1000 ? yr : 0, iA = Math.min(65535, Math.round(ar)), iH = top > lo ? Math.min(65535, Math.round((top - lo) * 10)) : 0, iX = (xb - xa) > (zb - za) ? 1 : 0;
+          for (const [a, e] of [[r0, r1], [w0, w1]]) for (let k = a; k < e; k++) { const v = idx[k]; seed[v] = sd; info[v * 4] = iY; info[v * 4 + 1] = iA; info[v * 4 + 2] = iH; info[v * 4 + 3] = iX; if (!done[v]) { done[v] = 1; pos[v * 3 + 1] += dy; grow[v] = gT; gbase[v] = lo + dy; } }
         }
         if (EXAG !== 1) for (let v = 0; v < nv; v++) if (!done[v]) pos[v * 3 + 1] += lift(demAt(c, pos[v * 3] + O[0], O[1] - pos[v * 3 + 2]));
         if (perBuilding) for (let v = 0; v < nv; v++) if (!done[v]) gbase[v] = pos[v * 3 + 1];
@@ -433,6 +441,7 @@ vec3 growB(vec3 p) {
         g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
         g.setIndex(new THREE.BufferAttribute(idx, 1));
         g.setAttribute('aSeed', new THREE.BufferAttribute(seed, 1));
+        if (perBuilding) g.setAttribute('aInfo', new THREE.BufferAttribute(info, 4));
         if (perBuilding) { g.setAttribute('aGrow', new THREE.BufferAttribute(grow, 1)); g.setAttribute('aGBase', new THREE.BufferAttribute(gbase, 1)); c.growEnd = gt0 + GROW.end; }
         g.addGroup(0, nr * 3, 0); g.addGroup(nr * 3, nw * 3, 1);
         g.computeBoundingSphere(); g.computeBoundingBox();
@@ -735,7 +744,10 @@ vec3 growB(vec3 p) {
   const pal = a => a.map(c => new THREE.Color(c));
   const U = { uNight: { value: 0 }, uIso: { value: 0 }, uLvl: { value: 1 }, uDim: { value: 0 }, uEye: { value: new THREE.Vector3() },
     uPalR: { value: pal(['#c95f48', '#b85443', '#5f7f9e', '#d08a52', '#a9584a', '#6f8f6a', '#c96e4f', '#6d86a3']) },   // iso-daken
-    uPalW: { value: pal(['#f2dcb6', '#f4e6c9', '#dfe6cf', '#d6e2e8', '#efd5c4', '#f7ecd8', '#e9d3c9', '#e7e2cc']) } }; // iso-gevels
+    uPalW: { value: pal(['#f2dcb6', '#f4e6c9', '#dfe6cf', '#d6e2e8', '#efd5c4', '#f7ecd8', '#e9d3c9', '#e7e2cc']) }, // iso-gevels
+    // anime-look (design/15_anime.html): uAnime 1 = daken/gevels op bouwjaar (schakelaar Sfeer › Daken op bouwjaar), uLine 0 inkt / 1 licht randje,
+    // uShC = kleur van de cel-schaduw (iso; middag zacht = blauwgrijs, 's avonds neutraal)
+    uAnime: { value: 1 }, uLine: { value: 1 }, uShC: { value: new THREE.Color(1, 1, 1) } };
   // A2 gebakken licht (iso/bake.js vult de atlas): uBk = atlas (R zon zichtbaar · G contactschaduw · BA hoogte), uBkI = vak → atlasplek
   Object.assign(U, { uBk: { value: null }, uBkI: { value: null }, uBkR: { value: new THREE.Vector4(0, 0, 512, 0) }, uBkN: { value: new THREE.Vector2(0, 0) }, uBaked: { value: 0 }, uBkAO: { value: 0 } });
   // seizoenen (knop in Sfeer): één uniform, geen animatie; 0 zomer · 1 herfst · 2 winter · 3 lente. H.seasonize(shader, 'leaf'|'roof'|'') in elk materiaal dat meedoet.
@@ -772,7 +784,7 @@ vec3 growB(vec3 p) {
     s.fragmentShader = s.fragmentShader.replace('#include <alphamap_fragment>', `{ float snUp = abs((transpose(mat3(viewMatrix)) * normalize(cross(dFdx(vViewPosition), dFdy(vViewPosition)))).y);
       diffuseColor.rgb = ${kind === 'roof' ? 'seasonRoof' : 'seasonLeaf'}(diffuseColor.rgb, snUp); }\n#include <alphamap_fragment>`);
   };
-  const SUN_DIR = new THREE.Vector3(-0.55, 0.75, 0.35); H.SUN_DIR = SUN_DIR; // vaste zonrichting (× 3000 = zonpositie t.o.v. het doel)
+  const SUN_DIR = new THREE.Vector3(-0.5, 0.86, 0.32); H.SUN_DIR = SUN_DIR; // hoge middagzon (design/15_anime.html licht A; was -0.55, 0.75, 0.35) — vaste zonrichting (× 3000 = zonpositie t.o.v. het doel)
   const BAKE_GLSL = `
   uniform sampler2D uBk, uBkI; uniform vec4 uBkR; uniform vec2 uBkN; uniform float uBaked, uBkAO; varying vec3 vBkW;
   vec4 bkTexel(ivec2 g) { // g = texel over het hele vakkenraster (x oost, y noord)
@@ -854,12 +866,12 @@ vec3 growB(vec3 p) {
   // ---------- Licht: dag / avond / nu (volgt de klok), met verlichte ramen en gloeiende plekken ----------
   // iso: licht in 3 harde tinten (licht/half/schaduw), relatief aan het lichtniveau (uLvl) zodat de avond donkerder blijft
   function addCel(s, key = '') {
-    Object.assign(s.uniforms, { uIso: U.uIso, uLvl: U.uLvl });
-    s.fragmentShader = s.fragmentShader.replace('#include <common>', '#include <common>\nuniform float uIso, uLvl;')
+    Object.assign(s.uniforms, { uIso: U.uIso, uLvl: U.uLvl, uShC: U.uShC });
+    s.fragmentShader = s.fragmentShader.replace('#include <common>', '#include <common>\nuniform float uIso, uLvl; uniform vec3 uShC;')
       .replace('#include <opaque_fragment>', `if (uIso > 0.5) {
         float a = max(dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11)), 0.001);
         float l = dot(outgoingLight - totalEmissiveRadiance, vec3(0.3, 0.59, 0.11)) / a / uLvl;
-        outgoingLight = diffuseColor.rgb * uLvl * (l < 0.62 ? 0.52 : l < 1.05 ? 0.8 : 1.04) + totalEmissiveRadiance;
+        outgoingLight = diffuseColor.rgb * uLvl * (l < 0.62 ? 0.52 * uShC : l < 1.05 ? 0.8 * mix(vec3(1.0), uShC, 0.45) : vec3(1.04)) + totalEmissiveRadiance; // schaduw/half getint (blauwgrijs)
       }
       #include <opaque_fragment>`);
     if (!key.startsWith('sky-')) addBake(s, /wall/.test(key) ? 'wall' : 'surf'); // ballon/vogels hangen hoog boven de grond: geen grondschaduw
@@ -891,14 +903,42 @@ vec3 growB(vec3 p) {
         float rows = mix(1.0 - smoothstep(0.0, fw * 1.5 + 0.04, fract(rw)), 0.08, smoothstep(0.3, 0.8, fw));
         vec3 T[4]; T[0] = vec3(0.25, 0.26, 0.28); T[1] = vec3(0.62, 0.25, 0.17); T[2] = vec3(0.74, 0.39, 0.22); T[3] = vec3(0.36, 0.23, 0.18);
         p = dn.y > 0.97 ? (h1 < 0.6 ? vec3(0.30, 0.30, 0.31) : vec3(0.55, 0.53, 0.49)) : T[int(h1 * 3.999)] * (1.0 - 0.25 * rows);`;
+  // anime (uAnime 1, design/15_anime.html kleur C "Mix op bouwjaar"): schuin dak = oud rood (<1940) / oranje (<1975) / antraciet (nieuwer),
+  // plat = licht grind, hal (> 2500 m²) geribbeld langs de lange as; gevel baksteen (< 1965) of licht pleister, met raamrijen overdag
+  // (zelfde raster als de avondramen in MAT.wall). Zonder bouwjaar: 1930 + zaad × 70.
+  const lin = h => { const c = new THREE.Color(h); return `vec3(${c.r.toFixed(3)}, ${c.g.toFixed(3)}, ${c.b.toFixed(3)})`; };
+  const glPick = (list, x) => list.map((h, k) => `${k ? 'else ' : ''}${k < list.length - 1 ? `if (${x} < ${((k + 1) / list.length).toFixed(3)}) ` : ''}p = ${lin(h)};`).join(' ');
+  const W_BRICK = ['#c4836a', '#b5745c', '#d59c7e', '#ead8c2', '#f1ebe0', '#c99a7c'], W_PALE = ['#f7f3ec', '#efe4d2', '#f4ebde', '#e8d8c4', '#ffffff', '#ebe6de', '#e0cbb3'];
+  const R_OLD = ['#a8463a', '#b5503d', '#93412f'], R_MID = ['#d06a3e', '#de7c48', '#c75f38'], R_NEW = ['#454952', '#5a616c', '#6f7378'];
+  const ANIME_YR = 'float yr = vI.x > 1000.0 ? vI.x : 1930.0 + vS * 70.0;';
+  const ANIME_ROOF = `if (uAnime > 0.5) { ${ANIME_YR}
+          if (dn.y > 0.97) {
+            if (vI.y > 2500.0) { p = ${lin('#ddd9d0')}; float rc = vI.w > 0.5 ? vRW.z : vRW.x, rf = fwidth(rc / 3.0); p *= mix(0.92 + 0.08 * step(0.5, fract(rc / 3.0)), 0.96, smoothstep(0.2, 0.6, rf)); }
+            else { ${glPick(['#e8e4dc', '#d4d1ca', '#f0ece5'], 'h1')} }
+          } else {
+            if (yr < 1940.0) { ${glPick(R_OLD, 'h1')} } else if (yr < 1975.0) { ${glPick(R_MID, 'h1')} } else { ${glPick(R_NEW, 'h1')} }
+            p *= 1.0 - 0.12 * rows;
+          } }`;
+  const ANIME_WALL = `if (uAnime > 0.5) { ${ANIME_YR}
+          if (yr < 1965.0) { ${glPick(W_BRICK, 'vS')} } else { ${glPick(W_PALE, 'vS')} }
+          vec3 wn = normalize(cross(dFdx(vRW), dFdy(vRW)));
+          float u = abs(wn.x) > abs(wn.z) ? vRW.z : vRW.x, fy = (vRW.y - 1.0) / 3.1, hb = vRW.y - vI.z, ht = vI.z + vHt - vRW.y;
+          vec2 f = vec2(fract(u / 3.2), fract(fy));
+          float inW = step(0.8, hb) * step(1.1, ht) * step(4.0, vHt);
+          float gl = step(0.25, f.x) * step(f.x, 0.75) * step(0.3, f.y) * step(f.y, 0.8);
+          float far = smoothstep(0.25, 0.6, fwidth(u / 3.2));
+          p = mix(p, ${lin('#6f8299')}, inW * mix(gl, 0.25, far) * 0.85);
+          p *= 1.0 - 0.16 * step(ht, 0.35) * step(4.0, vHt); // schaduwrand onder de dakgoot
+        }`;
   const isoPal = (s, roof) => {
-    Object.assign(s.uniforms, { uPalR: U.uPalR, uPalW: U.uPalW, uDim: U.uDim });
-    s.vertexShader = s.vertexShader.replace('#include <common>', `#include <common>\nattribute float aSeed; varying float vS;${roof ? ' varying vec3 vRW;' : ''}`)
-      .replace('#include <project_vertex>', `#include <project_vertex>\nvS = aSeed;${roof ? ' vRW = (modelMatrix * vec4(transformed, 1.0)).xyz;' : ''}`);
-    s.fragmentShader = s.fragmentShader.replace('#include <common>', `#include <common>\nvarying float vS; uniform vec3 uPalR[8]; uniform vec3 uPalW[8]; uniform float uDim;${roof ? ' varying vec3 vRW;' : ''}`)
+    Object.assign(s.uniforms, { uPalR: U.uPalR, uPalW: U.uPalW, uDim: U.uDim, uAnime: U.uAnime });
+    // vI = (bouwjaar, dakoppervlak, voet, lange as), vHt = hoogte in m; aGBase komt uit GROW_GLSL (addGrow, ook op deze materialen)
+    s.vertexShader = s.vertexShader.replace('#include <common>', `#include <common>\nattribute float aSeed; attribute vec4 aInfo; varying float vS, vHt; varying vec3 vRW; varying vec4 vI;`)
+      .replace('#include <project_vertex>', `#include <project_vertex>\nvS = aSeed; vRW = (modelMatrix * vec4(transformed, 1.0)).xyz; vI = vec4(aInfo.x, aInfo.y, aGBase, aInfo.w); vHt = aInfo.z * 0.1;`);
+    s.fragmentShader = s.fragmentShader.replace('#include <common>', `#include <common>\nvarying float vS, vHt; varying vec3 vRW; varying vec4 vI; uniform vec3 uPalR[8]; uniform vec3 uPalW[8]; uniform float uDim, uAnime;`)
       .replace('#include <color_fragment>', `#include <color_fragment>
       {
-        vec3 p = ${roof ? 'uPalR[int(fract(vS * 7.31) * 7.999)]' : 'uPalW[int(vS * 7.999)]'};${roof ? ROOF_MIJN : ''}
+        vec3 p = ${roof ? 'uPalR[int(fract(vS * 7.31) * 7.999)]' : 'uPalW[int(vS * 7.999)]'};${roof ? ROOF_MIJN + ANIME_ROOF : ANIME_WALL}
         diffuseColor.rgb = mix(p, vec3(dot(p, vec3(0.3, 0.59, 0.11)) * 1.1), 0.7 * uDim);
       }`);
   };
@@ -954,7 +994,9 @@ vec3 growB(vec3 p) {
     x.fillStyle = g; x.fillRect(0, 0, 2, 128); skyTex.needsUpdate = true;
   }
   const HEMI = C('#ffffff', '#7f8fb8'), HEMIG = C('#8d8577', '#2a2630');
-  const SKYC_ISO = C('#e2f0f4', '#e2b79a', '#1c2640'), SUNC_ISO = C('#ffecc8', '#ffb27a', '#aebfff'), HEMIG_ISO = C('#b9b0a0', '#2a2630');
+  // iso = licht A Middag zacht (design/15_anime.html): wittere zon, blauwe hemel → blauwgrijze schaduw (uShC), meer omgevingslicht
+  const SKYC_ISO = C('#e2f0f4', '#e2b79a', '#1c2640'), SUNC_ISO = C('#fff4e0', '#ffb27a', '#aebfff'), HEMIG_ISO = C('#c2b79f', '#2a2630');
+  const HEMI_ISO = C('#a9c8ef', '#7f8fb8'), SHC_DAY = new THREE.Color(0.84, 0.91, 1.1), SHC_NONE = new THREE.Color(1, 1, 1);
   const lerp3 = (a, n, out) => n < 0.5 ? out.lerpColors(a[0], a[1], n * 2) : out.lerpColors(a[1], a[2], n * 2 - 2 + 1);
   let lightMode = 'dag';
   try { lightMode = ['dag', 'avond', 'nu'].includes(localStorage.getItem('h3d.light')) ? localStorage.getItem('h3d.light') : 'dag'; } catch {}
@@ -968,12 +1010,12 @@ vec3 growB(vec3 p) {
   function applyNight() {
     if (!scene) return;
     const n = night, w = THREE.MathUtils.smoothstep(n, 0.35, 0.9);
-    const hg = iso ? HEMIG_ISO : HEMIG, h0 = iso ? 1.3 : 1.6, s0 = iso ? 2.6 : 2.2; // iso: cel-licht uit het ontwerp
+    const hg = iso ? HEMIG_ISO : HEMIG, h0 = iso ? 1.55 : 1.6, s0 = iso ? 3.2 : 2.2; // iso: middag zacht (was 1,3 / 2,6)
     lerp3(iso ? SKYC_ISO : SKYC, n, skyH); lerp3(iso ? ZEN_ISO : ZEN, n, skyZ); scene.fog.color.copy(skyH);
     paintSky(); scene.background = skyTex;
-    hemi.color.lerpColors(HEMI[0], HEMI[1], n); hemi.groundColor.lerpColors(hg[0], hg[1], n); hemi.intensity = h0 - (h0 - 0.45) * n;
+    hemi.color.lerpColors((iso ? HEMI_ISO : HEMI)[0], HEMI[1], n); U.uShC.value.lerpColors(SHC_DAY, SHC_NONE, Math.min(1, n * 2)); hemi.groundColor.lerpColors(hg[0], hg[1], n); hemi.intensity = h0 - (h0 - 0.45) * n;
     lerp3(iso ? SUNC_ISO : SUNC, n, sun.color); sun.intensity = s0 - (s0 - 0.35) * n;
-    U.uLvl.value = (hemi.intensity + sun.intensity) / 3.9;
+    U.uLvl.value = (hemi.intensity + sun.intensity) / (iso ? 4.3 : 3.9); // iso: ±10% lichter dan vóór middag zacht (4,75 = even licht)
     U.uNight.value = w;
     for (const m of hlMat.values()) m.emissiveIntensity = HL_GLOW * (1 + 1.6 * w);
     document.body.classList.toggle('night', n > 0.6);
@@ -1385,7 +1427,7 @@ vec3 growB(vec3 p) {
   }
   H.postOk = () => canPost();
   function draw() {
-    if (camera === ortho) for (const fn of preScene) fn(camera);
+    if (camera === ortho && preScene.length) { mq('voor-scène'); for (const fn of preScene) fn(camera); mq('kleur'); } // meter: grond-pass e.d. apart
     if (camera === ortho && !canPost()) { camera.layers.enable(1); renderer.render(scene, camera); camera.layers.set(0); return; } // bewegende laag (verkeer) direct mee
     if (camera !== ortho) { renderer.render(scene, camera); return; }
     if (!rtC) {
@@ -1403,9 +1445,9 @@ vec3 growB(vec3 p) {
       });
       // tN/tDN highp: three r160 zet geen sampler-precisie → standaard lowp → telefoon (Mali e.d.) las de diepte als 16 bit → streeplijnen
       post = new THREE.ShaderMaterial({
-        uniforms: { tC: { value: useMRT ? rtC.texture[0] : rtC.texture }, tN: { value: rtN.texture }, tSky: { value: skyTex }, uMrt: { value: useMRT ? 1 : 0 }, tD: { value: null }, tDN: { value: null }, uDyn: { value: 0 }, uRes: { value: new THREE.Vector2() }, uW: { value: 2 }, uK: { value: 0.85 }, uInk: { value: H.isoColors.ink }, uDbg: DBG_U },
+        uniforms: { tC: { value: useMRT ? rtC.texture[0] : rtC.texture }, tN: { value: rtN.texture }, tSky: { value: skyTex }, uMrt: { value: useMRT ? 1 : 0 }, tD: { value: null }, tDN: { value: null }, uDyn: { value: 0 }, uRes: { value: new THREE.Vector2() }, uW: { value: 2 }, uK: { value: 0.85 }, uInk: { value: H.isoColors.ink }, uLine: U.uLine, uDbg: DBG_U },
         vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
-        fragmentShader: `varying vec2 vUv; uniform sampler2D tC, tD, tSky; uniform highp sampler2D tN, tDN; uniform vec2 uRes; uniform float uW, uK, uDyn, uMrt; uniform vec3 uInk; uniform vec2 uDbg;
+        fragmentShader: `varying vec2 vUv; uniform sampler2D tC, tD, tSky; uniform highp sampler2D tN, tDN; uniform vec2 uRes; uniform float uW, uK, uDyn, uMrt, uLine; uniform vec3 uInk; uniform vec2 uDbg;
           ${NRM_GLSL}
           ivec2 tq(highp sampler2D t, vec2 o) { return clamp(ivec2(gl_FragCoord.xy + o), ivec2(0), textureSize(t, 0) - 1); } // exacte pixel (vUv+o/uRes rondde op telefoons af → strepen)
           vec4 N(vec2 o) { ivec2 u = tq(tN, o); vec2 s = texelFetch(tN, u, 0).xy; // xyz = normaal, w = diepte
@@ -1419,7 +1461,7 @@ vec3 growB(vec3 p) {
             float nd = 4.0 - dot(n0.xyz, a.xyz) - dot(n0.xyz, b.xyz) - dot(n0.xyz, d.xyz) - dot(n0.xyz, e.xyz);
             float dd = abs(a.w + b.w - 2.0 * n0.w) + abs(d.w + e.w - 2.0 * n0.w);
             float k = max(smoothstep(0.42, 0.52, nd) * uDbg.x, smoothstep(1.7, 2.1, dd) * uDbg.y); // smalle overgang = strakke lijn i.p.v. vlekkerige rand
-            c.rgb = mix(c.rgb, uInk, k * uK);
+            c.rgb = uLine > 0.5 ? mix(c.rgb, min(vec3(1.0), c.rgb * 1.35 + 0.06), k * uK) : mix(c.rgb, uInk, k * uK); // licht randje (anime) of inkt
             gl_FragColor = c;
             #include <colorspace_fragment>
           }`,
@@ -1737,13 +1779,16 @@ vec3 growB(vec3 p) {
   try { Object.assign(layerOn, JSON.parse(localStorage.getItem('h3d.layers') || '{}')); } catch {}
   // effecten aan/uit (menu's Sfeer/Stad in ui.js); elk iso-bestand leest H.fxOn(k) en luistert naar 'fx'
   // zuinig = geen effect maar een stand: gedeelde animatietik 10/s i.p.v. 20/s, water stil (standaard uit)
-  const FXK = ['wolken', 'lucht', 'verkeer', 'props', 'randen', 'ao', 'diorama', 'zuinig'];
+  // inkt (zwarte omlijning i.p.v. licht randje) standaard uit, bouwjaar (daken/gevels op bouwjaar i.p.v. Mijnstreek-palet) standaard aan
+  const FXK = ['wolken', 'lucht', 'verkeer', 'props', 'randen', 'ao', 'diorama', 'zuinig', 'inkt', 'bouwjaar'];
   // wolken (wolkschaduw) standaard uit (buggy): alleen aan als de gebruiker hem zelf aanzet (eigen sleutel h3d.wolken, oude h3d.fx-waarde telt niet)
-  const fxOn = Object.fromEntries(FXK.map(k => [k, k === 'zuinig' || k === 'wolken' ? 0 : 1]));
+  const fxOn = Object.fromEntries(FXK.map(k => [k, k === 'zuinig' || k === 'wolken' || k === 'inkt' ? 0 : 1]));
   try { const t = localStorage.getItem('h3d.tilt'); if (t != null) fxOn.randen = t === '0' ? 0 : 1; Object.assign(fxOn, JSON.parse(localStorage.getItem('h3d.fx') || '{}')); fxOn.wolken = localStorage.getItem('h3d.wolken') === '1' ? 1 : 0; } catch { fxOn.wolken = 0; }
+  const applyLook = () => { U.uLine.value = fxOn.inkt ? 0 : 1; U.uAnime.value = fxOn.bouwjaar ? 1 : 0; };
+  applyLook();
   H.FXK = FXK;
   H.fxOn = k => !!fxOn[k];
-  H.setFx = (k, on) => { fxOn[k] = on ? 1 : 0; try { localStorage.setItem('h3d.fx', JSON.stringify(fxOn)); if (k === 'wolken') localStorage.setItem('h3d.wolken', on ? '1' : '0'); } catch {} shadowDirty = true; emit('fx', k, !!on); redraw(); };
+  H.setFx = (k, on) => { fxOn[k] = on ? 1 : 0; try { localStorage.setItem('h3d.fx', JSON.stringify(fxOn)); if (k === 'wolken') localStorage.setItem('h3d.wolken', on ? '1' : '0'); } catch {} applyLook(); shadowDirty = true; emit('fx', k, !!on); redraw(); };
   const layerObjs = {}; // laag → [meshes]
   let layersBuilt = false, allIn = false;
   H.layerOn = k => !!layerOn[k];
@@ -1895,14 +1940,33 @@ vec3 growB(vec3 p) {
   // lo = ver weg / klein in beeld (< TREE_LO_PPM px per m): alleen kroon, octaëder/5-kant (8 of 5 driehoeken i.p.v. 30/17). Onderkanten open (nooit zichtbaar).
   const TREE_LO_PPM = 1.5;
   H.treeLo = d => dbs.y / (2 * d * TAN21) < TREE_LO_PPM; // iso/props.js: zelfde grens voor straatbomen
+  // bolle klont (design/15_anime.html bomen A): 4 bollen samengevoegd, voor een boom van 1 m hoog (kroon ±0,36–0,93 m, Ø ±0,85 m).
+  // Vertexkleur = helderheid over de hoogte (donker koel onder → licht warm boven), × kleur per boom. detail 0 = 80 driehoeken, 1 = 320.
+  function blobCrown(detail = 0, seed = 7) {
+    const P = [], rnd = (k => () => (k = (k * 16807) % 2147483647) / 2147483647)(seed);
+    for (let b = 0; b < 4; b++) {
+      const a = b / 4 * Math.PI * 2 + rnd(), r = b ? 0.55 : 0, sc = b ? 0.62 + rnd() * 0.15 : 0.78, oy = b ? -0.05 + rnd() * 0.3 : 0.25;
+      const g = new THREE.IcosahedronGeometry(sc, detail).attributes.position.array;
+      for (let k = 0; k < g.length; k += 3) P.push((g[k] + Math.cos(a) * r) * 0.33, (g[k + 1] + oy) * 0.33 + 0.6, (g[k + 2] + Math.sin(a) * r) * 0.33);
+    }
+    const C = new Float32Array(P.length), lo = [0.55, 0.62, 0.62], mid = [1, 1, 1], hi = [1.5, 1.42, 1.12];
+    for (let k = 0; k < P.length; k += 3) {
+      const t = Math.min(1, Math.max(0, ((P[k + 1] - 0.6) / 0.33 + 0.6) / 1.5)), u = t < 0.5 ? t / 0.5 : (t - 0.5) / 0.5, A = t < 0.5 ? lo : mid, B = t < 0.5 ? mid : hi;
+      for (let q = 0; q < 3; q++) C[k + q] = A[q] + (B[q] - A[q]) * u * u * (3 - 2 * u);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(P, 3)); geo.setAttribute('color', new THREE.Float32BufferAttribute(C, 3)); geo.computeVertexNormals();
+    return geo;
+  }
+  H.blobCrown = blobCrown; // iso/props.js: straatbomen dezelfde kroon
   function treeGeo(conifer, lo) { // boom van 1 m hoog: stam (donker) + kroon (wit, gekleurd per boom via instanceColor)
     const crown = conifer ? new THREE.ConeGeometry(0.22, 0.85, lo ? 5 : 7, 1, true).translate(0, 0.55, 0)
-      : (lo ? new THREE.OctahedronGeometry(1, 0) : new THREE.IcosahedronGeometry(1, 0)).scale(0.32, 0.4, 0.32).translate(0, 0.58, 0);
+      : lo ? new THREE.OctahedronGeometry(1, 0).scale(0.4, 0.4, 0.4).translate(0, 0.62, 0) : blobCrown(0); // bos: grove bollen (±130k bomen)
     const trunk = new THREE.CylinderGeometry(0.035, 0.05, 0.3, 5, 1, true).translate(0, 0.15, 0);
     const flat = g => g.index ? g.toNonIndexed() : g, parts = [...(lo ? [] : [[flat(trunk), [0.42, 0.36, 0.3]]]), [flat(crown), [1, 1, 1]]];
     const n = parts.reduce((t, [g]) => t + g.attributes.position.count, 0), P = new Float32Array(n * 3), C = new Float32Array(n * 3);
     let o = 0;
-    for (const [g, col] of parts) { const a = g.attributes.position.array; P.set(a, o * 3); for (let k = 0; k < a.length / 3; k++) C.set(col, (o + k) * 3); o += a.length / 3; }
+    for (const [g, col] of parts) { const a = g.attributes.position.array, gc = g.attributes.color?.array; P.set(a, o * 3); for (let k = 0; k < a.length / 3; k++) C.set(gc ? [gc[k * 3] * col[0], gc[k * 3 + 1] * col[1], gc[k * 3 + 2] * col[2]] : col, (o + k) * 3); o += a.length / 3; }
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(P, 3)); g.setAttribute('color', new THREE.BufferAttribute(C, 3));
     return g;
