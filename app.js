@@ -95,7 +95,7 @@ vec3 growB(vec3 p) {
   let dirty = true;
   const QS = new URLSearchParams(location.search); // testschakelaars: ?nopost ?noshadow
   const redraw = () => { dirty = true; };
-  const BUILD = 'diag-6 highp (2026-11-09)', DBG_U = { value: new THREE.Vector2(1, 1) }; // ?gpu: versie zichtbaar + schakelaars omlijning (x = vlaklijnen, y = dieptelijnen)
+  const BUILD = 'diag-7 wolken uit (2026-11-09)', DBG_U = { value: new THREE.Vector2(1, 1) }; // ?gpu: versie zichtbaar + schakelaars omlijning (x = vlaklijnen, y = dieptelijnen)
   H.redraw = redraw;
   // na de upload naar de GPU de kopie in het werkgeheugen weggooien (canvas → 1×1, DataTexture-data → null). Opnieuw tekenen = nieuw canvas/nieuwe textuur
   H.freeAfterUpload = tex => { tex.onUpdate = () => { tex.onUpdate = null; const im = tex.image; if (im && im.getContext) im.width = im.height = 1; else if (im && im.data) im.data = null; }; return tex; };
@@ -1738,11 +1738,12 @@ vec3 growB(vec3 p) {
   // effecten aan/uit (menu's Sfeer/Stad in ui.js); elk iso-bestand leest H.fxOn(k) en luistert naar 'fx'
   // zuinig = geen effect maar een stand: gedeelde animatietik 10/s i.p.v. 20/s, water stil (standaard uit)
   const FXK = ['wolken', 'lucht', 'verkeer', 'props', 'randen', 'ao', 'diorama', 'zuinig'];
-  const fxOn = Object.fromEntries(FXK.map(k => [k, k === 'zuinig' ? 0 : 1]));
-  try { const t = localStorage.getItem('h3d.tilt'); if (t != null) fxOn.randen = t === '0' ? 0 : 1; Object.assign(fxOn, JSON.parse(localStorage.getItem('h3d.fx') || '{}')); } catch {}
+  // wolken (wolkschaduw) standaard uit (buggy): alleen aan als de gebruiker hem zelf aanzet (eigen sleutel h3d.wolken, oude h3d.fx-waarde telt niet)
+  const fxOn = Object.fromEntries(FXK.map(k => [k, k === 'zuinig' || k === 'wolken' ? 0 : 1]));
+  try { const t = localStorage.getItem('h3d.tilt'); if (t != null) fxOn.randen = t === '0' ? 0 : 1; Object.assign(fxOn, JSON.parse(localStorage.getItem('h3d.fx') || '{}')); fxOn.wolken = localStorage.getItem('h3d.wolken') === '1' ? 1 : 0; } catch { fxOn.wolken = 0; }
   H.FXK = FXK;
   H.fxOn = k => !!fxOn[k];
-  H.setFx = (k, on) => { fxOn[k] = on ? 1 : 0; try { localStorage.setItem('h3d.fx', JSON.stringify(fxOn)); } catch {} shadowDirty = true; emit('fx', k, !!on); redraw(); };
+  H.setFx = (k, on) => { fxOn[k] = on ? 1 : 0; try { localStorage.setItem('h3d.fx', JSON.stringify(fxOn)); if (k === 'wolken') localStorage.setItem('h3d.wolken', on ? '1' : '0'); } catch {} shadowDirty = true; emit('fx', k, !!on); redraw(); };
   const layerObjs = {}; // laag → [meshes]
   let layersBuilt = false, allIn = false;
   H.layerOn = k => !!layerOn[k];
