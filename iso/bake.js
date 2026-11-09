@@ -111,10 +111,28 @@
     for (const o of hid) o.visible = true;
     H.allWalls(false);
     const i = Math.round(c.x0 / 1000) - grid.i0, j = Math.round(c.y0 / 1000) - grid.j0, k = (j * grid.ni + i) * 4;
-    idxData[k] = sx; idxData[k + 1] = sy; idxData[k + 2] = 255; idx.needsUpdate = true;
+    const fresh = idxData[k + 2] !== 255; // opnieuw bakken (rebake): niet nog eens infaden
+    idxData[k] = sx; idxData[k + 1] = sy; idxData[k + 2] = 255; if (fresh) { idxData[k + 3] = 0; fadeIn(k); } idx.needsUpdate = true;
     H.U.uBk.value = atlas.texture;
   }
 
+  // schaduw van een vers gebakken vak zacht laten opkomen (idx a: 0 → 255, gelezen in BAKE_GLSL bkTexel/bkFade)
+  const FADE = 1.2, fading = new Map(); let fadeStop = null;
+  function fadeStep(force) {
+    for (const [k, t0] of fading) {
+      const x = force === k ? 1 : Math.min(1, (performance.now() - t0) / 1000 / FADE);
+      idxData[k + 3] = Math.round(255 * x * x * (3 - 2 * x));
+      if (x >= 1) fading.delete(k);
+    }
+    idx.needsUpdate = true;
+    if (fading.size) return true;
+    fadeStop?.(); fadeStop = null; H.redraw(); return false; // laatste stap ook tekenen
+  }
+  function fadeIn(k) {
+    fading.set(k, performance.now());
+    if (!fadeStop) fadeStop = H.animate(() => fadeStep() ? undefined : false, 'schaduw infaden');
+    setTimeout(() => { if (fading.has(k)) fadeStep(k); }, FADE * 1000 + 600); // gedeelde tik pauzeert na 2 min zonder invoer → dan meteen af
+  }
   function tick() {
     timer = 0;
     if (!queue.length) return;

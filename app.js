@@ -684,7 +684,16 @@ vec3 growB(vec3 p) {
     if (c.x >= int(uBkN.x) || c.y >= int(uBkN.y)) return vec4(0.0);
     vec4 s = texelFetch(uBkI, c, 0);
     if (s.b < 0.5) return vec4(0.0);
-    return texelFetch(uBk, ivec2(s.rg * 255.0 + 0.5) * P + (g - c * P), 0);
+    vec4 t = texelFetch(uBk, ivec2(s.rg * 255.0 + 0.5) * P + (g - c * P), 0);
+    t.rg = mix(vec2(1.0), t.rg, s.a); // a = infaden (iso/bake.js): schaduw van een vers vak komt zacht op
+    return t;
+  }
+  // infaden live schaduwkaart voor het vak onder p (zelfde a); geen atlas (geen WebGL2 / niet iso) = 1
+  float bkFade(vec3 p) {
+    if (uBkN.x < 0.5) return 1.0;
+    ivec2 c = ivec2(floor(vec2(p.x - uBkR.x, -p.z - uBkR.y) / 1000.0));
+    if (c.x < 0 || c.y < 0 || c.x >= int(uBkN.x) || c.y >= int(uBkN.y)) return 1.0;
+    return texelFetch(uBkI, c, 0).a;
   }
   // x = zon zichtbaar, y = contactschaduw (1 = open), z = laagste oppervlak rondom onder dit punt, w = gewicht (0 = niets bruikbaars)
   // tol: texels waarvan het oppervlak > tol boven het punt ligt tellen niet (dak naast de straat, kruin boven de stam)
@@ -715,12 +724,16 @@ vec3 growB(vec3 p) {
       vBkW = (modelMatrix * bw).xyz; }`);
     let L = THREE.ShaderChunk.lights_fragment_begin;
     const a = L.indexOf('getShadow( directionalShadowMap[ i ]'), b = L.indexOf('RE_Direct( directLight', a);
-    if (a > 0 && b > a) L = L.slice(0, b) + 'directLight.color *= bkSun;\n\t\t' + L.slice(b);
+    // live schaduw mengen met ongeschaduwd naar bkLF (infaden per vak); variabelen buiten de lus (unroll zet geen accolades per keer)
+    // bkC0 vóór het #if USE_SHADOWMAP-blok (anders ongezet zonder schaduwkaart)
+    const gi = 'getDirectionalLightInfo( directionalLight, directLight );', ls = L.indexOf(gi) + gi.length;
+    if (a > 0 && b > a && ls > gi.length && ls < a) L = L.slice(0, ls) + '\n\t\tbkC0 = directLight.color;' + L.slice(ls, b) + 'directLight.color = mix(bkC0, directLight.color, bkLF) * bkSun;\n\t\t' + L.slice(b);
     L = L.replace('directLight.color *= ( directLight.visible && receiveShadow ) ? getShadow( directionalShadowMap[ i ]', 'directLight.color *= ( uBaked < 0.5 && directLight.visible && receiveShadow ) ? getShadow( directionalShadowMap[ i ]');
     const wall = kind === 'wall';
     s.fragmentShader = s.fragmentShader.replace('#include <common>', '#include <common>' + BAKE_GLSL) // uIso declareren addCel/terrMat zelf
       .replace('#include <lights_fragment_begin>', `vec4 bkV = (uIso > 0.5 && (uBaked > 0.5 || uBkAO > 0.5)) ? bake(vBkW, ${wall ? '0.0' : '1.5'}) : vec4(1.0, 1.0, -1e5, 0.0);
       float bkSun = uBaked > 0.5 && ${wall ? 'false' : 'true'} ? bkV.x : 1.0;
+      float bkLF = uIso > 0.5 && uBaked < 0.5 ? bkFade(vBkW) : 1.0; vec3 bkC0;
       ` + L)
       .replace('#include <opaque_fragment>', `if (uBkAO > 0.5 && uIso > 0.5) outgoingLight *= ${wall ? 'mix(0.7, 1.0, smoothstep(0.0, 3.5, vBkW.y - bkV.z))' : 'mix(1.0, bkV.y, step(0.001, bkV.w))'};
       #include <opaque_fragment>`);
