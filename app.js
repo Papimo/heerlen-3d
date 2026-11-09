@@ -55,6 +55,7 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
   let renderer, scene, camera, persp, ortho, controls, sun, hemi, O, area, ground, outline;
   // Iso (modus 'iso'): orthografische camera, kijkhoek 26,57° (2:1), draaien per kwartslag; cel-shaded look + omlijning (design/2_iso.html optie 6)
   const ISO_POLAR = Math.PI / 2 - Math.atan(0.5), ISO_H0 = 500, TAN21 = Math.tan(21 * Math.PI / 180);
+  let glide = null, dragOn = false; const panS = [], GLIDE_TAU = 320; // uitglijden na schuiven (glideStep)
   const isoHalf = () => ISO_H0 / ortho.zoom; // zichtbare halve hoogte (m)
   const isoD = (h = isoHalf()) => 6 * h + 2000; // afstand ortho-camera ↔ doel (beeld gelijk, alleen diepte/near/far)
   // iso: 4 vaste zoomstanden (zichtbare halve hoogte, m); scrollen springt vloeiend naar de volgende. Grond/detail rekenen alleen
@@ -161,7 +162,7 @@ vec3 growB(vec3 p) {
     // geen controls 'change' → redraw: bij ortho (iso) vuurt die élke update (zoomChanged) → hele scène 15–30×/s bij stilstand. De lus vergelijkt zelf camera/doel/zoom (moved).
     // slepen: demping (OrbitControls) werkt per beeld → bij weinig beelden/s liep de kaart na loslaten nog seconden achter de muis aan
     // ("muis blijft vastzitten"). Schuiven dus zonder demping, alleen draaien gedempt. Muis los zonder pointerup → zelf loslaten.
-    let dragOn = false, dragId = 1;
+    let dragId = 1; dragOn = false;
     const cdom = renderer.domElement;
     cdom.addEventListener('pointerdown', e => {
       dragId = e.pointerId;
@@ -180,7 +181,9 @@ vec3 growB(vec3 p) {
     addEventListener('blur', () => release({}));
     document.addEventListener('visibilitychange', () => release({}));
     controls.addEventListener('start', () => { dragOn = true; controls.autoRotate = false; clearTimeout(idleT); emit('interact'); });
-    controls.addEventListener('end', () => { dragOn = false; });
+    controls.addEventListener('end', () => { const pan = !controls.enableDamping; dragOn = false; if (pan) glideStart(performance.now()); });
+    cdom.addEventListener('pointerdown', () => { glide = null; panS.length = 0; });
+    cdom.addEventListener('wheel', () => { glide = null; }, { passive: true });
     controls.addEventListener('end', () => {
       if (mode === 'rond') idleT = setTimeout(() => { controls.autoRotate = true; }, 4000);
       if (camera === ortho && !fly) { const h = isoHalf(), s = snapHalf(h); if (Math.abs(s - h) / h > 0.01) { const [x, y] = toRD(controls.target); H.flyTo(x, y, { half: s, ms: 300, arc: false }); } } // knijpen: naar dichtstbijzijnde zoomstand
@@ -417,6 +420,8 @@ vec3 growB(vec3 p) {
         const lift = y => (EXAG - 1) * (y - H0), done = new Uint8Array(nv);
         const grow = perBuilding ? new Float32Array(nv) : null, gbase = perBuilding ? new Float32Array(nv) : null, gt0 = Math.max(nowS(), growFloor);
         const info = perBuilding ? new Uint16Array(nv * 4) : null; // anime-look: bouwjaar, dakoppervlak m², hoogte dm, lange as (1 = x)
+        // bedrijfspanden (design/16): lange as van het dak (PCA, 0–255 = -90°…+90°) + deel plat dak (0–255); per pand ook in c.biz voor iso/daken.js
+        const biz = perBuilding ? new Uint8Array(nv * 2) : null; if (perBuilding) c.biz = new Uint8Array(c.bR.length * 2);
         if (perBuilding) for (let b = 0; b < c.bR.length; b++) {
           const r0 = c.bR[b] * 3, r1 = (b + 1 < c.bR.length ? c.bR[b + 1] : nr) * 3, w0 = (nr + c.bW[b]) * 3, w1 = (nr + (b + 1 < c.bW.length ? c.bW[b + 1] : nw)) * 3;
           let lo = Infinity;
@@ -425,14 +430,20 @@ vec3 growB(vec3 p) {
           const dy = EXAG !== 1 ? lift(lo) : 0, sd = Math.abs((Math.sin(b * 12.9898 + c.i * 78.233 + c.j * 3.71) * 43758.5453) % 1);
           // groeien op bouwjaar: oud eerst (1880 → 2020 = 0 → 1 × spreiding), onbekend = midden; klein beetje toeval tegen gelijk opploppen
           const yr = c.year[b], dY = yr > 1000 ? Math.min(1, Math.max(0, (yr - 1880) / 140)) : 0.6, gT = gt0 + dY * GROW.spread + (sd * 7.13 % 1) * GROW.jitter;
-          let top = -Infinity, ar = 0, xa = Infinity, xb = -Infinity, za = Infinity, zb = -Infinity;
+          let top = -Infinity, ar = 0, fa = 0, xa = Infinity, xb = -Infinity, za = Infinity, zb = -Infinity, sx = 0, sz = 0;
           for (let k = r0; k + 2 < r1; k += 3) { // vóór het optillen: dakoppervlak (plat vlak), top, omvang
             const p0 = idx[k] * 3, p1 = idx[k + 1] * 3, p2 = idx[k + 2] * 3;
-            ar += Math.abs((pos[p1] - pos[p0]) * (pos[p2 + 2] - pos[p0 + 2]) - (pos[p2] - pos[p0]) * (pos[p1 + 2] - pos[p0 + 2])) / 2;
-            for (const q of [p0, p1, p2]) { top = Math.max(top, pos[q + 1]); xa = Math.min(xa, pos[q]); xb = Math.max(xb, pos[q]); za = Math.min(za, pos[q + 2]); zb = Math.max(zb, pos[q + 2]); }
+            const ux = pos[p1] - pos[p0], uy = pos[p1 + 1] - pos[p0 + 1], uz = pos[p1 + 2] - pos[p0 + 2], wx = pos[p2] - pos[p0], wy = pos[p2 + 1] - pos[p0 + 1], wz = pos[p2 + 2] - pos[p0 + 2];
+            const ny = Math.abs(ux * wz - uz * wx), a2 = ny / 2; ar += a2;
+            if (ny > 0.97 * Math.hypot(uy * wz - uz * wy, ny, ux * wy - uy * wx)) fa += a2;
+            for (const q of [p0, p1, p2]) { top = Math.max(top, pos[q + 1]); xa = Math.min(xa, pos[q]); xb = Math.max(xb, pos[q]); za = Math.min(za, pos[q + 2]); zb = Math.max(zb, pos[q + 2]); sx += pos[q]; sz += pos[q + 2]; }
           }
+          const rn = r1 - r0, mx = rn ? sx / rn : 0, mz = rn ? sz / rn : 0; let cxx = 0, czz = 0, cxz = 0;
+          for (let k = r0; k < r1; k++) { const q = idx[k] * 3, dx = pos[q] - mx, dz = pos[q + 2] - mz; cxx += dx * dx; czz += dz * dz; cxz += dx * dz; }
+          const bTh = Math.round((0.5 * Math.atan2(2 * cxz, cxx - czz) / Math.PI + 0.5) * 255), bFl = ar ? Math.round(fa / ar * 255) : 0;
+          c.biz[b * 2] = bTh; c.biz[b * 2 + 1] = bFl;
           const iY = yr > 1000 ? yr : 0, iA = Math.min(65535, Math.round(ar)), iH = top > lo ? Math.min(65535, Math.round((top - lo) * 10)) : 0, iX = (xb - xa) > (zb - za) ? 1 : 0;
-          for (const [a, e] of [[r0, r1], [w0, w1]]) for (let k = a; k < e; k++) { const v = idx[k]; seed[v] = sd; info[v * 4] = iY; info[v * 4 + 1] = iA; info[v * 4 + 2] = iH; info[v * 4 + 3] = iX; if (!done[v]) { done[v] = 1; pos[v * 3 + 1] += dy; grow[v] = gT; gbase[v] = lo + dy; } }
+          for (const [a, e] of [[r0, r1], [w0, w1]]) for (let k = a; k < e; k++) { const v = idx[k]; seed[v] = sd; info[v * 4] = iY; info[v * 4 + 1] = iA; info[v * 4 + 2] = iH; info[v * 4 + 3] = iX; biz[v * 2] = bTh; biz[v * 2 + 1] = bFl; if (!done[v]) { done[v] = 1; pos[v * 3 + 1] += dy; grow[v] = gT; gbase[v] = lo + dy; } }
         }
         if (EXAG !== 1) for (let v = 0; v < nv; v++) if (!done[v]) pos[v * 3 + 1] += lift(demAt(c, pos[v * 3] + O[0], O[1] - pos[v * 3 + 2]));
         if (perBuilding) for (let v = 0; v < nv; v++) if (!done[v]) gbase[v] = pos[v * 3 + 1];
@@ -441,7 +452,7 @@ vec3 growB(vec3 p) {
         g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
         g.setIndex(new THREE.BufferAttribute(idx, 1));
         g.setAttribute('aSeed', new THREE.BufferAttribute(seed, 1));
-        if (perBuilding) g.setAttribute('aInfo', new THREE.BufferAttribute(info, 4));
+        if (perBuilding) { g.setAttribute('aInfo', new THREE.BufferAttribute(info, 4)); g.setAttribute('aBiz', new THREE.BufferAttribute(biz, 2, true)); }
         if (perBuilding) { g.setAttribute('aGrow', new THREE.BufferAttribute(grow, 1)); g.setAttribute('aGBase', new THREE.BufferAttribute(gbase, 1)); c.growEnd = gt0 + GROW.end; }
         g.addGroup(0, nr * 3, 0); g.addGroup(nr * 3, nw * 3, 1);
         g.computeBoundingSphere(); g.computeBoundingBox();
@@ -925,10 +936,36 @@ vec3 growB(vec3 p) {
   const W_MOD = ['#c9a86e', '#a7826a', '#8f6f6a', '#b99a7a']; // jaren 70/80-baksteen: geelbruin, paarsbruin
   const R_OLD = ['#a8463a', '#b5503d', '#93412f'], R_MID = ['#d06a3e', '#de7c48', '#c75f38'], R_NEW = ['#454952', '#5a616c', '#6f7378'];
   const ANIME_YR = 'float yr = vI.x > 1000.0 ? vI.x : 1930.0 + vS * 70.0;';
+  // bedrijfspanden (design/16_bedrijfspanden.html keuze A·A·D): hal = plat (> 60% dak plat) + > 2500 m² + < 16 m.
+  // Dak hal: licht geribbeld + lichtstraten/zonnepanelen (iso/daken.js), Mijnstreek-dakrand; gevel hal: sandwichpanelen; overige platte daken: per pand bitumen-banen / grind + installaties / sedum of grind met plassen.
+  const MIJN = ['#6b4a36', '#a8432e', '#c8963a', '#5f6b3a', '#4a5f72', '#7a4e5e', '#2f5f6b', '#b5713a'];
+  const pickV = (v, list, x) => glPick(list, x).replace(/p = /g, v + ' = ');
+  const BIZ_COMMON = `varying vec2 vBz;
+float bzH(vec2 q) { return fract(sin(dot(q, vec2(127.1, 311.7))) * 43758.5453); }
+float bzN(vec2 q) { vec2 i = floor(q), f = fract(q); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(bzH(i), bzH(i + vec2(1, 0)), f.x), mix(bzH(i + vec2(0, 1)), bzH(i + vec2(1, 1)), f.x), f.y); }
+vec2 bzLoc(vec3 w) { vec2 d = vec2(cos(vBz.x), sin(vBz.x)); return vec2(dot(w.xz, d), dot(w.xz, vec2(-d.y, d.x))); }
+bool bzHal(vec4 i, float ht) { return vBz.y > 0.6 && i.y > 2500.0 && ht < 16.0; }
+vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac; }`;
+  const GRIND = (a, b, k) => `{ float gf = smoothstep(0.35, 1.0, fwidth(vRW.x * ${k}));
+            p = mix(${lin(a)}, ${lin(b)}, mix(bzH(floor(vRW.xz * ${k})), 0.5, gf)) * (0.9 + 0.12 * bzN(vRW.xz * 0.15)); }`;
+  const SEDUM = `p = mix(${lin('#6f8f3e')}, ${lin('#9aa64c')}, bzN(vRW.xz * 0.25));
+            p = mix(p, ${lin('#a4583c')}, smoothstep(0.6, 0.72, bzN(vRW.xz * 0.11 + 9.0)) * 0.8);
+            p *= 0.86 + 0.22 * mix(bzN(vRW.xz * 1.3 + 5.0), 0.5, smoothstep(0.3, 0.8, fwidth(vRW.x * 1.3)));`;
+  const PLAT_D = `{ vec2 L = bzLoc(vRW); float mk = fract(vS * 3.1), lf = smoothstep(0.25, 0.6, fwidth(L.y));
+            if (mk < 0.34) { p = ${lin('#4c4b49')} * (0.9 + 0.14 * bzH(vec2(floor(L.y), vS * 9.0))); p *= 1.0 - 0.3 * mix(step(fract(L.y), 0.06), 0.06, lf); }
+            else if (mk < 0.67) { ${GRIND('#aaa498', '#c6c0b3', '5.0')} }
+            else if (fract(vS * 2.3) < 0.5) { ${SEDUM} }
+            else { ${GRIND('#a6a196', '#c2bcaf', '3.0')} p = mix(p, ${lin('#8ea3b3')}, smoothstep(0.7, 0.74, bzN(vRW.xz * 0.12 + vS * 40.0))); } }`;
+  const HAL_A = `{ vec2 L = bzLoc(vRW); p = ${lin('#cfccc4')} * mix(0.95 + 0.05 * step(0.5, fract(L.y)), 0.975, smoothstep(0.25, 0.6, fwidth(L.y))); }`;
+  const PANEL = `{ vec3 gc; ${pickV('gc', ['#3e4247', '#d9dad6', '#4f6f8f', '#5f7a5a', '#b9bcbd'], 'fract(vS * 4.3)')}
+            float rf = smoothstep(0.25, 0.6, fwidth(u));
+            p = gc * mix(0.88 + 0.12 * step(0.5, fract(u)), 0.94, rf); p *= 1.0 - 0.07 * mix(step(fract(hb / 1.2), 0.04), 0.04, rf);
+            p = mix(p, bzAcc(vS), step(ht, 0.7)); }`;
   const ANIME_ROOF = `if (uAnime > 0.5) { ${ANIME_YR}
           if (dn.y > 0.97) {
-            if (vI.y > 2500.0) { p = ${lin('#a7a39a')}; float rc = vI.w > 0.5 ? vRW.z : vRW.x, rf = fwidth(rc / 3.0); p *= mix(0.92 + 0.08 * step(0.5, fract(rc / 3.0)), 0.96, smoothstep(0.2, 0.6, rf)); }
-            else { ${glPick(['#8a8780', '#6f6d69', '#5d5b58', '#9a958c'], 'h1')} }
+            if (bzHal(vI, vHt)) ${HAL_A}
+            else ${PLAT_D}
           } else {
             if (yr < 1940.0) { ${glPick(R_OLD, 'h1')} } else if (yr < 1975.0) { ${glPick(R_MID, 'h1')} } else { ${glPick(R_NEW, 'h1')} }
             p *= 1.0 - 0.12 * rows;
@@ -937,19 +974,21 @@ vec3 growB(vec3 p) {
           if (yr < 1965.0) { ${glPick(W_BRICK, 'vS')} } else if (fract(vS * 5.3) < 0.35) { ${glPick(W_MOD, 'fract(vS * 3.7)')} } else { ${glPick(W_PALE, 'vS')} }
           vec3 wn = normalize(cross(dFdx(vRW), dFdy(vRW)));
           float u = abs(wn.x) > abs(wn.z) ? vRW.z : vRW.x, fy = (vRW.y - 1.0) / 3.1, hb = vRW.y - vI.z, ht = vI.z + vHt - vRW.y;
+          if (bzHal(vI, vHt)) ${PANEL} else {
           vec2 f = vec2(fract(u / 3.2), fract(fy));
           float inW = step(0.8, hb) * step(1.1, ht) * step(4.0, vHt);
           float gl = step(0.25, f.x) * step(f.x, 0.75) * step(0.3, f.y) * step(f.y, 0.8);
           float far = smoothstep(0.25, 0.6, fwidth(u / 3.2));
           p = mix(p, ${lin('#6f8299')}, inW * mix(gl, 0.25, far) * 0.85);
           p *= 1.0 - 0.16 * step(ht, 0.35) * step(4.0, vHt); // schaduwrand onder de dakgoot
-        }`;
+          if (vBz.y > 0.6 && fract(vS * 3.1) < 0.34) p = mix(p, ${lin('#cdd1d4')}, step(ht, 0.35)); // bitumen-dak: aluminium dakrand
+        } }`;
   const isoPal = (s, roof) => {
     Object.assign(s.uniforms, { uPalR: U.uPalR, uPalW: U.uPalW, uDim: U.uDim, uAnime: U.uAnime });
     // vI = (bouwjaar, dakoppervlak, voet, lange as), vHt = hoogte in m; aGBase komt uit GROW_GLSL (addGrow, ook op deze materialen)
-    s.vertexShader = s.vertexShader.replace('#include <common>', `#include <common>\nattribute float aSeed; attribute vec4 aInfo; varying float vS, vHt; varying vec3 vRW; varying vec4 vI;`)
-      .replace('#include <project_vertex>', `#include <project_vertex>\nvS = aSeed; vRW = (modelMatrix * vec4(transformed, 1.0)).xyz; vI = vec4(aInfo.x, aInfo.y, aGBase, aInfo.w); vHt = aInfo.z * 0.1;`);
-    s.fragmentShader = s.fragmentShader.replace('#include <common>', `#include <common>\nvarying float vS, vHt; varying vec3 vRW; varying vec4 vI; uniform vec3 uPalR[8]; uniform vec3 uPalW[8]; uniform float uDim, uAnime;`)
+    s.vertexShader = s.vertexShader.replace('#include <common>', `#include <common>\nattribute float aSeed; attribute vec4 aInfo; attribute vec2 aBiz; varying float vS, vHt; varying vec3 vRW; varying vec4 vI; varying vec2 vBz;`)
+      .replace('#include <project_vertex>', `#include <project_vertex>\nvS = aSeed; vRW = (modelMatrix * vec4(transformed, 1.0)).xyz; vI = vec4(aInfo.x, aInfo.y, aGBase, aInfo.w); vHt = aInfo.z * 0.1; vBz = vec2((aBiz.x - 0.5) * 3.14159265, aBiz.y);`);
+    s.fragmentShader = s.fragmentShader.replace('#include <common>', `#include <common>\nvarying float vS, vHt; varying vec3 vRW; varying vec4 vI; uniform vec3 uPalR[8]; uniform vec3 uPalW[8]; uniform float uDim, uAnime;\n${BIZ_COMMON}`)
       .replace('#include <color_fragment>', `#include <color_fragment>
       {
         vec3 p = ${roof ? 'uPalR[int(fract(vS * 7.31) * 7.999)]' : 'uPalW[int(vS * 7.999)]'};${roof ? ROOF_MIJN + ANIME_ROOF : ANIME_WALL}
@@ -1245,6 +1284,26 @@ vec3 growB(vec3 p) {
 
   // ---------- Camera ----------
   let fly = null;
+  // uitglijden na schuiven: snelheid van het doel over de laatste ±120 ms, daarna op tijd (niet per beeld) uitdempen → gelijk bij weinig beelden/s
+  function glideStep(now) {
+    if (dragOn && !controls.enableDamping) { panS.push([now, controls.target.x, controls.target.z]); while (panS.length > 2 && now - panS[0][0] > 150) panS.shift(); }
+    if (!glide) return;
+    if (fly || intro || dragOn) { glide = null; return; }
+    const dt = Math.min(64, now - glide.t); glide.t = now;
+    const dx = glide.vx * dt, dz = glide.vz * dt;
+    controls.target.x += dx; controls.target.z += dz; camera.position.x += dx; camera.position.z += dz;
+    const k = Math.exp(-dt / GLIDE_TAU); glide.vx *= k; glide.vz *= k;
+    if (Math.hypot(glide.vx, glide.vz) * 1000 < glide.stop) glide = null;
+  }
+  function glideStart(now) {
+    const a = panS[0], b = panS[panS.length - 1]; panS.length = 0;
+    if (!a || b === a || now - b[0] > 80 || b[0] - a[0] < 16) return; // stilgehouden vóór loslaten = geen uitglijden
+    const span = b[0] - a[0], px = (camera === ortho ? 2 * isoHalf() : camera.position.distanceTo(controls.target)) / innerHeight; // m per pixel (ongeveer)
+    let vx = (b[1] - a[1]) / span, vz = (b[2] - a[2]) / span; const v = Math.hypot(vx, vz), max = px * 4; // max ±4 px/ms
+    if (v * 1000 < px * 60) return; // te traag (< 60 px/s)
+    if (v > max) { vx *= max / v; vz *= max / v; }
+    glide = { vx, vz, t: now, stop: px * 8 };
+  }
   // iso: dist = afstand bij de gewone lens (→ zichtbare halve hoogte), of `half` direct; kijkhoek vast, richting op een kwartslag
   H.flyTo = (x, y, { dist = 320, polar, azim, ms = 1100, half, arc = true } = {}) => { // arc false = zonder boog (zoomstap)
     const t1 = toWorld(x, y), off = camera.position.clone().sub(controls.target);
@@ -1714,7 +1773,7 @@ vec3 growB(vec3 p) {
       dirty = true;
     }
     if (intro && area) { introStep(now); dirty = true; }
-    keyPan(now);
+    keyPan(now); glideStep(now);
     const ctl = controls.update();
     // OrbitControls meldt bij ortho (iso) élke update als veranderd (zoomChanged) → zelf vergelijken, anders tekent iso eindeloos en is nooit 'stil'
     const moved = ctl && (camera.position.distanceToSquared(lastCP) > 1e-8 || controls.target.distanceToSquared(lastCT) > 1e-8 || camera.zoom !== lastZ);
