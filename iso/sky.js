@@ -19,7 +19,7 @@
       uWind: { value: WIND.clone().multiplyScalar(CLOUD.speed) }, uScale: { value: CLOUD.scale }, uCov: { value: CLOUD.cov }, uSoft: { value: CLOUD.soft },
       uDark: { value: CLOUD.dark }, uSunB: { value: CLOUD.sun }, uNight: { value: 0 }, uCloudY: { value: 1000 }, uBal: { value: bal } },
     vertexShader: VS,
-    fragmentShader: `varying vec2 vUv; uniform sampler2D tIn, tN; uniform mat4 uCamW; uniform vec4 uLRBT, uBal; uniform vec3 uSun; uniform vec2 uWind;
+    fragmentShader: `varying vec2 vUv; uniform sampler2D tIn; uniform highp sampler2D tN; uniform mat4 uCamW; uniform vec4 uLRBT, uBal; uniform vec3 uSun; uniform vec2 uWind;
       uniform float uTime, uMove, uScale, uCov, uSoft, uDark, uSunB, uNight, uCloudY;
       float h(vec2 p) { vec3 q = fract(p.xyx * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
       float vn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(h(i), h(i + vec2(1, 0)), f.x), mix(h(i + vec2(0, 1)), h(i + vec2(1, 1)), f.x), f.y); }

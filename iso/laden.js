@@ -41,7 +41,7 @@
       uniforms: { tIn: { value: null }, tN: { value: null }, tP: { value: null }, uRes: { value: new THREE.Vector2(1, 1) }, uTime: { value: 0 },
         uCamW: { value: camW }, uHV: { value: hv }, uPG: { value: pg }, uAll: { value: 0 }, uGY: { value: 120 }, uCY: { value: 440 }, uInk: { value: ink } },
       vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
-      fragmentShader: `varying vec2 vUv; uniform sampler2D tIn, tN, tP; uniform vec2 uRes, uHV; uniform float uTime, uAll, uGY, uCY; uniform vec3 uInk; uniform mat4 uCamW; uniform vec4 uPG;
+      fragmentShader: `varying vec2 vUv; uniform sampler2D tIn, tP; uniform highp sampler2D tN; uniform vec2 uRes, uHV; uniform float uTime, uAll, uGY, uCY; uniform vec3 uInk; uniform mat4 uCamW; uniform vec4 uPG;
         ${H.NRM_GLSL}
         float h1(vec2 p) { vec3 q = fract(p.xyx * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
         float vn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(h1(i), h1(i + vec2(1, 0)), f.x), mix(h1(i + vec2(0, 1)), h1(i + vec2(1, 1)), f.x), f.y); }

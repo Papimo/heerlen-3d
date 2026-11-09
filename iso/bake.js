@@ -33,7 +33,7 @@
     topMat = new THREE.ShaderMaterial({ // zon zichtbaar (3×3 PCF, normaal-offset) + hoogte in 16 bit
       uniforms: { tDep: { value: null }, uLVP: { value: new THREE.Matrix4() }, uSun: { value: new THREE.Vector3() } },
       vertexShader: vs, side: THREE.DoubleSide,
-      fragmentShader: `varying vec3 vW; uniform sampler2D tDep; uniform mat4 uLVP; uniform vec3 uSun;
+      fragmentShader: `varying vec3 vW; uniform highp sampler2D tDep; uniform mat4 uLVP; uniform vec3 uSun;
       void main() {
         vec3 n = normalize(cross(dFdx(vW), dFdy(vW))); if (n.y < 0.0) n = -n;
         vec4 l = uLVP * vec4(vW + n * 0.6 + uSun * 0.3, 1.0); vec3 s = l.xyz / l.w * 0.5 + 0.5;

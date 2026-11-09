@@ -95,7 +95,7 @@ vec3 growB(vec3 p) {
   let dirty = true;
   const QS = new URLSearchParams(location.search); // testschakelaars: ?nopost ?noshadow
   const redraw = () => { dirty = true; };
-  const BUILD = 'diag-5 (2026-11-09)', DBG_U = { value: new THREE.Vector2(1, 1) }; // ?gpu: versie zichtbaar + schakelaars omlijning (x = vlaklijnen, y = dieptelijnen)
+  const BUILD = 'diag-6 highp (2026-11-09)', DBG_U = { value: new THREE.Vector2(1, 1) }; // ?gpu: versie zichtbaar + schakelaars omlijning (x = vlaklijnen, y = dieptelijnen)
   H.redraw = redraw;
   // na de upload naar de GPU de kopie in het werkgeheugen weggooien (canvas → 1×1, DataTexture-data → null). Opnieuw tekenen = nieuw canvas/nieuwe textuur
   H.freeAfterUpload = tex => { tex.onUpdate = () => { tex.onUpdate = null; const im = tex.image; if (im && im.getContext) im.width = im.height = 1; else if (im && im.data) im.data = null; }; return tex; };
@@ -1401,10 +1401,11 @@ vec3 growB(vec3 p) {
           vec4 mv = modelViewMatrix * p, mvPosition = mv; ${MRT_V} gl_Position = projectionMatrix * mv; }`,
         fragmentShader: 'varying vec3 vMrtV;' + MRT_OFF + NRM_GLSL + 'void main() { gl_FragColor = vec4(nrmPack(normalize(cross(dFdx(vMrtV), dFdy(vMrtV))), mrtOff() - vMrtV.z), 0.0, 1.0); }',
       });
+      // tN/tDN highp: three r160 zet geen sampler-precisie → standaard lowp → telefoon (Mali e.d.) las de diepte als 16 bit → streeplijnen
       post = new THREE.ShaderMaterial({
         uniforms: { tC: { value: useMRT ? rtC.texture[0] : rtC.texture }, tN: { value: rtN.texture }, tSky: { value: skyTex }, uMrt: { value: useMRT ? 1 : 0 }, tD: { value: null }, tDN: { value: null }, uDyn: { value: 0 }, uRes: { value: new THREE.Vector2() }, uW: { value: 2 }, uK: { value: 0.85 }, uInk: { value: H.isoColors.ink }, uDbg: DBG_U },
         vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
-        fragmentShader: `varying vec2 vUv; uniform sampler2D tC, tN, tD, tDN, tSky; uniform vec2 uRes; uniform float uW, uK, uDyn, uMrt; uniform vec3 uInk; uniform vec2 uDbg;
+        fragmentShader: `varying vec2 vUv; uniform sampler2D tC, tD, tSky; uniform highp sampler2D tN, tDN; uniform vec2 uRes; uniform float uW, uK, uDyn, uMrt; uniform vec3 uInk; uniform vec2 uDbg;
           ${NRM_GLSL}
           ivec2 tq(sampler2D t, vec2 o) { return clamp(ivec2(gl_FragCoord.xy + o), ivec2(0), textureSize(t, 0) - 1); } // exacte pixel (vUv+o/uRes rondde op telefoons af → strepen)
           vec4 N(vec2 o) { ivec2 u = tq(tN, o); vec2 s = texelFetch(tN, u, 0).xy; // xyz = normaal, w = diepte
