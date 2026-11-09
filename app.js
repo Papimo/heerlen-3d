@@ -1394,13 +1394,14 @@ vec3 growB(vec3 p) {
         vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
         fragmentShader: `varying vec2 vUv; uniform sampler2D tC, tN, tD, tDN, tSky; uniform vec2 uRes; uniform float uW, uK, uDyn, uMrt; uniform vec3 uInk;
           ${NRM_GLSL}
-          vec4 N(vec2 o) { vec2 u = vUv + o / uRes, s = texture2D(tN, u).xy; // xyz = normaal, w = diepte
-            if (uDyn > 0.5) { vec2 d = texture2D(tDN, u).xy; if (d.y > 0.0 && (s.y <= 0.0 || d.y < s.y)) s = d; }
+          ivec2 tq(sampler2D t, vec2 o) { return clamp(ivec2(gl_FragCoord.xy + o), ivec2(0), textureSize(t, 0) - 1); } // exacte pixel (vUv+o/uRes rondde op telefoons af → strepen)
+          vec4 N(vec2 o) { ivec2 u = tq(tN, o); vec2 s = texelFetch(tN, u, 0).xy; // xyz = normaal, w = diepte
+            if (uDyn > 0.5) { vec2 d = texelFetch(tDN, u, 0).xy; if (d.y > 0.0 && (s.y <= 0.0 || d.y < s.y)) s = d; }
             return vec4(nrmUnpack(s.x), s.y); }
           void main() {
             vec4 c = texture2D(tC, vUv);
             if (uMrt > 0.5 && c.a < 1.0) { c.rgb += texture2D(tSky, vUv).rgb * (1.0 - c.a); c.a = 1.0; } // MRT: lucht pas hier (achtergrond zou uitvoer 1 vullen)
-            if (uDyn > 0.5) { vec2 s = texture2D(tN, vUv).xy, d = texture2D(tDN, vUv).xy; if (d.y > 0.0 && (s.y <= 0.0 || d.y < s.y)) { vec4 dc = texture2D(tD, vUv); c.rgb = mix(c.rgb, dc.rgb, dc.a); } }
+            if (uDyn > 0.5) { vec2 s = texelFetch(tN, tq(tN, vec2(0.0)), 0).xy, d = texelFetch(tDN, tq(tDN, vec2(0.0)), 0).xy; if (d.y > 0.0 && (s.y <= 0.0 || d.y < s.y)) { vec4 dc = texture2D(tD, vUv); c.rgb = mix(c.rgb, dc.rgb, dc.a); } }
             vec4 n0 = N(vec2(0.0)), a = N(vec2(uW, 0.0)), b = N(vec2(-uW, 0.0)), d = N(vec2(0.0, uW)), e = N(vec2(0.0, -uW));
             float nd = 4.0 - dot(n0.xyz, a.xyz) - dot(n0.xyz, b.xyz) - dot(n0.xyz, d.xyz) - dot(n0.xyz, e.xyz);
             float dd = abs(a.w + b.w - 2.0 * n0.w) + abs(d.w + e.w - 2.0 * n0.w);

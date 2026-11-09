@@ -25,7 +25,7 @@
       float vn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(h(i), h(i + vec2(1, 0)), f.x), mix(h(i + vec2(0, 1)), h(i + vec2(1, 1)), f.x), f.y); }
       float fbm(vec2 p) { float a = 0.0, w = 0.5; mat2 r = mat2(0.8, -0.6, 0.6, 0.8); for (int i = 0; i < 5; i++) { if (uMove > 0.5 && i >= 3) { a += w * 0.75; break; } a += w * vn(p); p = r * p * 2.03 + 17.0; w *= 0.5; } return a; }
       void main() {
-        vec4 c = texture2D(tIn, vUv), n = texture2D(tN, vUv);
+        vec4 c = texture2D(tIn, vUv), n = texelFetch(tN, clamp(ivec2(gl_FragCoord.xy), ivec2(0), textureSize(tN, 0) - 1), 0);
         if (n.g > 0.0) {
           vec3 wp = (uCamW * vec4(mix(uLRBT.x, uLRBT.y, vUv.x), mix(uLRBT.z, uLRBT.w, vUv.y), -n.g, 1.0)).xyz;
           float k = 1.0 - uNight * 0.75;
