@@ -133,7 +133,21 @@ vec3 growB(vec3 p) {
     controls.minDistance = 25; controls.maxDistance = 15000;
     controls.maxPolarAngle = 1.45;
     // geen controls 'change' → redraw: bij ortho (iso) vuurt die élke update (zoomChanged) → hele scène 15–30×/s bij stilstand. De lus vergelijkt zelf camera/doel/zoom (moved).
-    controls.addEventListener('start', () => { controls.autoRotate = false; clearTimeout(idleT); emit('interact'); });
+    // slepen: demping (OrbitControls) werkt per beeld → bij weinig beelden/s liep de kaart na loslaten nog seconden achter de muis aan
+    // ("muis blijft vastzitten"). Schuiven dus zonder demping, alleen draaien gedempt. Muis los zonder pointerup → zelf loslaten.
+    let dragOn = false, dragId = 1;
+    const cdom = renderer.domElement;
+    cdom.addEventListener('pointerdown', e => {
+      dragId = e.pointerId;
+      const act = e.pointerType === 'touch' ? controls.touches.ONE : controls.mouseButtons[['LEFT', 'MIDDLE', 'RIGHT'][e.button]];
+      controls.enableDamping = act === THREE.MOUSE.ROTATE || act === THREE.TOUCH.ROTATE;
+    });
+    const release = e => { if (dragOn) cdom.dispatchEvent(new PointerEvent('pointerup', { pointerId: e.pointerId ?? dragId, pointerType: e.pointerType || 'mouse', clientX: e.clientX, clientY: e.clientY })); };
+    cdom.addEventListener('pointermove', e => { if (e.pointerType === 'mouse' && !e.buttons) release(e); });
+    addEventListener('pointerup', e => { if (e.target !== cdom) release(e); });
+    addEventListener('blur', () => release({}));
+    controls.addEventListener('start', () => { dragOn = true; controls.autoRotate = false; clearTimeout(idleT); emit('interact'); });
+    controls.addEventListener('end', () => { dragOn = false; });
     controls.addEventListener('end', () => {
       if (mode === 'rond') idleT = setTimeout(() => { controls.autoRotate = true; }, 4000);
       if (camera === ortho && !fly) { const h = isoHalf(), s = snapHalf(h); if (Math.abs(s - h) / h > 0.01) { const [x, y] = toRD(controls.target); H.flyTo(x, y, { half: s, ms: 300, arc: false }); } } // knijpen: naar dichtstbijzijnde zoomstand
@@ -596,7 +610,7 @@ vec3 growB(vec3 p) {
     let down = null;
     dom.addEventListener('pointerdown', e => { down = [e.clientX, e.clientY, performance.now()]; });
     dom.addEventListener('pointerup', e => {
-      if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5 || performance.now() - down[2] > 600) return;
+      if (!e.isTrusted || !down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5 || performance.now() - down[2] > 600) return;
       const r = dom.getBoundingClientRect();
       ndc.set((e.clientX - r.left) / r.width * 2 - 1, -(e.clientY - r.top) / r.height * 2 + 1);
       ray.setFromCamera(ndc, camera);
@@ -1186,10 +1200,11 @@ vec3 growB(vec3 p) {
   H.isoQuarter = () => { const th = fly ? fly.sb.theta : controls.getAzimuthalAngle(); return ((Math.round((snapAz(th) - Math.PI / 4) / (Math.PI / 2)) % 4) + 4) % 4; };
   H.cameraDistance = () => camera.position.distanceTo(controls.target);
 
+  const START = [196723, 322163]; // RD Pancratiuskerk (data/layers.js landmarks 'pancratius')
   function restoreView() {
     let v = null;
     try { v = JSON.parse(localStorage.getItem('h3d.view') || 'null'); } catch {}
-    const [x, y] = v ? [v.x, v.y] : O;
+    const [x, y] = START; // altijd bij de Pancratiuskerk (wens gebruiker); zoom/kijkhoek wel bewaard
     controls.target.copy(toWorld(x, y, 120));
     const sph = new THREE.Spherical(v?.d || 1400, v?.p ?? 0.9, v?.a ?? 0.35);
     savedZoom = v?.z;
@@ -1459,6 +1474,34 @@ vec3 growB(vec3 p) {
     }
     const [x, y] = toRD(T); H.flyTo(x, y, { half: h1, ms: 380, arc: false }); emit('interact');
   };
+  // ---------- Toetsen: pijltjes / WASD = schuiven over de grond (t.o.v. de kijkrichting), Shift = 3× sneller ----------
+  // Snelheid naar zoom: ±0,9 beeldhoogte per seconde. Q/E/+/− zitten in ui.js.
+  const KEYS = new Set(), KMAP = { ArrowUp: 'f', w: 'f', ArrowDown: 'b', s: 'b', ArrowLeft: 'l', a: 'l', ArrowRight: 'r', d: 'r' };
+  let keyT = 0;
+  addEventListener('keydown', e => {
+    if (e.target.closest?.('input,textarea,select') || e.ctrlKey || e.metaKey || e.altKey) return;
+    const k = KMAP[e.key.length === 1 ? e.key.toLowerCase() : e.key]; if (!k) return;
+    e.preventDefault(); KEYS.add(k); redraw();
+  });
+  addEventListener('keyup', e => { const k = KMAP[e.key.length === 1 ? e.key.toLowerCase() : e.key]; if (k) KEYS.delete(k); });
+  addEventListener('blur', () => KEYS.clear());
+  const kF = new THREE.Vector3(), kR = new THREE.Vector3(), kUp = new THREE.Vector3(0, 1, 0);
+  let kFast = false;
+  addEventListener('keydown', e => { kFast = e.shiftKey; }); addEventListener('keyup', e => { kFast = e.shiftKey; });
+  function keyPan(now) {
+    const dt = Math.min(0.1, (now - (keyT || now)) / 1000); keyT = now;
+    if (!KEYS.size || fly || intro || !controls.enabled) return;
+    const fx = (KEYS.has('f') ? 1 : 0) - (KEYS.has('b') ? 1 : 0), rx = (KEYS.has('r') ? 1 : 0) - (KEYS.has('l') ? 1 : 0);
+    if (!fx && !rx) return;
+    camera.getWorldDirection(kF); kF.y = 0;
+    if (kF.lengthSq() < 1e-6) kF.set(-Math.sin(controls.getAzimuthalAngle()), 0, -Math.cos(controls.getAzimuthalAngle())); // recht van boven (plat)
+    kF.normalize(); kR.crossVectors(kF, kUp);
+    const half = camera === ortho ? isoHalf() : camera.position.distanceTo(controls.target) * Math.tan(camera.fov * Math.PI / 360);
+    const sp = 1.8 * half * (kFast ? 3 : 1) * dt / Math.hypot(fx, rx);
+    const d = kF.multiplyScalar(fx * sp).addScaledVector(kR, rx * sp);
+    controls.target.add(d); camera.position.add(d);
+    controls.autoRotate = false;
+  }
   function loop(now) {
     requestAnimationFrame(loop);
     if (M.on) { M.raf++; M.tick0 = performance.now(); meterShow(now); if (M.stress) dirty = true; }
@@ -1483,6 +1526,7 @@ vec3 growB(vec3 p) {
       dirty = true;
     }
     if (intro && area) { introStep(now); dirty = true; }
+    keyPan(now);
     const ctl = controls.update();
     // OrbitControls meldt bij ortho (iso) élke update als veranderd (zoomChanged) → zelf vergelijken, anders tekent iso eindeloos en is nooit 'stil'
     const moved = ctl && (camera.position.distanceToSquared(lastCP) > 1e-8 || controls.target.distanceToSquared(lastCT) > 1e-8 || camera.zoom !== lastZ);
