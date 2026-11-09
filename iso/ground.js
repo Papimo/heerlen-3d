@@ -20,7 +20,8 @@
       stoep: '#d0c9bd', fiets: '#c46f62', zand: '#d9c08f', beek: '#5aa9d6', spoor: '#9a8f84', tram: '#a59c92' },
     // BGT (tools/build-bgt.cjs): erf en rijbanen zitten er niet in (= OSM-land / OSM-linten)
     bgt: { tegels: '#ddd5c6', stenen: '#cac5bb', klinkers: '#c9a08a', asfalt: '#a4a7ad', grind: '#d8cdb2', zand: '#e6d3a3', gras: '#9fd27e', weide: '#a9d585',
-      heesters: '#86bf6a', bos: '#6fae5f', akker: '#e8d58a', boomgaard: '#a2cf7d', heide: '#c9aecb', moeras: '#9cc59a', water: '#5aa9d6' },
+      heesters: '#86bf6a', bos: '#6fae5f', akker: '#e8d58a', boomgaard: '#a2cf7d', heide: '#c9aecb', moeras: '#9cc59a', water: '#5aa9d6',
+      tuin: '#b3d98c' }, // tuin = BGT-erf in een woonwijk (achter-/voortuinen)
     grind: '#d8cdb2', // grindpaden begraafplaats
     graveBlots: ['#8b8a6c', '#b2ae94', '#7e8a72', '#a49a7c'], gravePlot: '#8f957d', // kerkhof Verwilderd (design/12_begraafplaats.html)
     pitch: { gras: '#8cc96a', kunstgras: '#5fae5a', hard: '#6f93a8', gravel: '#c8653f', zand: '#e1c993', beton: '#c9c6c0' },
