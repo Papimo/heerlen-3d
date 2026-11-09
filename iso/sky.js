@@ -21,7 +21,7 @@
     vertexShader: VS,
     fragmentShader: `varying vec2 vUv; uniform sampler2D tIn, tN; uniform mat4 uCamW; uniform vec4 uLRBT, uBal; uniform vec3 uSun; uniform vec2 uWind;
       uniform float uTime, uMove, uScale, uCov, uSoft, uDark, uSunB, uNight, uCloudY;
-      float h(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+      float h(vec2 p) { vec3 q = fract(p.xyx * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
       float vn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(h(i), h(i + vec2(1, 0)), f.x), mix(h(i + vec2(0, 1)), h(i + vec2(1, 1)), f.x), f.y); }
       float fbm(vec2 p) { float a = 0.0, w = 0.5; mat2 r = mat2(0.8, -0.6, 0.6, 0.8); for (int i = 0; i < 5; i++) { if (uMove > 0.5 && i >= 3) { a += w * 0.75; break; } a += w * vn(p); p = r * p * 2.03 + 17.0; w *= 0.5; } return a; }
       void main() {

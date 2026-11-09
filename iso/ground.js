@@ -580,7 +580,7 @@
     s.fragmentShader = s.fragmentShader.replace('#include <common>', `#include <common>
       varying vec3 vGrW; uniform sampler2D tGr; uniform mat4 uGrVP; uniform vec2 uGrM; uniform float uGrT, uGrTpm, uGrOn;
       const vec3 GR_BASE = vec3(${BASEV});
-      float grH(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+      float grH(vec2 p) { vec3 q = fract(p.xyx * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
       float grN(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(grH(i), grH(i + vec2(1, 0)), f.x), mix(grH(i + vec2(0, 1)), grH(i + vec2(1, 1)), f.x), f.y); }
       vec3 grAt(vec2 uv) { if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) return GR_BASE; vec4 t = texture2D(tGr, uv); return t.rgb + GR_BASE * (1.0 - t.a); }
       vec3 grLin(vec3 c) { return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c)); }

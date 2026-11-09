@@ -75,7 +75,7 @@
 
   // ---------- rand: strip langs de grens met aardlagen (schoolplaat) ----------
   const DIO = { uDepth: { value: DEPTH }, uBot: { value: 0 }, uNight: U.uNight, uLab: { value: null } };
-  const GLSL_N = `float dh(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+  const GLSL_N = `float dh(vec2 p) { vec3 q = fract(p.xyx * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
     float dn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(dh(i), dh(i + vec2(1, 0)), f.x), mix(dh(i + vec2(0, 1)), dh(i + vec2(1, 1)), f.x), f.y); }`;
   function strata(s) {
     Object.assign(s.uniforms, DIO);

@@ -725,7 +725,7 @@ vec3 growB(vec3 p) {
   H.setSeason = k => { U.uSeason.value = Math.max(0, SEASONS.indexOf(k)); try { localStorage.setItem('h3d.season', k); } catch {} shadowDirty = true; redraw(); emit('season', k); };
   const SEASON_GLSL = `uniform float uSeason;
     const vec3 SN_COL = vec3(0.80, 0.84, 0.90);
-    float snHash(vec3 c) { return fract(sin(dot(c, vec3(91.7, 53.3, 27.1))) * 4375.85); }
+    float snHash(vec3 c) { vec3 q = fract(c * 0.1031); q += dot(q, q.zyx + 31.32); return fract((q.x + q.y) * q.z); }
     vec3 seasonLeaf(vec3 c, float up) { // c lineair; alleen groen (blad) verandert, stam/rest blijft
       if (uSeason < 0.5) return c;
       float leaf = smoothstep(0.0, 0.015, c.g - max(c.r, c.b)), r = snHash(c), lum = dot(c, vec3(0.2126, 0.7152, 0.0722));
@@ -906,7 +906,7 @@ vec3 growB(vec3 p) {
     isoPal(s, false);
     s.vertexShader = s.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vW;')
       .replace('#include <project_vertex>', '#include <project_vertex>\nvW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
-    s.fragmentShader = s.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vW; uniform float uNight; uniform vec3 uEye;\nfloat h21(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }')
+    s.fragmentShader = s.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vW; uniform float uNight; uniform vec3 uEye;\nfloat h21(vec2 p) { vec3 q = fract(p.xyx * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }')
       .replace('#include <dithering_fragment>', `#include <dithering_fragment>
       if (uNight > 0.0) {
         vec3 n = normalize(cross(dFdx(vW), dFdy(vW)));
@@ -1024,7 +1024,7 @@ vec3 growB(vec3 p) {
         .replace('#include <project_vertex>', '#include <project_vertex>\nvB = aBase; vW2 = (modelMatrix * vec4(transformed, 1.0)).xyz;');
       sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
         varying float vB; varying vec3 vW2; uniform vec3 uCol; uniform vec3 uColS; uniform float uBand, uGlow, uNight; uniform vec3 uEye;
-        float h22(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }`)
+        float h22(vec2 p) { vec3 q = fract(p.xyx * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }`)
         .replace('#include <color_fragment>', `#include <color_fragment>
         float hb = vW2.y - vB, inB = step(hb, uBand), lip = inB * step(uBand - 0.35, hb); // band + luifelrand
         diffuseColor.rgb = mix(diffuseColor.rgb, uCol * (1.0 - 0.45 * lip), inB);`)
