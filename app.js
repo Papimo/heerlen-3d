@@ -19,13 +19,14 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
   vec3 n = vec3(e, 1.0 - abs(e.x) - abs(e.y)); float t = max(-n.z, 0.0); n.xy += vec2(n.x >= 0.0 ? -t : t, n.y >= 0.0 ? -t : t); return normalize(n); }
 `;
   H.NRM_GLSL = NRM_GLSL;
-  THREE.ShaderChunk.common += '\nvarying vec4 vMrtV;\n#ifdef gl_FragColor\nlayout(location = 1) out highp vec4 gNrm;\n' + NRM_GLSL + '#endif\n';
+  // mrtOff = afstand camera ↔ grondpunt midden in beeld (iso); varying blijft klein, echte diepte = mrtOff() - vMrtV.z, in de fragmentshader (highp) gerekend
+  const MRT_OFF = `float mrtOff() { vec3 fw = -vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2]); return isOrthographic && fw.y < -0.05 ? (cameraPosition.y - 120.0) / -fw.y : 0.0; }\n`;
+  THREE.ShaderChunk.common += '\nvarying vec3 vMrtV;\n' + MRT_OFF + '#ifdef gl_FragColor\nlayout(location = 1) out highp vec4 gNrm;\n' + NRM_GLSL + '#endif\n';
   // xyz = kijkpositie voor de normaal, klein gehouden (z t.o.v. grondpunt midden in beeld; iso-camera staat 2–11 km weg → telefoon-GPU's rondden af → strepen); w = echte diepte
-  const MRT_V = `vMrtV = vec4(mvPosition.xyz, -mvPosition.z);
-{ vec3 fwM = -vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2]); if (isOrthographic && fwM.y < -0.05) vMrtV.z += (cameraPosition.y - 120.0) / -fwM.y; }`;
+  const MRT_V = 'vMrtV = mvPosition.xyz; vMrtV.z += mrtOff();';
   H.MRT_V = MRT_V;
   THREE.ShaderChunk.project_vertex += '\n' + MRT_V;
-  THREE.ShaderChunk.opaque_fragment += '\n#ifdef gl_FragColor\n#ifdef OPAQUE\ngNrm = vec4(nrmPack(normalize(cross(dFdx(vMrtV.xyz), dFdy(vMrtV.xyz))), vMrtV.w), 0.0, 1.0);\n#else\ngNrm = vec4(0.0);\n#endif\n#endif';
+  THREE.ShaderChunk.opaque_fragment += '\n#ifdef gl_FragColor\n#ifdef OPAQUE\ngNrm = vec4(nrmPack(normalize(cross(dFdx(vMrtV), dFdy(vMrtV))), mrtOff() - vMrtV.z), 0.0, 1.0);\n#else\ngNrm = vec4(0.0);\n#endif\n#endif';
   // ShadowMaterial (schaduwvlak diorama) heeft geen opaque_fragment → zonder gNrm faalt de draw ("missing fragment shader outputs")
   THREE.ShaderLib.shadow.fragmentShader = THREE.ShaderLib.shadow.fragmentShader.replace('#include <fog_fragment>', '#include <fog_fragment>\n#ifdef gl_FragColor\ngNrm = vec4(0.0);\n#endif');
 
@@ -110,6 +111,14 @@ vec3 growB(vec3 p) {
     renderer.shadowMap.autoUpdate = false; // zie renderlus: alleen bij stilstand + verandering
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     el.appendChild(renderer.domElement);
+    if (QS.has('gpu')) { // diagnose (telefoonstrepen): GPU + precisie op scherm
+      const gl = renderer.getContext(), di = gl.getExtension('WEBGL_debug_renderer_info'), pf = (s, t) => { const p = gl.getShaderPrecisionFormat(s, t); return p ? p.precision + '/' + p.rangeMax : '-'; };
+      const d = document.createElement('pre'); d.style.cssText = 'position:fixed;left:4px;top:60px;z-index:99;background:#fffc;font:11px monospace;padding:4px;max-width:96vw;white-space:pre-wrap;pointer-events:none';
+      d.textContent = [di ? gl.getParameter(di.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER), 'webgl2 ' + renderer.capabilities.isWebGL2,
+        'frag high ' + pf(gl.FRAGMENT_SHADER, gl.HIGH_FLOAT) + ' med ' + pf(gl.FRAGMENT_SHADER, gl.MEDIUM_FLOAT), 'vert high ' + pf(gl.VERTEX_SHADER, gl.HIGH_FLOAT),
+        'cbf ' + !!gl.getExtension('EXT_color_buffer_float') + ' floatblend ' + !!gl.getExtension('EXT_float_blend'), 'dpr ' + devicePixelRatio, 'nopost ' + QS.has('nopost')].join('\n');
+      document.body.appendChild(d);
+    }
 
     scene = H.scene = new THREE.Scene();
     scene.background = SKY;
@@ -1373,12 +1382,12 @@ vec3 growB(vec3 p) {
       RTS.f = makeTargets(); ({ c: rtC, n: rtN } = RTS.f);
       NRM =new THREE.ShaderMaterial({ // normaal (uit de afgeleiden) + diepte; bomen via instanceMatrix; groeiende panden (aGrow ontbreekt = 0 = staat al)
         uniforms: GU,
-        vertexShader: `${GROW_GLSL} varying vec4 vMrtV; void main() { vec4 p = vec4(growB(position), 1.0);
+        vertexShader: `${GROW_GLSL} varying vec3 vMrtV; ${MRT_OFF} void main() { vec4 p = vec4(growB(position), 1.0);
           #ifdef USE_INSTANCING
           p = instanceMatrix * p;
           #endif
           vec4 mv = modelViewMatrix * p, mvPosition = mv; ${MRT_V} gl_Position = projectionMatrix * mv; }`,
-        fragmentShader: 'varying vec4 vMrtV;' + NRM_GLSL + 'void main() { gl_FragColor = vec4(nrmPack(normalize(cross(dFdx(vMrtV.xyz), dFdy(vMrtV.xyz))), vMrtV.w), 0.0, 1.0); }',
+        fragmentShader: 'varying vec3 vMrtV;' + MRT_OFF + NRM_GLSL + 'void main() { gl_FragColor = vec4(nrmPack(normalize(cross(dFdx(vMrtV), dFdy(vMrtV))), mrtOff() - vMrtV.z), 0.0, 1.0); }',
       });
       post = new THREE.ShaderMaterial({
         uniforms: { tC: { value: useMRT ? rtC.texture[0] : rtC.texture }, tN: { value: rtN.texture }, tSky: { value: skyTex }, uMrt: { value: useMRT ? 1 : 0 }, tD: { value: null }, tDN: { value: null }, uDyn: { value: 0 }, uRes: { value: new THREE.Vector2() }, uW: { value: 2 }, uK: { value: 0.85 }, uInk: { value: H.isoColors.ink } },
