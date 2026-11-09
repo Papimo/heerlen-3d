@@ -76,10 +76,11 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
   // uGOn = 0 zodra niets meer groeit (dan geen enkele rekenstap extra). Schaduw pas als het staat (castShadow uit tijdens groeien).
   const GROW = { dur: 0.5, spread: 1.8, jitter: 0.15 }; GROW.end = GROW.dur + GROW.spread + GROW.jitter;
   const T0 = performance.now(), nowS = () => (performance.now() - T0) / 1000;
-  const GU = { uGT: { value: 0 }, uGOn: { value: 0 }, uGDur: { value: GROW.dur } };
+  const GU = { uGT: { value: 0 }, uGOn: { value: 0 }, uGDur: { value: GROW.dur }, uEra: { value: new THREE.Vector3(0, 0, 0) } }; // uEra = bouwjaar y0, y1, krimp 0…1 (H.setEra)
+  const ERA_T = 0.9; let eraGoal = 0, eraT = 0; // s heen/terug
   const TREE_U = { uTT: { value: 1e4 } }; let treeFadeEnd = 0; // bomen groeien (treesFor/updateDetail)
   const GROW_GLSL = `
-uniform float uGT, uGOn, uGDur; attribute float aGrow, aGBase;
+uniform float uGT, uGOn, uGDur; uniform vec3 uEra; attribute float aGrow, aGBase;
 vec3 growB(vec3 p) {
   if (uGOn < 0.5) return p;
   float k = clamp((uGT - aGrow) / uGDur, 0.0, 1.0);
@@ -90,7 +91,11 @@ vec3 growB(vec3 p) {
   function addGrow(s) {
     Object.assign(s.uniforms, GU);
     s.vertexShader = s.vertexShader.replace('#include <common>', '#include <common>' + GROW_GLSL)
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed = growB(transformed);');
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+transformed = growB(transformed);
+if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter: rest krimpt de grond in (licht verspringend per pand), aInfo uit isoPal
+  float k = clamp(uEra.z * 1.5 - aSeed * 0.5, 0.0, 1.0), f = 1.0 - k * k * (3.0 - 2.0 * k);
+  transformed = f < 0.01 ? vec3(0.0, -1e5, 0.0) : vec3(transformed.x, aGBase + (transformed.y - aGBase) * f, transformed.z); }`);
   }
   let growFloor = 0; const growing = new Set(); // growFloor: intro houdt groeien tegen tot de wolken openbreken
   let dirty = true;
@@ -937,7 +942,7 @@ vec3 growB(vec3 p) {
   const R_OLD = ['#a8463a', '#b5503d', '#93412f'], R_MID = ['#d06a3e', '#de7c48', '#c75f38'], R_NEW = ['#454952', '#5a616c', '#6f7378'];
   const ANIME_YR = 'float yr = vI.x > 1000.0 ? vI.x : 1930.0 + vS * 70.0;';
   // bedrijfspanden (design/16_bedrijfspanden.html keuze A·A·D): hal = plat (> 60% dak plat) + > 2500 m² + < 16 m.
-  // Dak hal: licht geribbeld + lichtstraten/zonnepanelen (iso/daken.js), Mijnstreek-dakrand; gevel hal: sandwichpanelen; overige platte daken: per pand bitumen-banen / grind + installaties / sedum of grind met plassen.
+  // Dak hal: licht geribbeld + lichtstraten/zonnepanelen (iso/daken.js), Mijnstreek-dakrand; gevel hal: sandwichpanelen; overige platte daken: per pand bitumen-banen / grind + installaties / grind met plassen (sedum weg: gebruiker wil geen gras op daken).
   const MIJN = ['#6b4a36', '#a8432e', '#c8963a', '#5f6b3a', '#4a5f72', '#7a4e5e', '#2f5f6b', '#b5713a'];
   const pickV = (v, list, x) => glPick(list, x).replace(/p = /g, v + ' = ');
   const BIZ_COMMON = `varying vec2 vBz;
@@ -949,13 +954,9 @@ bool bzHal(vec4 i, float ht) { return vBz.y > 0.6 && i.y > 2500.0 && ht < 16.0; 
 vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac; }`;
   const GRIND = (a, b, k) => `{ float gf = smoothstep(0.35, 1.0, fwidth(vRW.x * ${k}));
             p = mix(${lin(a)}, ${lin(b)}, mix(bzH(floor(vRW.xz * ${k})), 0.5, gf)) * (0.9 + 0.12 * bzN(vRW.xz * 0.15)); }`;
-  const SEDUM = `p = mix(${lin('#6f8f3e')}, ${lin('#9aa64c')}, bzN(vRW.xz * 0.25));
-            p = mix(p, ${lin('#a4583c')}, smoothstep(0.6, 0.72, bzN(vRW.xz * 0.11 + 9.0)) * 0.8);
-            p *= 0.86 + 0.22 * mix(bzN(vRW.xz * 1.3 + 5.0), 0.5, smoothstep(0.3, 0.8, fwidth(vRW.x * 1.3)));`;
   const PLAT_D = `{ vec2 L = bzLoc(vRW); float mk = fract(vS * 3.1), lf = smoothstep(0.25, 0.6, fwidth(L.y));
             if (mk < 0.34) { p = ${lin('#4c4b49')} * (0.9 + 0.14 * bzH(vec2(floor(L.y), vS * 9.0))); p *= 1.0 - 0.3 * mix(step(fract(L.y), 0.06), 0.06, lf); }
             else if (mk < 0.67) { ${GRIND('#aaa498', '#c6c0b3', '5.0')} }
-            else if (fract(vS * 2.3) < 0.5) { ${SEDUM} }
             else { ${GRIND('#a6a196', '#c2bcaf', '3.0')} p = mix(p, ${lin('#8ea3b3')}, smoothstep(0.7, 0.74, bzN(vRW.xz * 0.12 + vS * 40.0))); } }`;
   const HAL_A = `{ vec2 L = bzLoc(vRW); p = ${lin('#cfccc4')} * mix(0.95 + 0.05 * step(0.5, fract(L.y)), 0.975, smoothstep(0.25, 0.6, fwidth(L.y))); }`;
   const PANEL = `{ vec3 gc; ${pickV('gc', ['#3e4247', '#d9dad6', '#4f6f8f', '#5f7a5a', '#b9bcbd'], 'fract(vS * 4.3)')}
@@ -1223,7 +1224,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
   // bouwjaar-filter (zoeken "jaren 30"): alle panden met bouwjaar y0…y1 oplichten in één kleur (dak + gevel zonder bedrijfsband)
   let era = null;
   H.countEra = (y0, y1) => { let n = 0; for (const c of H.chunks.values()) { if (!c.year) continue; for (let b = 0; b < c.year.length; b++) { const y = c.year[b]; if (y >= y0 && y <= y1) n++; } } return n; };
-  H.setEra = (y0, y1, col = '#d9822b') => { era = y0 ? { y0, y1, col } : null; rebuildHighlights(); return era ? H.countEra(y0, y1) : 0; };
+  H.setEra = (y0, y1, col = '#d9822b') => { era = y0 ? { y0, y1, col } : null; if (era) GU.uEra.value.set(y0, y1, GU.uEra.value.z); eraGoal = era ? 1 : 0; shadowDirty = true; redraw(); rebuildHighlights(); return era ? H.countEra(y0, y1) : 0; };
   H.getEra = () => era;
   let hlT = 0;
   function rebuildHighlights() { // gebundeld: hooguit één keer per beeld
@@ -1242,6 +1243,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
       const groups = new Map(); // kleur → { roof, wall, base }
       for (const keys of byBuilding.values()) {
         const m = marks.get(keys[0]);
+        if (era) { const y = m.best.c.year?.[m.best.b]; if (!(y >= era.y0 && y <= era.y1)) continue; } // bouwjaar-filter: plek-kopie krimpt mee (= weg)
         let a = groups.get(m.color); if (!a) groups.set(m.color, a = { roof: [], wall: [], base: [] });
         copyFaces(m.best.c, m.best.b, a);
       }
@@ -1797,6 +1799,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
       const t = nowS(); GU.uGT.value = t; GU.uGOn.value = 1; dirty = true;
       for (const c of growing) if (t >= c.growEnd) growDone(c);
     } else if (GU.uGOn.value) { GU.uGOn.value = 0; dirty = true; }
+    { const e = GU.uEra.value; if (e.z !== eraGoal) { const st = Math.min(0.05, (now - (eraT || now)) / 1000) / ERA_T; e.z = eraGoal ? Math.min(1, e.z + st) : Math.max(0, e.z - st); dirty = true; if (e.z === eraGoal) shadowDirty = true; } eraT = now; }
     if (treeFadeEnd) { const t = nowS(); TREE_U.uTT.value = Math.min(t, treeFadeEnd); dirty = true; if (t >= treeFadeEnd) treeFadeEnd = 0; }
     if (selMesh) { // knipperen: 3 s, daarna rustig
       const t = (now - pulseT0) / 1000;

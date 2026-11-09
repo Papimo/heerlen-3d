@@ -52,7 +52,7 @@
       void main() {
         vec4 c = texture2D(tIn, vUv);
         float r = smoothstep(uW0, uW1, abs(vUv.y - 0.5)) * uAmt * uRes.y / 100.0; // straal in px
-        if (r > 0.4) { vec4 a = vec4(0.0); float n = 0.0; for (int i = 0; i < 24; i++) { n += 1.0; float t = float(i) * 2.39996, q = sqrt(float(i) + 0.5) / 4.9; a += texture2D(tIn, vUv + vec2(cos(t), sin(t)) * q * r / uRes); } c = a / n; /* 8 monsters tijdens bewegen gaf spookstrepen → altijd 24 */ /* 24 i.p.v. 40 monsters (draait bij elk wolkenbeeld) */ }
+        if (r > 0.4) { vec4 a = vec4(0.0); float m = clamp(ceil(r * r * 0.8), 6.0, 24.0), sm = 1.0 / sqrt(m), n = 0.0; for (int i = 0; i < 24; i++) { if (float(i) >= m) break; n += 1.0; float t = float(i) * 2.39996, q = sqrt(float(i) + 0.5) * sm; a += texture2D(tIn, vUv + vec2(cos(t), sin(t)) * q * r / uRes); } c = a / n; /* monsters ∝ oppervlak straal (6–24, ±1 px tussenruimte): halve res zou een extra verkleinpass vragen */ /* 8 monsters tijdens bewegen gaf spookstrepen → altijd 24 */ /* 24 i.p.v. 40 monsters (draait bij elk wolkenbeeld) */ }
         c.rgb = mix(vec3(dot(c.rgb, vec3(0.3, 0.59, 0.11))), c.rgb, uSat);
         vec2 p = vUv - 0.5; c.rgb *= mix(vec3(1.0), vec3(0.72, 0.62, 0.52), smoothstep(0.25, 0.75, length(p * vec2(1.0, 1.25))) * uVig * 2.0);
         gl_FragColor = c;

@@ -18,6 +18,7 @@
   }
   const box = (w, h, d) => new THREE.BoxGeometry(w, h, d).translate(0, h / 2, 0);   // voet op 0
   const boxc = (w, h, d) => new THREE.BoxGeometry(w, h, d);                          // midden op 0
+  const bx0 = (w, h, d) => { const g = box(w, h, d), I = Array.from(g.index.array); I.splice(18, 6); g.setIndex(I); return g; } // voet op 0, zonder onderkant (10 driehoeken; iso kijkt altijd van boven)
   const cyl = (r0, r1, h, s = 6) => new THREE.CylinderGeometry(r1, r0, h, s).translate(0, h / 2, 0);
   const cone = (r, h, s = 6) => new THREE.ConeGeometry(r, h, s).translate(0, h / 2, 0);
   const ico = (r, d = 0) => new THREE.IcosahedronGeometry(r, d);
@@ -123,6 +124,13 @@
              merge([part(cone(0.22, 0.85, 5), '#fff', { p: [0, 0.13, 0], tint: 1 })])],
     lamp: [merge([part(cyl(0.08, 0.06, 4.8, 6), '#4a4d55'), part(cyl(0.34, 0.12, 0.32, 4), '#4a4d55', { p: [0, 4.9, 0], r: [0, Math.PI / 4, 0] }), part(box(0.42, 0.06, 0.42), GLASS, { p: [0, 4.85, 0], tint: 1, glow: 1 })]),
            merge([part(cyl(0.12, 0.07, 8, 6), '#8a9098'), rod([0, 7.8, 0], [1.6, 8.1, 0], 0.05, '#8a9098', 5), part(box(0.8, 0.12, 0.3), '#8a9098', { p: [1.8, 8.0, 0] }), part(box(0.7, 0.04, 0.24), GLASS, { p: [1.8, 7.97, 0], tint: 1, glow: 1 })])],
+    // ver weg (< TREE_LO_PPM px/m, = startzoom iso): blokjes zonder onderkant. Auto 60 → 10, lantaarn 52/68 → 20/30 driehoeken (scheelde ±1,2 M driehoeken in beeld)
+    lampLo: [merge([part(bx0(0.12, 4.8, 0.12), '#4a4d55'), part(bx0(0.42, 0.12, 0.42), GLASS, { p: [0, 4.8, 0], tint: 1, glow: 1 })]),
+             merge([part(bx0(0.18, 8, 0.18), '#8a9098'), part(bx0(2.0, 0.12, 0.3), '#8a9098', { p: [1.0, 8.0, 0] }), part(bx0(0.7, 0.06, 0.26), GLASS, { p: [1.8, 7.95, 0], tint: 1, glow: 1 })])],
+    carLo: merge([part(bx0(4.3, 1.35, 1.8), '#fff', { tint: 1 })]),
+    stoneLo: { slab: merge([part(bx0(0.62, 0.95, 0.15), '#fff', { tint: 1 })]), round: merge([part(bx0(0.6, 0.95, 0.15), '#fff', { tint: 1 })]),
+               cross: merge([part(bx0(0.14, 1.25, 0.13), '#fff', { tint: 1 }), part(bx0(0.6, 0.14, 0.13), '#fff', { p: [0, 0.83, 0], tint: 1 })]), broken: merge([part(bx0(0.6, 0.45, 0.15), '#fff', { tint: 1 })]) },
+    fenceLo: merge([part(bx0(0.09, 1.65, 0.09), '#2d2a28'), part(bx0(FENCE_L, 0.05, 0.035), '#2d2a28', { p: [FENCE_L / 2, 0.2, 0] }), part(bx0(FENCE_L, 0.05, 0.035), '#2d2a28', { p: [FENCE_L / 2, 1.4, 0] })]),
     bench: benchGeo('#b08055', '#3d3f45'),
     gear: gearSet({ a: '#c0563f', b: '#4f7fa8', c: '#a87a52', frame: '#a87a52', wood: '#a87a52', sand: '#ead7a4' }),
     // auto (lengte langs x, 4,3 × 1,8 m): carrosserie in kleur per exemplaar, ruiten/wielen vast
@@ -368,6 +376,7 @@
   }
   const rad = d => (90 - d) * Math.PI / 180; // richting° (0 = noord, met de klok mee) → draaiing om y
   const VAK = []; // { c, group, trees: [im], small: [im], pool }
+  H.propsVak = VAK; // alleen voor metingen (tools/meet-gpu.cjs)
 
   function build(c) {
     if (c.props) return;
@@ -400,7 +409,8 @@
     }
     // klein spul: per vak samengebakken tot 2 gewone meshes (lantaarns zonder schaduw / banken + toestellen) i.p.v. tot 11 InstancedMeshes
     const lampB = [], restB = [];
-    for (const l of b.lamps) { at(l[0], l[1], 0, rad(l[4]), 1); lampB.push([st.lamp[l[2]], m4.compose(ps, qq, sc).clone(), WARM]); }
+    const lampLoB = [];
+    for (const l of b.lamps) { at(l[0], l[1], 0, rad(l[4]), 1); const M = m4.compose(ps, qq, sc).clone(); lampB.push([st.lamp[l[2]], M, WARM]); lampLoB.push([st.lampLo[l[2]], M, WARM]); }
     for (const x of b.benches) { at(x[0], x[1], 0, rad(x[3]), 1); restB.push([st.bench[x[2]], m4.compose(ps, qq, sc).clone(), null]); }
     for (const g of b.gear) { at(g[0], g[1], 0, rad(g[3]), 1); restB.push([st.gear[g[2]], m4.compose(ps, qq, sc).clone(), null]); }
     // doelen: aan beide korte kanten (voetbal/hockey/basketbal), tennisnet in het midden; ang = RD-hoek → om y = ang (z = −noord)
@@ -435,11 +445,11 @@
         if (rnd() < KV.fall) eu.set(-1.45, rot, 0, 'YXZ'); else eu.set((rnd() - 0.4) * KV.lean * 2, rot, (rnd() - 0.5) * KV.lean, 'YXZ');
         qq.setFromEuler(eu); sc.set(Z * (0.85 + rnd() * 0.3), Z * (0.85 + rnd() * 0.35), Z);
       }, () => col.setHSL(...KV.stoneCol(rnd)));
-      if (im) v.small.push(im);
+      if (im) { im.geoHi = st.stone[kind]; im.geoLo = st.stoneLo[kind]; v.small.push(im); }
     }
     // hek (oud smeedijzer) langs de buitenrand, licht scheef
     const fIm = inst(st.fence, b.fence || [], p => { ps.set(p[0] - O[0], hAt(p[0], p[1]) - 0.05, -(p[1] - O[1])); eu.set(0, p[2], p[4], 'YXZ'); qq.setFromEuler(eu); sc.set(p[3], 1, 1); });
-    if (fIm) v.small.push(fIm);
+    if (fIm) { fIm.geoHi = st.fence; fIm.geoLo = st.fenceLo; v.small.push(fIm); }
     // treurwilgen + dode bomen langs de grindpaden
     for (const kind in st.ktree) {
       const L = (b.ktree || []).filter(t => t[2] === kind), [th, ts, tl] = KV.treeCol[kind];
@@ -483,10 +493,11 @@
       }
     }
     const cIm = inst(st.car, cars, t => { at(t[0], t[1], 0, t[2] + (rnd() - 0.5) * 0.06, 1); }, () => col.set(CARC[Math.floor(rnd() * CARC.length)]));
-    if (cIm) v.small.push(cIm);
+    if (cIm) { cIm.geoHi = st.car; cIm.geoLo = st.carLo; v.small.push(cIm); }
     for (const [L, noShadow] of [[lampB, true], [restB, false]]) {
       if (!L.length) continue;
       const m = new THREE.Mesh(bake(L), PMAT); m.userData.noShadow = noShadow; group.add(m); v.small.push(m);
+      if (L === lampB) { m.geoHi = m.geometry; m.geoLo = bake(lampLoB); }
     }
     // lichtpoel: per lamp een schijf (midden + 2 ringen × 16) op het terrein, onder de kap (arm richting straat)
     if (b.lamps.length) {
@@ -526,6 +537,7 @@
     }
     const near = d < 2200; // lantaarns, banken, toestellen: klein → ver weg weg
     for (const im of v.small) {
+      if (im.geoLo) { const g = lo ? im.geoLo : im.geoHi; if (im.geometry !== g) { im.geometry = g; ch = true; } }
       if (im.visible !== near) { im.visible = near; ch = true; }
       const cs = cast && !im.userData.noShadow;
       if (im.castShadow !== cs) { im.castShadow = cs; ch = true; }

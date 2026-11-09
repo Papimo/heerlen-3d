@@ -430,12 +430,11 @@
   });
   document.addEventListener('pointerdown', e => { if (!e.target.closest('#search')) res.hidden = true; });
 
-  // bouwjaar-filter aan/uit: chip bij de categorieën met × ; zet dimmen tijdelijk aan zodat de rest wegvalt
+  // bouwjaar-filter aan/uit: chip bij de categorieën met × ; de rest krimpt de grond in (H3D.setEra)
   let eraChip = null, eraDimmed = false;
   function setEra(e) {
     const n = H3D.setEra(e ? e[0] : 0, e ? e[1] : 0);
-    if (e && !H3D.getDim()) { H3D.setDim(true); eraDimmed = true; showDim(); }
-    if (!e && eraDimmed) { H3D.setDim(false); eraDimmed = false; showDim(); }
+    if (eraDimmed) { H3D.setDim(false); eraDimmed = false; showDim(); } // vroeger: dimmen; nu krimpt de rest de grond in (app.js uEra)
     eraChip?.remove(); eraChip = null;
     if (e) {
       eraChip = Object.assign(document.createElement('button'), { className: 'chip', title: 'Bouwjaar-filter uitzetten' });
