@@ -1,6 +1,9 @@
-// Heerlen 3D — interface: zoeken, categorieën, pins (OSM + eigen), infokaartje, kaartstijl, kompas.
+// Parkstad 3D — interface: zoeken, categorieën, pins (OSM + eigen), infokaartje, kaartstijl, kompas.
 (() => {
   const $ = id => document.getElementById(id);
+  const gemNames = () => (H3D.areaInfo?.parts || [{ name: 'Heerlen' }]).map(p => p.name); // gemeenten die aan staan (zoeken, teksten)
+  const gemQ = () => gemNames().join(' OR ');
+  document.body.dataset.lm = H3D.lmStyle?.() || 'w1'; // stijl bekende gebouwen (app.js LM_STYLES, style.css)
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   const store = {
@@ -19,7 +22,7 @@
     studeren: { label: 'Studeren', icon: '🎓', color: '#2f5f6b', words: ['studeren', 'universiteit', 'universiteiten', 'hogeschool', 'onderwijs', 'campus', 'open universiteit', 'zuyd'] },
     overnachten: { label: 'Overnachten', icon: '🛏', color: '#b5713a', words: ['hotel', 'overnachten', 'slapen', 'b&b', 'pension'] },
     mijn: { label: 'Mijn pins', icon: '📍', color: '#d2582a', words: ['mijn', 'pins', 'favoriet', 'favorieten', 'bewaard'] },
-    lm: { label: 'Bekende gebouwen', icon: '◆', color: '#c9a227', dark: true, hidden: true, words: ['bekend', 'bekende gebouwen', 'monument', 'monumenten'] }, // laag "gebouwen", geen knop
+    lm: { label: 'Bekende gebouwen', icon: '⚑', color: '#3a2f2a', dark: true, hidden: true, words: ['bekend', 'bekende gebouwen', 'monument', 'monumenten'] }, // laag "gebouwen", geen knop
   };
   const SHUT = '#a19d97'; // dicht (filter "nu open")
   const SUB = {
@@ -138,7 +141,7 @@
       const c = it.cat === 'mijn' ? CATS.mijn : CATS[it.cat];
       p.el.style.setProperty('--c', isShut(it) ? SHUT : colorOf(it));
       p.el.classList.toggle('shut', isShut(it)); p.el.classList.toggle('lm', it.cat === 'lm');
-      p.el.innerHTML = `<i></i><em><b>${c.icon}</b>${esc(it.name)}</em>`;
+      p.el.innerHTML = it.cat === 'lm' ? `<s class="flag"><u></u></s><i></i><em>${esc(it.name)}</em>` : `<i></i><em><b>${c.icon}</b>${esc(it.name)}</em>`;
       p.el.title = it.name;
     }
     markSelected(); H3D.redraw();
@@ -324,7 +327,7 @@
   async function addresses(text) {
     const tok = ++addrTok;
     try {
-      const u = `https://api.pdok.nl/bzk/locatieserver/search/v3_1/free?q=${encodeURIComponent(text)}&fq=gemeentenaam:Heerlen&fq=type:(adres OR weg OR buurt OR wijk OR woonplaats OR postcode)&rows=6&fl=weergavenaam,type,centroide_rd`;
+      const u = `https://api.pdok.nl/bzk/locatieserver/search/v3_1/free?q=${encodeURIComponent(text)}&fq=gemeentenaam:(${gemQ()})&fq=type:(adres OR weg OR buurt OR wijk OR woonplaats OR postcode)&rows=6&fl=weergavenaam,type,centroide_rd`;
       const r = await fetch(u, { signal: AbortSignal.timeout(6000) });
       const d = await r.json();
       if (tok !== addrTok) return;
@@ -343,7 +346,7 @@
     }).join('');
     const ad = addr.map((a, i) => `<button class="res" data-addr="${i}"><span style="--c:#777">⌖</span><b>${esc(a.name.replace(/, Heerlen$/, ''))}</b><small>${TYPE_NL[a.type] || a.type}</small><em>${fmtD(distTo(a))}</em></button>`).join('');
     const adBlock = ad ? `<div class="sep">Adressen en straten</div>${ad}` : '';
-    const body = !it && !ad ? '<div class="empty">Niets gevonden in Heerlen</div>' : !head && !nameHit ? adBlock + (it ? `<div class="sep">Plekken</div>${it}` : '') : it + adBlock;
+    const body = !it && !ad ? `<div class="empty">Niets gevonden in ${gemNames().join(' of ')}</div>` : !head && !nameHit ? adBlock + (it ? `<div class="sep">Plekken</div>${it}` : '') : it + adBlock;
     res.innerHTML = (head || '') + (head ? '' : eraHead) + body;
     res.hidden = false;
   }
@@ -394,7 +397,10 @@
   const SEASONS = { lente: '🌸 Lente', zomer: '🌳 Zomer', herfst: '🍂 Herfst', winter: '❄ Winter' };
   const sfeer = $('g-sfeer').querySelector('div'), stad = $('g-stad').querySelector('div');
   sfeer.innerHTML = `<h4>Licht</h4><div class="lseg">${Object.entries(LIGHTS).map(([k, l]) => `<button data-light="${k}">${l}</button>`).join('')}</div><h4>Seizoen</h4><div class="lseg">${Object.entries(SEASONS).map(([k, l]) => `<button data-season="${k}">${l}</button>`).join('')}</div><h4>Stijl</h4>${fxRow('film')}${fxRow('inkt')}${fxRow('bouwjaar')}<div class="sep2"></div><h4>Effecten</h4>${GRP.sfeer.map(fxRow).join('')}<div class="sep2"></div>${fxRow('zuinig')}`;
-  stad.innerHTML = GRP.stad.map(fxRow).join('') + '<p class="hint">Contactschaduw wordt één keer gebakken (±10 s), daarna bijna gratis.</p>';
+  const gemRow = g => `<label title="${g} laden (±50% meer vakken); omzetten herlaadt de pagina"><span class="ic">▦</span>${g} tonen<span class="cost">${[1, 2, 3].map(i => `<i class="${i <= 3 ? 'f' : ''}"></i>`).join('')}</span><input type="checkbox" data-gem="${g}"${H3D.gemOn(g) ? ' checked' : ''}></label>`;
+  stad.innerHTML = GRP.stad.map(fxRow).join('') + '<p class="hint">Contactschaduw wordt één keer gebakken (±10 s), daarna bijna gratis.</p>'
+    + (H3D.gemParts?.().length ? '<h4>Gebied</h4>' + H3D.gemParts().map(gemRow).join('') + '<p class="hint">Uit = lichter (minder geheugen en GPU). Omzetten herlaadt de kaart.</p>' : '');
+  stad.addEventListener('change', e => { const g = e.target.dataset?.gem; if (g) H3D.setGem(g, e.target.checked); });
   const showLight = () => sfeer.querySelectorAll('[data-light]').forEach(b => b.classList.toggle('on', b.dataset.light === H3D.getLight()));
   const showSeason = () => sfeer.querySelectorAll('[data-season]').forEach(b => b.classList.toggle('on', b.dataset.season === H3D.getSeason?.()));
   sfeer.addEventListener('click', e => { const b = e.target.closest('[data-light]'); if (b) { H3D.setLight(b.dataset.light); showLight(); } const z = e.target.closest('[data-season]'); if (z) { H3D.setSeason(z.dataset.season); showSeason(); } });
@@ -414,6 +420,8 @@
   grps.forEach(d => d.addEventListener('toggle', () => { if (d.open) grps.forEach(o => o !== d && o.removeAttribute('open')); }));
   document.addEventListener('pointerdown', e => { if (!e.target.closest('.grp')) grps.forEach(d => d.removeAttribute('open')); });
   H3D.on('layer', k => { if (k === 'gebouwen') rebuildPins(); });
+  // ontwerppagina's (design/18_bekende-gebouwen.html) sturen de app in een iframe: stijl bekende gebouwen proberen (niet bewaren), naar een gebouw vliegen
+  addEventListener('message', e => { const d = e.data || {}; if (d.h3d === 'lm') H3D.setLmStyle(d.v, true); if (d.h3d === 'goto') { const it = landmarks().find(l => l.id === d.id); if (it) openItem(it); } });
   res.addEventListener('click', e => {
     const b = e.target.closest('.res'); if (!b) return;
     if (b.dataset.era) setEra(eraHit);
@@ -551,7 +559,7 @@
   H3D.on('progress', (n, tot) => {
     $('progress').hidden = n >= tot;
     $('progress').querySelector('i').style.width = `${(n / tot * 100).toFixed(0)}%`;
-    $('progress').querySelector('span').textContent = `Heerlen bouwen… ${n}/${tot} km²`;
+    $('progress').querySelector('span').textContent = `Kaart bouwen… ${n}/${tot} km²`;
   });
   
 

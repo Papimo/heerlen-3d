@@ -1,4 +1,4 @@
-// Heerlen 3D — kern: scène, km-vakken (gebouwen + terrein), kaarttegels als textuur, aanklikken, camera.
+// Parkstad 3D — kern: scène, km-vakken (gebouwen + terrein), kaarttegels als textuur, aanklikken, camera.
 // Coördinaten: RD (EPSG:28992) → three: x = RDx − O.x, y = NAP-hoogte, z = −(RDy − O.y)  (noord = −z).
 // Data komt uit data/*.js (gebouwd met tools/build-data.cjs) en roept H3D.area/chunk/pois aan.
 const H3D = (() => {
@@ -103,7 +103,7 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
   const redraw = () => { dirty = true; };
   const BUILD = 'anime-1 licht randje, daken op bouwjaar, middag zacht, bolle bomen (2026-11-09)', DBG_U = { value: new THREE.Vector2(1, 1) }; // ?gpu: versie zichtbaar + schakelaars omlijning (x = vlaklijnen, y = dieptelijnen)
   H.redraw = redraw;
-  H.VERSION = '0.6.4'; // getoond onderaan (ui.js #attr); bij release ophogen
+  H.VERSION = '0.7.0'; // getoond onderaan (ui.js #attr); bij release ophogen
   // na de upload naar de GPU de kopie in het werkgeheugen weggooien (canvas → 1×1, DataTexture-data → null). Opnieuw tekenen = nieuw canvas/nieuwe textuur
   H.freeAfterUpload = tex => { tex.onUpdate = () => { tex.onUpdate = null; const im = tex.image; if (im && im.getContext) im.width = im.height = 1; else if (im && im.data) im.data = null; }; return tex; };
 
@@ -226,7 +226,23 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
   H.toWorld = toWorld; H.toRD = toRD;
 
   // ---------- Gebied + vakken laden ----------
-  H.area = a => { area = a; O = a.origin; H.areaInfo = a; if (renderer) start(); };
+  // gemeenten aan/uit (area.parts; opt = uitzetbaar, `only` = eigen vakken). Uit = die vakken niet laden, buitengrens = hoofdgemeente → net zo licht als alleen Heerlen
+  let gemOff = []; try { gemOff = JSON.parse(localStorage.getItem('h3d.gemOff') || '[]'); } catch {}
+  H.gemParts = () => (H.areaInfo?.allParts || []).filter(p => p.opt).map(p => p.name);
+  H.gemOn = name => !gemOff.includes(name);
+  H.setGem = (name, on) => { gemOff = gemOff.filter(n => n !== name).concat(on ? [] : [name]); try { localStorage.setItem('h3d.gemOff', JSON.stringify(gemOff)); } catch {} location.reload(); };
+  H.area = a => {
+    const parts = a.allParts = a.parts || [];
+    const offP = parts.filter(p => p.opt && (gemOff.includes(p.name) || QS.has('nogem'))); // ?nogem = testschakelaar (meten zonder extra gemeenten, niet bewaard)
+    if (offP.length) {
+      const drop = new Set(offP.flatMap(p => p.only || []));
+      a.chunks = a.chunks.filter(([i, j]) => !drop.has(i + '_' + j));
+      a.parts = parts.filter(p => !offP.includes(p));
+      if (a.parts.length === 1) a.outline = a.parts[0].ring; // (bij >2 gemeenten: buitengrens van de rest in build-data samenstellen)
+      a.off = true;
+    }
+    area = a; O = a.origin; H.areaInfo = a; if (renderer) start();
+  };
   function start() {
     // ondergrond rondom (buiten de gemeente) zodat de wereld niet in het niets eindigt
     ground = new THREE.Mesh(new THREE.PlaneGeometry(80000, 80000).rotateX(-Math.PI / 2), terrMat(new THREE.MeshLambertMaterial({ color: STYLES[style].bg })));
@@ -296,10 +312,24 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
   }
   function allLoaded() {
     // gemeentegrens als lijntje over het terrein
-    const pts = area.outline.map(([x, y]) => toWorld(x, y, heightAt(x, y) + 1.5));
-    const line = outline = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineDashedMaterial({ color: '#7b3f8c', dashSize: 18, gapSize: 12, transparent: true, opacity: 0.8 }));
-    line.computeLineDistances();
-    scene.add(line);
+    // buitengrens gestreept; grens tussen de gemeenten (stukken van een gemeentering die niet op de buitengrens liggen) fijner
+    const P = r => r.map(([x, y]) => toWorld(x, y, heightAt(x, y) + 1.5));
+    outline = new THREE.Group();
+    const add = (pts, loop, mat) => { if (pts.length < 2) return; const l = new (loop ? THREE.LineLoop : THREE.Line)(new THREE.BufferGeometry().setFromPoints(pts), mat); l.computeLineDistances(); outline.add(l); };
+    add(P(area.outline), true, new THREE.LineDashedMaterial({ color: '#7b3f8c', dashSize: 18, gapSize: 12, transparent: true, opacity: 0.8 }));
+    if ((area.parts || []).length > 1) {
+      const onOut = new Set(area.outline.map(p => p[0] + ',' + p[1])), inner = new THREE.LineDashedMaterial({ color: '#7b3f8c', dashSize: 8, gapSize: 10, transparent: true, opacity: 0.55 });
+      for (const p of area.parts.slice(1)) { // gedeelde grens één keer (van de 2e, 3e … gemeente)
+        const r = p.ring, n = r.length; let run = [];
+        for (let k = 0; k <= n; k++) {
+          const q = r[k % n], out = onOut.has(q[0] + ',' + q[1]);
+          if (!out) { if (!run.length && k) run.push(r[k - 1]); run.push(q); }
+          else if (run.length) { run.push(q); add(P(run), false, inner); run = []; }
+        }
+        if (run.length) add(P(run), false, inner);
+      }
+    }
+    scene.add(outline);
     allIn = true; buildLayers();
     emit('loaded');
     redraw();
@@ -536,7 +566,8 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
   const shadowExt = () => camera === ortho ? Math.max(350, Math.min(3000, Math.max(isoHalf() * ortho.right / ISO_H0, isoHalf() * 2.2) * 1.1))
     : Math.max(350, Math.min(2600, viewDist() * 1.1));
   // schaduwkader schuift vooruit in de laatste schuifrichting (zelfde kosten, schaduw ligt al klaar waar je heen gaat); render-lus zet shC
-  const shC = new THREE.Vector3(), shLast = new THREE.Vector3(), shDir = new THREE.Vector3(), SH_AHEAD = 0.25; // meer = achterkant van het beeld valt buiten het kader let shKeep = false;
+  const shC = new THREE.Vector3(), shLast = new THREE.Vector3(), shDir = new THREE.Vector3(), SH_AHEAD = 0.25; // meer = achterkant van het beeld valt buiten het kader
+  let shKeep = false;
   H.lens = lens;
   function wantLevel(c) {
     if (camera === ortho) { // iso: overal dezelfde schaal → tegelniveau uit meters per schermpixel (incl. pixeldichtheid), niet uit afstand
@@ -1310,6 +1341,24 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
   H.countEra = (y0, y1) => { let n = 0; for (const c of H.chunks.values()) { if (!c.year) continue; for (let b = 0; b < c.year.length; b++) { const y = c.year[b]; if (y >= y0 && y <= y1) n++; } } return n; };
   H.setEra = (y0, y1, col = '#d9822b') => { era = y0 ? { y0, y1, col } : null; if (era) GU.uEra.value.set(y0, y1, GU.uEra.value.z); eraGoal = era ? 1 : 0; shadowDirty = true; redraw(); rebuildHighlights(); return era ? H.countEra(y0, y1) : 0; };
   H.getEra = () => era;
+  // bekende gebouwen (plek-sleutel 'l…'): niet meer goud verven. design/18_bekende-gebouwen.html — ?lm= of h3d.lm:
+  // 0 = goud (oud) · w1/w2/w3 = wimpel (DOM, ui.js/style.css; pand ongemoeid) · r = inktrand · g = zachte gloed · u = uitgelicht (lichter pand)
+  const LM_STYLES = ['0', 'w1', 'w2', 'w3', 'r', 'g', 'u'];
+  let lmStyle = 'w1'; try { const q = new URLSearchParams(location.search).get('lm'), st = localStorage.getItem('h3d.lm'); lmStyle = LM_STYLES.includes(q) ? q : LM_STYLES.includes(st) ? st : lmStyle; } catch {}
+  H.lmStyle = () => lmStyle;
+  H.setLmStyle = (v, keep) => { if (!LM_STYLES.includes(v)) return; lmStyle = v; if (!keep) try { localStorage.setItem('h3d.lm', v); } catch {} document.body.dataset.lm = v; rebuildHighlights(); emit('lmstyle', v); };
+  const HULL = { r: { col: '#2a2420', grow: 1.4, op: 1 }, g: { col: '#fff4d6', grow: 3.5, op: 0.42 } };
+  const hullMat = {};
+  function hullMesh(pos, st) { // omhulsel: binnenkant (BackSide) van een rond het midden opgeblazen kopie → dikke rand/gloed om het silhouet
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (let k = 0; k < pos.length; k += 3) { x0 = Math.min(x0, pos[k]); x1 = Math.max(x1, pos[k]); y0 = Math.min(y0, pos[k + 1]); y1 = Math.max(y1, pos[k + 1]); z0 = Math.min(z0, pos[k + 2]); z1 = Math.max(z1, pos[k + 2]); }
+    const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, sx = 1 + 2 * st.grow / Math.max(4, x1 - x0), sz = 1 + 2 * st.grow / Math.max(4, z1 - z0), sy = 1 + st.grow / Math.max(4, y1 - y0);
+    const a = new Float32Array(pos.length);
+    for (let k = 0; k < pos.length; k += 3) { a[k] = cx + (pos[k] - cx) * sx; a[k + 1] = y0 + (pos[k + 1] - y0) * sy; a[k + 2] = cz + (pos[k + 2] - cz) * sz; }
+    const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.BufferAttribute(a, 3)); geo.computeBoundingSphere();
+    const m = hullMat[st.col] ||= new THREE.MeshBasicMaterial({ color: st.col, side: THREE.BackSide, transparent: st.op < 1, opacity: st.op, depthWrite: st.op >= 1, fog: false });
+    const me = new THREE.Mesh(geo, m); me.renderOrder = st.op < 1 ? 3 : 0; return me;
+  }
   let hlT = 0;
   function rebuildHighlights() { // gebundeld: hooguit één keer per beeld
     if (hlT) return;
@@ -1328,6 +1377,11 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
       for (const keys of byBuilding.values()) {
         const m = marks.get(keys[0]);
         if (era) { const y = m.best.c.year?.[m.best.b]; if (!(y >= era.y0 && y <= era.y1)) continue; } // bouwjaar-filter: plek-kopie krimpt mee (= weg)
+        if (keys[0][0] === 'l' && lmStyle !== '0') { // bekend gebouw
+          if (lmStyle[0] === 'w') continue; // wimpel: alleen DOM
+          if (HULL[lmStyle]) { const t = { roof: [], wall: [], base: [] }; copyFaces(m.best.c, m.best.b, t); const me = hullMesh(t.roof.concat(t.wall), HULL[lmStyle]); scene.add(me); hlMeshes.push(me); continue; }
+          let a = groups.get('#fbf2df'); if (!a) groups.set('#fbf2df', a = { roof: [], wall: [], base: [], full: true }); copyFaces(m.best.c, m.best.b, a); continue; // u: uitgelicht
+        }
         let a = groups.get(m.color); if (!a) groups.set(m.color, a = { roof: [], wall: [], base: [] });
         copyFaces(m.best.c, m.best.b, a);
       }
@@ -1348,7 +1402,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
         const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(a[part], 3));
         if (part === 'wall') geo.setAttribute('aBase', new THREE.Float32BufferAttribute(a.base, 1));
         geo.computeBoundingSphere();
-        const me = new THREE.Mesh(geo, part === 'roof' || a.era ? matFor(col) : matWall(col)); me.receiveShadow = true;
+        const me = new THREE.Mesh(geo, part === 'roof' || a.era || a.full ? matFor(col) : matWall(col)); me.receiveShadow = true;
         scene.add(me); hlMeshes.push(me);
       }
       if (selKey && !selMesh) H.selectMark(selKey); // vak van de gekozen plek kwam later binnen
@@ -2220,6 +2274,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
   H.places = [];
   H.pois = d => {
     H.places = d.rows.map((r, k) => { const o = { k }; d.fields.forEach((f, i) => { o[f] = r[i]; }); return o; });
+    if (area?.off) { const have = new Set(area.chunks.map(([i, j]) => i + '_' + j)); H.places = H.places.filter(p => have.has(Math.floor(p.x / area.km) + '_' + Math.floor(p.y / area.km))); } // uitgezette gemeente: geen plekken zonder terrein
     emit('pois', H.places);
   };
 

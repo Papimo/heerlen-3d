@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Parkstad 3D · bekende gebouwen</title>
+<style>
+  :root { --paper: #fbf8f2; --paper2: #f1ece2; --ink: #2b2620; --ink2: #6f665b; --line: #e2d9ca; --accent: #c2410c; --serif: Georgia, 'Times New Roman', serif; --sans: system-ui, sans-serif; }
+  @media (prefers-color-scheme: dark) { :root { --paper: #24211d; --paper2: #2e2a25; --ink: #f1ebe1; --ink2: #b3a898; --line: #3d3832; --accent: #fb923c; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper2); color: var(--ink); font: 14px/1.45 var(--sans); }
+  main { max-width: 1320px; margin: 0 auto; padding: 24px 16px 110px; }
+  h1 { font: 600 28px/1.2 var(--serif); margin: 0 0 4px; }
+  h2 { font: 600 22px var(--serif); margin: 30px 0 4px; }
+  .lead, .sub { color: var(--ink2); max-width: 880px; margin: 0 0 14px; }
+  .view { position: sticky; top: 0; z-index: 3; background: var(--paper2); padding: 8px 0 10px; }
+  .frame { position: relative; border-radius: 14px; overflow: hidden; border: 1px solid var(--line); background: #cfc6b6; aspect-ratio: 16 / 9; max-height: 62vh; width: 100%; }
+  .frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  .frame .lab { position: absolute; top: 10px; left: 10px; font: 600 12px var(--sans); background: #000a; color: #fff; padding: 3px 10px; border-radius: 999px; pointer-events: none; }
+  .tools { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0 0; align-items: center; }
+  .tools button { border: 1px solid var(--line); background: var(--paper); color: var(--ink); border-radius: 999px; padding: 5px 12px; cursor: pointer; font-weight: 600; }
+  .tools button.on { background: var(--ink); color: var(--paper); }
+  .tools i { width: 1px; height: 22px; background: var(--line); margin: 0 6px; }
+  .tools span { color: var(--ink2); margin-left: 4px; font-size: 13px; }
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .opt { background: var(--paper); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; cursor: pointer; }
+  .opt.showing { box-shadow: 0 0 0 2px var(--ink); }
+  .opt.picked { outline: 3px solid var(--accent); }
+  .pv { height: 92px; background: linear-gradient(#e9e2d3, #d9cfbb); position: relative; overflow: hidden; }
+  .pv svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .body { padding: 11px 12px 12px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
+  .body h3 { margin: 0; font: 600 16px var(--serif); }
+  .body h3 small { font: 600 12px var(--sans); color: var(--ink2); margin-right: 6px; }
+  .body p { margin: 0; color: var(--ink2); font-size: 13px; }
+  .body ul { margin: 0; padding-left: 18px; font-size: 12.5px; }
+  .tags { display: flex; gap: 5px; flex-wrap: wrap; }
+  .tags span { font-size: 11px; border-radius: 999px; padding: 1px 8px; background: var(--paper2); border: 1px solid var(--line); color: var(--ink2); }
+  .tags span.warn { color: #a5552a; border-color: #e3b58f; }
+  .kies { margin-top: auto; border: 1px solid var(--line); background: var(--paper2); color: var(--ink); border-radius: 8px; padding: 7px 12px; cursor: pointer; font-weight: 600; }
+  .kies.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  #pick { position: fixed; left: 0; right: 0; bottom: 0; background: var(--paper); border-top: 1px solid var(--line); padding: 10px 16px; display: flex; gap: 12px; align-items: center; z-index: 5; }
+  #pick code { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #pick button { border: 0; background: var(--accent); color: #fff; border-radius: 8px; padding: 8px 16px; font-weight: 600; cursor: pointer; }
+  @media (max-width: 1100px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 560px) { .grid { grid-template-columns: 1fr; } .view { position: static; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Bekende gebouwen aangeven</h1>
+  <p class="lead">Het goud verven van een bekend gebouw (en de messing ruit) valt weg. Twee richtingen: <b>1 · een wimpel op het dak</b> of <b>3 · het pand zelf markeren</b>, elk in een paar varianten. Hieronder draait de echte app (zelfde data, licht en kaartstijl). Klik een kaart om hem live te zien en een gebouw om erheen te vliegen. Proberen hier verandert je instelling in de app niet.</p>
+
+  <div class="view">
+    <div class="frame"><iframe id="app" src="../index.html?lm=0" title="Parkstad 3D"></iframe><span class="lab" id="lab">0 · Huidig</span></div>
+    <div class="tools" id="lms">
+      <button data-go="pancratius">Pancratiuskerk</button><button data-go="glaspaleis">Glaspaleis</button><button data-go="hoensbroek">Kasteel Hoensbroek</button><button data-go="theater">Theater</button>
+      <i></i><button data-go="laurentius">Laurentiuskerk</button><button data-go="puth">Kasteel Puth</button><button data-go="haeren">Kasteel Haeren</button><button data-go="cortenbach">Kasteel Cortenbach</button>
+      <i></i><button id="ab" title="Ingedrukt houden = huidig zien">◐ Huidig ↔ deze (ingedrukt houden)</button>
+      <span>Tip: in de app Sfeer › Nacht en iso/3D proberen; ook ver uitzoomen.</span>
+    </div>
+  </div>
+
+  <h2>1 · Bekende gebouwen</h2>
+  <p class="sub">Kosten: wimpels zijn HTML zoals de pins (bijna gratis). Rand/gloed/uitgelicht = één extra mesh per gebouw (12 stuks, verwaarloosbaar).</p>
+  <div class="grid" id="grid"></div>
+</main>
+<div id="pick"><code id="picktxt">Nog niets gekozen</code><button id="copy">Kopieer</button></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const svg = s => `<svg viewBox="0 0 200 92" preserveAspectRatio="xMidYMid slice">${s}</svg>`;
+// kleine schets van het idee (de echte look zie je in het venster erboven)
+const house = (fill = '#efe2c8', roof = '#c3654c', extra = '') => `${extra}<path d="M70 82 V46 L100 24 L130 46 V82 Z" fill="${fill}" stroke="#8d7c66" stroke-width="1"/><path d="M66 48 L100 21 L134 48" fill="none" stroke="${roof}" stroke-width="7" stroke-linejoin="round"/><rect x="92" y="60" width="16" height="22" fill="#9f8b72"/>`;
+const flag = (c, swallow) => `<line x1="100" y1="20" x2="100" y2="-4" stroke="#2a2420" stroke-width="2"/>` + (swallow ? `<path d="M101 -4 h14 v18 l-7 -5 l-7 5 z" fill="${c}"/>` : `<path d="M101 -4 L121 2 L101 8 Z" fill="${c}"/>`);
+const name = (t, y = 14, c = '#2a2420') => `<g font-family="system-ui" font-weight="700" font-size="10" style="font-variant:small-caps"><rect x="${130}" y="${y - 9}" width="74" height="13" rx="4" fill="#fff" opacity=".92"/><rect x="130" y="${y - 9}" width="3" height="13" fill="${c}"/><text x="137" y="${y}" fill="#1d1a16">${t}</text></g>`;
+const OPTS = [
+  ['0', 'Huidig', 'Pand goud geverfd + messing ruit.', ['valt op', 'botst met kaartkleuren en "geel" van wegen'], [['huidig']],
+    svg(house('#d9b440', '#b8901d') + `<rect x="95" y="6" width="10" height="10" transform="rotate(45 100 11)" fill="#c9a227" stroke="#fff" stroke-width="2"/>` + name('Kerk', 40, '#c9a227'))],
+  ['w1', '1a · Wimpel inkt', 'Klein donker vlaggetje op het dak dat zacht wappert, naam in kleinkapitalen.', ['pand houdt eigen kleur', 'rustig, past bij inktlijnen', 'ook ver weg leesbaar (naam blijft tot 4 km)'], [['DOM, gratis'], ['wappert', 'warn']],
+    svg(house() + flag('#2a2420') + name('Kerk'))],
+  ['w2', '1b · Wimpel paars', 'Zelfde wimpel in de kleur van de gemeentegrens.', ['één accentkleur voor "bijzonder"', 'onderscheidt zich van de pins'], [['DOM, gratis'], ['paars ook op grens', 'warn']],
+    svg(house() + flag('#7b3f8c') + name('Kerk', 14, '#7b3f8c'))],
+  ['w3', '1c · Banier', 'Stil hangend vaandel met zwaluwstaart, donkerrood.', ['statiger, "kasteel"-gevoel', 'beweegt niet (rustig, zuinig)'], [['DOM, gratis']],
+    svg(house() + flag('#8e2f2b', 1) + name('Kerk', 14, '#8e2f2b'))],
+  ['r', '3a · Inktrand', 'Dikke donkere rand om het silhouet van het pand; kleine naam.', ['markering zit in de kaart zelf', 'past bij de iso-tekenstijl'], [['+1 mesh/gebouw'], ['rand dunt uit bij grillige vormen', 'warn']],
+    svg(house('#efe2c8', '#c3654c', `<path d="M66 85 V44 L100 17 L134 44 V85 Z" fill="#2a2420"/>`) + name('Kerk', 40))],
+  ['g', '3b · Zachte gloed', 'Lichte warme waas om het pand, alsof het uitgelicht wordt.', ['sfeervol, mooi bij nacht', 'subtiel overdag'], [['+1 mesh/gebouw'], ['overdag minder zichtbaar', 'warn']],
+    svg(`<defs><filter id="bl"><feGaussianBlur stdDeviation="5"/></filter></defs><path d="M62 88 V42 L100 12 L138 42 V88 Z" fill="#fff4d6" opacity=".9" filter="url(#bl)"/>` + house() + name('Kerk', 40, '#d9b36a'))],
+  ['u', '3c · Uitgelicht', 'Het pand wordt licht papierwit tussen de gekleurde buren.', ['heel rustig, "maquette"-gevoel', 'geen extra kleur in beeld'], [['+1 mesh/gebouw'], ['op lichte kaart minder contrast', 'warn']],
+    svg(house('#fbf4e4', '#efe6d3') + name('Kerk', 40))],
+];
+let show = '0', picked = null;
+const post = m => $('app').contentWindow?.postMessage(m, '*');
+function setShow(id) {
+  show = id; post({ h3d: 'lm', v: id });
+  const o = OPTS.find(o => o[0] === id); $('lab').textContent = id === '0' ? '0 · Huidig' : o[1];
+  document.querySelectorAll('.opt').forEach(e => e.classList.toggle('showing', e.dataset.id === id));
+}
+$('grid').innerHTML = OPTS.map(([id, t, p, pts, tags, pv]) => `<div class="opt" data-id="${id}"><div class="pv">${pv}</div><div class="body">
+  <h3><small>${id === '0' ? 'Optie 0' : ''}</small>${t}</h3><p>${p}</p><ul>${pts.map(x => `<li>${x}</li>`).join('')}</ul>
+  <div class="tags">${tags.map(([x, w]) => `<span class="${w || ''}">${x}</span>`).join('')}</div>
+  ${id === '0' ? '' : `<button class="kies" data-kies="${id}">Kies deze</button>`}</div></div>`).join('');
+$('grid').addEventListener('click', e => {
+  const k = e.target.closest('[data-kies]');
+  if (k) { picked = picked === k.dataset.kies ? null : k.dataset.kies; document.querySelectorAll('[data-kies]').forEach(b => b.classList.toggle('on', b.dataset.kies === picked)); document.querySelectorAll('.opt').forEach(o => o.classList.toggle('picked', o.dataset.id === picked)); upd(); }
+  const o = e.target.closest('.opt'); if (o) setShow(o.dataset.id);
+});
+function upd() { const o = OPTS.find(o => o[0] === picked); $('picktxt').textContent = o ? `Bekende gebouwen: ${o[1]} (lm=${o[0]})` : 'Nog niets gekozen'; }
+$('copy').onclick = () => { navigator.clipboard?.writeText($('picktxt').textContent); $('copy').textContent = 'Gekopieerd'; setTimeout(() => $('copy').textContent = 'Kopieer', 1200); };
+$('lms').addEventListener('click', e => { const b = e.target.closest('[data-go]'); if (b) post({ h3d: 'goto', id: b.dataset.go }); });
+const ab = $('ab'); let keep = null;
+ab.addEventListener('pointerdown', () => { keep = show; post({ h3d: 'lm', v: '0' }); $('lab').textContent = '0 · Huidig'; ab.classList.add('on'); });
+const up = () => { if (keep == null) return; setShow(keep); keep = null; ab.classList.remove('on'); };
+ab.addEventListener('pointerup', up); ab.addEventListener('pointerleave', up);
+$('app').addEventListener('load', () => setTimeout(() => setShow(show), 300));
+setShow('0');
+</script>
+</body>
+</html>

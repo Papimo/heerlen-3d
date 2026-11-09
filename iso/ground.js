@@ -559,10 +559,18 @@
 
   // ---------- opbouw in stukjes (±12 ms per tik) ----------
   // eerst in een worker (zelfde tekencode via toString, three.js via importScripts); lukt dat niet (file://, fout, >90 s) → hoofddraad in stukjes
+  function clipGD() { // houdt een item als het eerste punt (delta-gecodeerd, halve m t.o.v. origin) in een geladen vak ligt
+    const A = H.areaInfo, km = A.km, O = A.origin, q = GD.q, have = new Set(A.chunks.map(([i, j]) => i + '_' + j));
+    const inD = d => { if (!d?.length) return true; const x = O[0] + d[0] * q, y = O[1] + d[1] * q; return have.has(Math.floor(x / km) + '_' + Math.floor(y / km)); };
+    for (const k of ['land', 'bgt', 'area', 'pitch']) if (GD[k]) GD[k] = GD[k].filter(r => inD(r[1]?.[0]));
+    if (GD.line) GD.line = GD.line.filter(r => inD(r[3]));
+    if (GD.cross) GD.cross = GD.cross.filter(r => inD(r[2]));
+  }
   function startBuild() {
     if (G.gen || G.ready) return;
     const t0 = performance.now();
     X0 = H.areaInfo.origin[0]; Y0 = H.areaInfo.origin[1];
+    if (H.areaInfo.off) clipGD(); // gemeente uitgezet: vlakken/lijnen buiten de geladen vakken niet tekenen (geheugen)
     G.gen = 'worker';
     buildInWorker().then(o => {
       GD.land = GD.bgt = GD.area = GD.pitch = GD.line = GD.cross = []; // ruwe data niet meer nodig (park/grave blijven voor iso/props.js)
