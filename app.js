@@ -143,9 +143,16 @@ vec3 growB(vec3 p) {
       controls.enableDamping = act === THREE.MOUSE.ROTATE || act === THREE.TOUCH.ROTATE;
     });
     const release = e => { if (dragOn) cdom.dispatchEvent(new PointerEvent('pointerup', { pointerId: e.pointerId ?? dragId, pointerType: e.pointerType || 'mouse', clientX: e.clientX, clientY: e.clientY })); };
-    cdom.addEventListener('pointermove', e => { if (e.pointerType === 'mouse' && !e.buttons) release(e); });
+    // buiten het venster loslaten: browser (Linux) mist de pointerup en denkt zelf ook dat de knop nog vast is (e.buttons blijft 1)
+    // → slepen stopt zodra de muis het venster verlaat (zoals een kaart in de browser die je over de rand sleept)
+    const outside = e => e.clientX < 0 || e.clientY < 0 || e.clientX >= innerWidth || e.clientY >= innerHeight;
+    cdom.addEventListener('pointermove', e => { if (e.pointerType === 'mouse' && (!e.buttons || outside(e))) release(e); });
+    document.addEventListener('mouseout', e => { if (!e.relatedTarget) release({ clientX: e.clientX, clientY: e.clientY }); });
+    document.documentElement.addEventListener('pointerleave', e => release(e));
+    cdom.addEventListener('lostpointercapture', e => release(e));
     addEventListener('pointerup', e => { if (e.target !== cdom) release(e); });
     addEventListener('blur', () => release({}));
+    document.addEventListener('visibilitychange', () => release({}));
     controls.addEventListener('start', () => { dragOn = true; controls.autoRotate = false; clearTimeout(idleT); emit('interact'); });
     controls.addEventListener('end', () => { dragOn = false; });
     controls.addEventListener('end', () => {

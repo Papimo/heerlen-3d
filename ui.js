@@ -16,13 +16,14 @@
     boodschappen: { label: 'Boodschappen', icon: '🛒', color: '#5f6b3a', words: ['boodschappen', 'supermarkt', 'bakker', 'slager', 'groente'] },
     winkels: { label: 'Winkels', icon: '🛍', color: '#4a5f72', words: ['winkel', 'winkels', 'shop', 'shoppen', 'winkelen'] },
     cultuur: { label: 'Cultuur', icon: '🎭', color: '#7a4e5e', words: ['cultuur', 'museum', 'kunst', 'theater', 'bioscoop', 'bibliotheek', 'bezienswaardigheid'] },
+    studeren: { label: 'Studeren', icon: '🎓', color: '#2f5f6b', words: ['studeren', 'universiteit', 'universiteiten', 'hogeschool', 'onderwijs', 'campus', 'open universiteit', 'zuyd'] },
     overnachten: { label: 'Overnachten', icon: '🛏', color: '#b5713a', words: ['hotel', 'overnachten', 'slapen', 'b&b', 'pension'] },
     mijn: { label: 'Mijn pins', icon: '📍', color: '#d2582a', words: ['mijn', 'pins', 'favoriet', 'favorieten', 'bewaard'] },
     lm: { label: 'Bekende gebouwen', icon: '◆', color: '#c9a227', dark: true, hidden: true, words: ['bekend', 'bekende gebouwen', 'monument', 'monumenten'] }, // laag "gebouwen", geen knop
   };
   const SHUT = '#a19d97'; // dicht (filter "nu open")
   const SUB = {
-    cafe: 'Café / koffie', coffee: 'Koffiebranderij', tea: 'Thee', restaurant: 'Restaurant', fast_food: 'Snackbar / fastfood', ice_cream: 'IJssalon', food_court: 'Foodcourt',
+    university: 'Universiteit', college: 'Hogeschool / mbo', cafe: 'Café / koffie', coffee: 'Koffiebranderij', tea: 'Thee', restaurant: 'Restaurant', fast_food: 'Snackbar / fastfood', ice_cream: 'IJssalon', food_court: 'Foodcourt',
     bar: 'Bar', pub: 'Kroeg', biergarten: 'Biertuin', nightclub: 'Club', supermarket: 'Supermarkt', bakery: 'Bakker', butcher: 'Slager', greengrocer: 'Groenteboer',
     convenience: 'Buurtwinkel', deli: 'Delicatessen', cheese: 'Kaas', pastry: 'Banketbakker', confectionery: 'Snoep', chocolate: 'Chocolade', seafood: 'Vis', beverages: 'Dranken',
     wine: 'Wijn', alcohol: 'Slijterij', organic: 'Biologisch', farm: 'Boerderijwinkel', clothes: 'Kleding', shoes: 'Schoenen', hairdresser: 'Kapper', beauty: 'Schoonheidssalon',
