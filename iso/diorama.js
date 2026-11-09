@@ -238,7 +238,7 @@
   H.on('layers', () => { if (active) scan(); });
   H.on('frame', () => {
     if (!ensure()) return;
-    const want = U.uIso.value > 0.5;
+    const want = U.uIso.value > 0.5 && H.fxOn('diorama');
     if (want !== active) setActive(want);
     else if (active && performance.now() > nextScan && !H.moving?.()) scan(); // hele scène doorlopen: niet tijdens bewegen
   });

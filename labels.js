@@ -1,7 +1,7 @@
 // Heerlen 3D — namen op de kaart (DOM, zoals de pins): wijken/buurten ver weg, straatnamen dichtbij gedraaid langs de straat, stations.
 // Data uit data/layers.js (H3D.layerData). Overlappende labels weglaten; dezelfde straatnaam hooguit één keer in beeld.
 (() => {
-  const POOL = 70, CELL = 250;
+  const POOL = 70, CELL = 250, FLOAT = 40, PF = 20, TILT = 0.45; // wijknamen liggen plat ±40 m boven de grond; PF = basis-lettergrootte (px) waarop de matrix schaalt
   let streets = null, places = [], stations = [];
   const grid = new Map(); // cel → straatankers
   const MAJOR = new Set(['primary', 'secondary', 'tertiary']);
@@ -27,7 +27,7 @@
         (grid.get(ck) || grid.set(ck, []).get(ck)).push(it);
       }
     }
-    places = d.places.filter(p => PLACE[p[1]]).map(([name, kind, x, y]) => ({ name, kind, x, y, size: PLACE[kind][0], max: PLACE[kind][1], w: 12 + name.length * PLACE[kind][0] * 0.62, h: null }));
+    places = d.places.filter(p => PLACE[p[1]]).map(([name, kind, x, y]) => ({ name, kind, x, y, size: PLACE[kind][0], max: PLACE[kind][1], w: 12 + name.length * PLACE[kind][0] * 0.8, h: null }));
     stations = d.stations.map(([name, x, y]) => ({ name: 'Station ' + name, x, y, w: 30 + name.length * 7, h: null }));
   }
 
@@ -39,7 +39,7 @@
     if (!e) { e = document.createElement('span'); box.appendChild(e); els.push(e); }
     used++;
     if (e._t !== text) { e.textContent = text; e._t = text; }
-    if (e.className !== cls) e.className = cls;
+    if (e.className !== cls) { e.className = cls; e.style.fontSize = ''; } // hergebruikt element: lettergrootte van een wijknaam niet meenemen naar een straatnaam
     e.style.display = '';
     return e;
   }
@@ -54,6 +54,14 @@
     if (v.z > 1 || Math.abs(v.x) > 1.05 || Math.abs(v.y) > 1.05) return null;
     return [(v.x + 1) / 2 * W, (1 - v.y) / 2 * Hh, d];
   }
+  const R = new THREE.Vector3(), F = new THREE.Vector3(), P = new THREE.Vector3();
+  function flat(it, cam, W, Hh, s) { // → [a, b, c, d]: schermpixels per meter langs camera-rechts (a,b) en naar-de-camera (c,d) over de grond
+    R.setFromMatrixColumn(cam.matrixWorld, 0); R.y = 0; R.normalize();
+    F.setFromMatrixColumn(cam.matrixWorld, 2); F.y = 0; F.normalize(); // +z camera = naar achteren = naar de kijker toe
+    const base = H3D.toWorld(it.x, it.y, it.h + FLOAT), L = 20, out = [];
+    for (const D of [R, F]) { P.copy(base).addScaledVector(D, L).project(cam); out.push(((P.x + 1) / 2 * W - s[0]) / L, ((1 - P.y) / 2 * Hh - s[1]) / L); }
+    return out;
+  }
   const boxes = [];
   const free = b => !boxes.some(q => b[0] < q[2] && b[2] > q[0] && b[1] < q[3] && b[3] > q[1]);
 
@@ -66,22 +74,30 @@
       if (H3D.layerOn('wijken')) {
         const list = [];
         for (const it of [...places, ...stations]) {
-          const s = screen(it, 15, cam, W, Hh); if (!s) continue;
           const st = !it.kind;
-          if (st ? s[2] > 7000 : s[2] > it.max || s[2] < (it.size >= 15 ? 700 : 500)) continue;
+          const s = screen(it, st ? 15 : FLOAT, cam, W, Hh); if (!s) continue;
+          if (st ? s[2] > 7000 : s[2] > it.max || s[2] < (it.size >= 15 ? 450 : 350)) continue;
+          if (!st) { // plat liggend: tekst-x = camera-rechts over de grond, tekst-y = naar de camera toe → CSS-matrix uit geprojecteerde grondvectoren
+            const m = flat(it, cam, W, Hh, s), want = Math.max(12, Math.min(it.size * 3.4, it.size * 2.2 * 2500 / s[2])); // lettergrootte (px): groter dichtbij, geklemd
+            const k = want / PF / (Math.hypot(m[0], m[1]) || 1); // matrix zo schalen dat de breedte-as precies die grootte geeft; plat blijft plat
+            const n = Math.hypot(m[0], m[1]); // half liggend: hoogte-as mengen tussen plat (op de grond) en rechtop (TILT 0 = rechtop, 1 = plat)
+            it.m = [m[0] * k, m[1] * k, m[2] * TILT * k, (m[3] * TILT + n * (1 - TILT)) * k];
+          }
           list.push([it, s, st ? 0 : -it.size]);
         }
         list.sort((a, b) => a[2] - b[2] || a[1][2] - b[1][2]);
         for (const [it, [sx, sy], st] of list) {
-          const hh = it.size ? it.size + 4 : 18, b = [sx - it.w / 2, sy - hh / 2, sx + it.w / 2, sy + hh / 2];
+          let hw = it.w / 2, hh = 9;
+          if (it.size) { const [a, b2, c, d] = it.m, tw = it.w * PF / it.size / 2, th = PF / 2 + 2; hw = Math.abs(a) * tw + Math.abs(c) * th; hh = Math.abs(b2) * tw + Math.abs(d) * th; }
+          const b = [sx - hw, sy - hh, sx + hw, sy + hh];
           if (!free(b)) continue;
           boxes.push(b);
           const e = el(st === 0 ? 'lb st' : 'lb pl', it.name);
-          if (it.size) e.style.fontSize = it.size + 'px';
-          e.style.transform = `translate(${sx.toFixed(1)}px,${sy.toFixed(1)}px) translate(-50%,-50%)`;
+          if (it.size) { e.style.fontSize = PF + 'px'; e.style.transform = `translate(${sx.toFixed(1)}px,${sy.toFixed(1)}px) matrix(${it.m.map(q => q.toFixed(4)).join(',')},0,0) translate(-50%,-50%)`; }
+          else e.style.transform = `translate(${sx.toFixed(1)}px,${sy.toFixed(1)}px) translate(-50%,-50%)`;
         }
       }
-      if (H3D.layerOn('straten') && camD < 1800) {
+      if (H3D.layerOn('straten') && H3D.U.uIso.value > 0.5 && camD < 1800) { // buiten iso staan de namen al in de kaarttegels (PDOK/CARTO)
         const [tx, ty] = H3D.target(), R = Math.min(1600, camD * 1.6), c0 = Math.floor((tx - R) / CELL), c1 = Math.floor((tx + R) / CELL), r0 = Math.floor((ty - R) / CELL), r1 = Math.floor((ty + R) / CELL);
         const list = [];
         for (let i = c0; i <= c1; i++) for (let j = r0; j <= r1; j++) for (const it of grid.get(i + '_' + j) || []) {

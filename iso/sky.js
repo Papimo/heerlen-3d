@@ -8,8 +8,7 @@
   const WIND = new THREE.Vector2(0.8, -0.6);                    // wolken + ballon drijven naar het zuidoosten (x oost, z zuid)
   const CLOUD = { scale: 380, cov: 0.45, soft: 0.12, dark: 0.42, speed: 9, sun: 0.12, height: 900 };
   const TILT = { amt: 0.6, w0: 0.22, w1: 0.5, sat: 1.04, vig: 0.22 };
-  const LS = 'h3d.tilt';
-  let tiltOn = true; try { tiltOn = localStorage.getItem(LS) !== '0'; } catch {}
+  let tiltOn = H.fxOn('randen'); // aan/uit via H.setFx('randen') (menu Sfeer, toets T)
 
   const VS = 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }';
   const camW = new THREE.Matrix4(), lrbt = new THREE.Vector4(), bal = new THREE.Vector4(0, -1e5, 0, 0);
@@ -62,19 +61,12 @@
     depthTest: false, depthWrite: false,
   });
   let tiltPost = null;
-  function setTilt(on) {
-    tiltOn = !!on; try { localStorage.setItem(LS, tiltOn ? '1' : '0'); } catch {}
-    if (tiltPost) tiltPost.enabled = tiltOn;
-    btn?.classList.toggle('on', tiltOn); if (btn) btn.title = 'Wazige rand ' + (tiltOn ? 'uit' : 'aan') + 'zetten (T)';
-  }
-  // knop naast ⟲⟳ (alleen zichtbaar in iso, zoals #isorot)
-  let btn = null;
-  function addButton() {
-    const g = document.getElementById('isorot'); if (!g || btn) return;
-    btn = document.createElement('button'); btn.textContent = '◎'; btn.dataset.sky = 'tilt';
-    btn.onclick = e => { e.stopPropagation(); setTilt(!tiltOn); };
-    g.appendChild(btn); setTilt(tiltOn);
-  }
+  let cloudPost = null;
+  const setTilt = on => H.setFx('randen', on);
+  H.on('fx', (k, on) => {
+    if (k === 'randen') { tiltOn = on; if (tiltPost) tiltPost.enabled = on; }
+    if (k === 'wolken' && cloudPost) cloudPost.enabled = on;
+  });
   addEventListener('keydown', e => { if ((e.key === 't' || e.key === 'T') && !/INPUT|TEXTAREA/.test(document.activeElement?.tagName || '')) setTilt(!tiltOn); });
 
   // ---------- hulp ----------
@@ -190,20 +182,16 @@
     };
   }
   // snelheid: wolken ±15/s, ballon/vogels ±20/s, beide alleen nabewerking ('post'; bewegende laag H.addDynamic); buiten iso niets
-  let lastPost = 0, lastFull = 0;
   function tick(now) {
-    const s = now / 1000, cam = isoCam(); let force = false; // begin/einde gebeurtenis → één volledige render
-    if (ev && (!cam || s > ev.t1)) { ev.e.obj.visible = false; if (ev.e === F.balloon) bal.w = 0; ev = null; nextAt = s + rnd(60, 150); force = true; }
-    if (!ev && cam && s > nextAt) {
+    const s = now / 1000, cam = isoCam(), fxL = H.fxOn('lucht'); let force = false; // begin/einde gebeurtenis → één volledige render
+    if (ev && (!cam || s > ev.t1 || !fxL)) { ev.e.obj.visible = false; if (ev.e === F.balloon) bal.w = 0; ev = null; nextAt = s + rnd(60, 150); force = true; }
+    if (!ev && cam && fxL && s > nextAt) {
       const ok = Object.values(F).filter(e => e.ok());
       if (ok.length) { const e = ok[Math.floor(Math.random() * ok.length)]; e.start(target()); e.obj.visible = true; ev = { e, t0: s, t1: s + e.dur }; force = true; }
       else nextAt = s + 10;
     }
-    if (!cam) return force || 'none';
-    const full = force || (ev && now - lastFull >= 50), post = now - lastPost >= 66;
-    if (!full && !post) return 'none';
-    if (ev && full) { lastFull = now; ev.e.step((s - ev.t0) / ev.e.dur, s, H.night()); }
-    lastPost = now;
+    if (!cam || (!ev && !H.fxOn('wolken'))) return force || 'none'; // niets dat beweegt
+    if (ev) ev.e.step((s - ev.t0) / ev.e.dur, s, H.night()); // tempo = gedeelde tik (H.animate)
     return 'post'; // ballon/vogels zitten op de bewegende laag → nabewerking volstaat
   }
   // wolken: camera → uniforms (ortho-grenzen zoals three ze met zoom berekent); vlak vóór de pass, dus ook bij pannen zonder tik
@@ -217,13 +205,15 @@
     }
   }
 
-  H.on('loaded', () => {
+  let started = false;
+  H.on('terrain', () => { // eerste vak (niet pas bij 'loaded': laden gebeurt alleen in beeld)
+    if (started) return; started = true;
     if (!o0) o0 = O();
-    H.addPost({ material: cloudM, order: 10, before: cloudCam });
+    cloudPost = H.addPost({ material: cloudM, order: 10, before: cloudCam, enabled: H.fxOn('wolken') });
     tiltPost = H.addPost({ material: tiltM, order: 20, enabled: tiltOn });
-    makeEvents(); addButton();
+    makeEvents();
     nextAt = performance.now() / 1000 + 12; // eerste keer snel, daarna af en toe
-    H.animate(tick); // wolken: alleen nabewerking opnieuw (scène-render hergebruikt), zie tick
+    H.animate(tick, 'lucht'); // wolken: alleen nabewerking opnieuw (scène-render hergebruikt), zie tick
   });
   H.sky = { setTilt, tilt: () => tiltOn, events: () => F, trigger: k => { if (!F?.[k] || (k === 'pigeons' && !F.pigeons.find(target()))) return; if (ev) { ev.e.obj.visible = false; bal.w = 0; } F[k].start(target()); F[k].obj.visible = true; const s = performance.now() / 1000; ev = { e: F[k], t0: s, t1: s + F[k].dur }; } };
 })();

@@ -13,37 +13,41 @@
 <header id="top">
   <div class="brand"><b>Heerlen</b><span>3D</span></div>
   <div id="search">
+    <button id="qopen" class="round" title="Zoeken ( / )" aria-label="Zoeken"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></svg></button>
     <input id="q" type="search" autocomplete="off" placeholder="Zoek koffie, restaurant, winkel, straat…  ( / )">
     <button id="qx" title="Wissen">×</button>
     <div id="results" hidden></div>
   </div>
 </header>
-<nav id="chips"></nav>
+<nav id="chips"><details id="g-plek" class="grp"><summary title="Categorieën tonen/verbergen">📍 Plekken <small></small> <i>▾</i></summary><div id="chipl"></div></details></nav>
 
 <div id="tools">
-  <div id="styles" class="seg"></div>
   <div class="seg">
-    <button data-mode="iso" title="Isometrisch, tekenfilm-look: draaien per kwartslag met Q / E">Iso</button>
-    <button data-view="thuis" title="Terug naar het centrum">Centrum</button>
+    <button id="openf" title="Dichte plekken grijs maken (volgens de openingstijden in OpenStreetMap)">Nu open</button>
+    <button id="dim" title="Andere gebouwen vager maken, zodat de plekken nog meer opvallen">Dimmen</button>
   </div>
-  <details id="oldmodes" class="seg"><summary title="Oude weergaven (worden niet meer bijgewerkt)">Oud</summary><div>
-    <button data-mode="plat" title="Recht van boven, bijna plat (als een kaart)">Plat</button>
-    <button data-mode="3d" title="Vrij bewegen: slepen = schuiven, rechts = draaien">3D</button>
-    <button data-mode="rond" title="Rustig rond een punt draaien">Rondkijken</button>
+  <details id="g-view" class="seg grp wide"><summary title="Kaartlagen, licht/sfeer en leven in de stad">🗺 Weergave <small></small> <i>▾</i></summary><div>
+    <section id="g-kaart"><h3>🗺 Kaart <small></small></h3><div id="layers"></div></section>
+    <section id="g-sfeer"><h3>✦ Sfeer <small></small></h3><div></div></section>
+    <section id="g-stad"><h3>🏙 Stad <small></small></h3><div></div></section>
   </div></details>
-  <div id="isorot" class="seg"><button data-rot="-1" title="Kwartslag linksom (Q)">⟲</button><button data-rot="1" title="Kwartslag rechtsom (E)">⟳</button></div>
-  <button id="openf" class="seg" title="Dichte plekken grijs maken (volgens de openingstijden in OpenStreetMap)">Nu open</button>
-  <details id="layers" class="seg"><summary title="Lagen aan/uit">Lagen</summary><div></div></details>
-  <button id="dim" class="seg" title="Andere gebouwen vager maken, zodat de plekken nog meer opvallen">Dimmen</button>
-  <button id="light" class="seg" title="Licht: dag, avond, of zoals het nu buiten is">☀ Dag</button>
   <button id="tour" class="seg" title="Rondleiding: vlieg een voor een langs je pins (of de plekken in beeld)">▶ Rondleiding</button>
-  <button id="compass" data-view="noord" title="Noord boven"><i id="needle"><b>N</b></i></button>
+  <button class="round" data-view="thuis" title="Terug naar het centrum">⌂</button>
+  <div id="compass">
+    <button data-rot="-1" title="Kwartslag linksom (Q)">⟲</button>
+    <button class="round" data-view="noord" title="Noord boven"><i id="needle"><b>N</b></i></button>
+    <button data-rot="1" title="Kwartslag rechtsom (E)">⟳</button>
+  </div>
+  <div id="zoom">
+    <button data-zoom="1" title="Uitzoomen (−)">−</button>
+    <button data-zoom="-1" title="Inzoomen (+)">+</button>
+  </div>
   <details id="menu">
     <summary title="Mijn pins">⋯</summary>
     <div>
       <button data-m="export">Mijn pins exporteren</button>
       <button data-m="import">Pins importeren…</button>
-      <p class="help"><b>Bediening</b><br>Slepen = schuiven · rechts slepen / twee vingers = draaien en kantelen · scrollen = zoomen · klik op een pand of plek voor info.<br>Iso: slepen = schuiven · scrollen = 4 zoomstanden · Q / E (of ⟲ ⟳) = kwartslag draaien.</p>
+      <p class="help"><b>Bediening</b><br>Slepen = schuiven · scrollen of − / + = zoomen · Q / E (of ⟲ ⟳) = kwartslag draaien · T = zachte randen · klik op een pand of plek voor info.</p>
     </div>
   </details>
   <input id="importfile" type="file" accept=".json,application/json" hidden>
@@ -73,5 +77,7 @@
 <script src="iso/props.js"></script>
 <script src="iso/traffic.js"></script>
 <script src="iso/models.js"></script>
+<script src="iso/bake.js"></script>
+<script src="iso/laden.js"></script>
 </body>
 </html>

@@ -22,7 +22,11 @@
       extra: 0.6, kerb: 26 / 32, berm: '#c9c4ba', asphalt: '#3d3f45', paint: '#fbfaf5',
       railW: 6, ballast: '#a49c90', sleeper: '#6e5a48', rail: '#4d4f55',
       round: ['#8a8c91', '#e2dfd8'], isle: '#8cc46c', ink: '#3a332e' },
+    // wegen-ontwerp (design/10_wegen.html): Wegen 1 Belijnd asfalt · Fietspaden 4 Zacht terracotta · Rotondes 4 Grafisch wit · Stoepen 2 Volgens OSM · Zebrapaden 3 Per soort
+    road: { asp: '#56595f', aspSoft: '#9a948b', walk: '#e2dcd1', walkEdge: '#9a9389', bike: '#d39a86', isle: '#f3eee4',
+      bikeX: '#b8574a', paint: '#fbfaf5' },
   };
+  const RANK = { hoofd: 4, weg: 3, straat: 2, erfweg: 1, voet: 0 }; // straatklassen (rest = paden/snelweg/spoor)
 
   // ---------- data → features per vak (absolute RD) ----------
   let KM = 1000, BY = null; // BY: 'i_j' → { land, area, pitch, line, wat }
@@ -35,18 +39,70 @@
     const put = (kind, f) => {
       const [x0, y0, x1, y1] = f.bb;
       for (let i = Math.floor((x0 - M) / KM); i <= Math.floor((x1 + M) / KM); i++) for (let j = Math.floor((y0 - M) / KM); j <= Math.floor((y1 + M) / KM); j++) {
-        const k = i + '_' + j; let b = BY.get(k); if (!b) BY.set(k, b = { land: [], area: [], pitch: [], line: [], wat: false });
+        const k = i + '_' + j; let b = BY.get(k); if (!b) BY.set(k, b = { land: [], area: [], pitch: [], line: [], cross: [], jn: [], isl: [], wat: false });
         b[kind].push(f); if (f.c === 'water' || f.c === 'zwembad' || f.c === 'beek') b.wat = true;
       }
     };
     GD.land.forEach(([c, rs], n) => { const r = rs.map(dec); put('land', { c, rs: r, bb: bbOf(r), n }); });
     GD.area.forEach(([c, rs]) => { const r = rs.map(dec); put('area', { c, rs: r, bb: bbOf(r) }); });
     GD.pitch.forEach(([c, rs, surf, box]) => { const r = rs.map(dec); put('pitch', { c, rs: r, bb: bbOf(r), surf, box }); });
-    GD.line.forEach(([c, w, br, d]) => { const a = dec(d); put('line', { c, w: w / 10, br, a, bb: bbOf([a]) }); });
+    const S = [];
+    GD.line.forEach(([c, w, br, d, fl = 0]) => { const a = dec(d), f = { c, w: w / 10, br, a, bb: bbOf([a]), sw: fl & 3, ring: !!(fl & 4) }; put('line', f); if (RANK[c] != null && !br) S.push(f); });
+    (GD.cross || []).forEach(([k, bike, d]) => { const a = dec(d); put('cross', { k, bike, a, bb: bbOf([a]) }); });
+    junctions(S).forEach(n => put('jn', n));
+    islands(S).forEach(I => put('isl', I));
     // ruwe data niet meer nodig
-    GD.land = GD.area = GD.pitch = GD.line = [];
+    GD.land = GD.area = GD.pitch = GD.line = GD.cross = [];
   }
-  const EMPTY = { land: [], area: [], pitch: [], line: [], wat: false };
+  // kruisingen: knooppunten met ≥ 3 armen (gedeelde punten + eindpunt midden op een ander lijnstuk). Per knoop: hoogste rang/breedte, rotonde?
+  function junctions(S) {
+    const key = (x, y) => Math.round(x * 2) + ',' + Math.round(y * 2), NODES = new Map();
+    const node = (x, y) => { const k = key(x, y); let n = NODES.get(k); if (!n) NODES.set(k, n = { x, y, arms: [] }); return n; };
+    const arm = (n, f, x1, y1) => { const dx = x1 - n.x, dy = y1 - n.y, L = Math.hypot(dx, dy) || 1; n.arms.push({ f, dx: dx / L, dy: dy / L }); };
+    const G = new Map(), gk = (x, y) => Math.floor(x / 20) + ',' + Math.floor(y / 20);
+    for (const f of S) {
+      const a = f.a, n = a.length / 2;
+      for (let k = 0; k < n; k++) { const nd = node(a[2 * k], a[2 * k + 1]); if (k > 0) arm(nd, f, a[2 * k - 2], a[2 * k - 1]); if (k < n - 1) arm(nd, f, a[2 * k + 2], a[2 * k + 3]); }
+      for (let k = 0; k < n - 1; k++) { const g = gk((a[2 * k] + a[2 * k + 2]) / 2, (a[2 * k + 1] + a[2 * k + 3]) / 2); if (!G.has(g)) G.set(g, []); G.get(g).push([f, k]); }
+    }
+    for (const f of S) for (const e of [0, f.a.length / 2 - 1]) {
+      const x = f.a[2 * e], y = f.a[2 * e + 1], nd = NODES.get(key(x, y)); if (nd.arms.length !== 1) continue;
+      const gx = Math.floor(x / 20), gy = Math.floor(y / 20);
+      found: for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) for (const [g, k] of G.get((gx + i) + ',' + (gy + j)) || []) {
+        if (g === f) continue;
+        const ax = g.a[2 * k], ay = g.a[2 * k + 1], bx = g.a[2 * k + 2], by = g.a[2 * k + 3], vx = bx - ax, vy = by - ay, L2 = vx * vx + vy * vy || 1;
+        const t = Math.max(0, Math.min(1, ((x - ax) * vx + (y - ay) * vy) / L2));
+        if (Math.hypot(ax + vx * t - x, ay + vy * t - y) < 0.8) { arm(nd, g, ax, ay); arm(nd, g, bx, by); break found; }
+      }
+    }
+    const out = [];
+    for (const n of NODES.values()) if (n.arms.length >= 3) {
+      n.maxR = Math.max(...n.arms.map(a => RANK[a.f.c])); n.maxW = Math.max(...n.arms.map(a => a.f.w + ST.rib.extra)); n.ring = n.arms.some(a => a.f.ring);
+      n.bb = [n.x, n.y, n.x, n.y]; out.push(n);
+    }
+    return out;
+  }
+  // rotondes: OSM-stukken met junction=roundabout aan elkaar rijgen → gesloten ring (straal ≥ 6 m) = eiland in de echte vorm
+  function islands(S) {
+    const k1 = (x, y) => Math.round(x) + ',' + Math.round(y), left = S.filter(f => f.ring), out = [];
+    while (left.length) {
+      let ch = Array.from(left.shift().a), grown = true;
+      while (grown && !(ch.length > 6 && k1(ch[0], ch[1]) === k1(ch.at(-2), ch.at(-1)))) {
+        grown = false;
+        const i = left.findIndex(p => k1(p.a[0], p.a[1]) === k1(ch.at(-2), ch.at(-1)));
+        if (i >= 0) { ch = ch.concat(Array.from(left[i].a).slice(2)); left.splice(i, 1); grown = true; continue; }
+        const j = left.findIndex(p => k1(p.a.at(-2), p.a.at(-1)) === k1(ch[0], ch[1]));
+        if (j >= 0) { ch = Array.from(left[j].a).slice(0, -2).concat(ch); left.splice(j, 1); grown = true; }
+      }
+      if (ch.length < 8 || k1(ch[0], ch[1]) !== k1(ch.at(-2), ch.at(-1))) continue;
+      const n = ch.length / 2 - 1; let cx = 0, cy = 0, r = 0;
+      for (let k = 0; k < n; k++) { cx += ch[2 * k]; cy += ch[2 * k + 1]; } cx /= n; cy /= n;
+      for (let k = 0; k < n; k++) r += Math.hypot(ch[2 * k] - cx, ch[2 * k + 1] - cy); r /= n;
+      if (r >= 6) out.push({ a: ch, cx, cy, r, bb: [cx - r, cy - r, cx + r, cy + r] });
+    }
+    return out;
+  }
+  const EMPTY = { land: [], area: [], pitch: [], line: [], cross: [], jn: [], isl: [], wat: false };
   const feats = c => (prep(), BY.get(c.i + '_' + c.j) || EMPTY);
 
   // ---------- schilderen (zelfde als design/3_grond.html paint(), stijl Speelgoedmat) ----------
@@ -60,6 +116,31 @@
     x.beginPath();
     for (let t = -R2; t <= R2; t += sp) { const px = cx - si * t, py = cy + co * t; x.moveTo(px - co * R2, py - si * R2); x.lineTo(px + co * R2, py + si * R2); }
     x.strokeStyle = col; x.lineWidth = lw; x.stroke(); x.restore();
+  }
+  // grasvlakken minder leeg: zachte vlekken licht/donker (maaipatroon, droge plekken), dichtbij grasplukjes en in weides/parken wat bloemetjes
+  const GRASSY = { gras: 1, weide: 1, park: 1, sport: 1, kerkhof: 1, tuin: 1, boomgaard: 1, struik: 1 };
+  const FLOWERS = { weide: 1, park: 1, tuin: 1 };
+  function grassy(x, f, col, fine) {
+    const [a, b, c2, d] = f.bb, W = c2 - a, Hh = d - b, A = W * Hh; if (A < 60) return;
+    let sd = (f.n * 2654435761 ^ Math.round(a * 7 + b * 13)) >>> 0; const r = () => ((sd = (sd * 1664525 + 1013904223) >>> 0) / 4294967296);
+    x.save(); path(x, f.rs); x.clip('evenodd');
+    const dark = shade(col, 0.88), light = shade(col, 1.07), dry = shade(col, 1.12).replace('rgb', 'rgba').replace(')', ',.55)');
+    x.globalAlpha = 0.45;
+    for (let k = 0, n = Math.min(500, A / 260); k < n; k++) { // vlekken 4–16 m
+      const cx = a + r() * W - X0, cy = b + r() * Hh - Y0, rx = 4 + r() * 12, ry = rx * (0.5 + r() * 0.5);
+      x.beginPath(); x.ellipse(cx, cy, rx, ry, r() * Math.PI, 0, 7); x.fillStyle = r() < 0.55 ? dark : r() < 0.7 ? dry : light; x.fill();
+    }
+    x.globalAlpha = 1;
+    if (fine) {
+      x.beginPath(); // plukjes: korte streepjes, donkerder
+      for (let k = 0, n = Math.min(4000, A / 18); k < n; k++) { const px0 = a + r() * W - X0, py0 = b + r() * Hh - Y0, l = 0.5 + r() * 0.5; x.moveTo(px0, py0); x.lineTo(px0 + (r() - 0.5) * 0.4, py0 + l); }
+      x.strokeStyle = shade(col, 0.8); x.lineWidth = 0.18; x.stroke();
+      if (FLOWERS[f.c]) for (let k = 0, n = Math.min(900, A / 120); k < n; k++) { // bloemetjes in groepjes
+        const gx = a + r() * W - X0, gy = b + r() * Hh - Y0; x.fillStyle = r() < 0.5 ? '#fffaf0' : r() < 0.6 ? '#ffd84a' : '#e98bb0';
+        for (let m = 0; m < 4; m++) { x.beginPath(); x.arc(gx + (r() - 0.5) * 2.4, gy + (r() - 0.5) * 2.4, 0.22, 0, 7); x.fill(); }
+      }
+    }
+    x.restore();
   }
   function pitchLines(x, f) {
     const r = f.box; if (!r) return;
@@ -104,17 +185,32 @@
     return P.gras;
   }
   const isWat = f => f.c === 'water' || f.c === 'zwembad';
-  // rotondes als standaardvorm (zoals de oude linten in app.js buildLayers): ronde rijbaan met lichte rand; middeneiland = 3D-cilinder van de app (blijft in iso)
-  function rounds(x, c, ink) {
-    const d = H.layerData?.rounds; if (!d) return;
-    for (const [type, cx, cy, r0] of d) {
-      const big = /^(motorway|trunk|primary|secondary)/.test(type), w = big ? 8 : 6.5, R = Math.min(34, Math.max(w / 2 + 6, Math.round(r0 / 2) * 2));
-      if (cx + R + w < c.x0 || cx - R - w > c.x0 + KM || cy + R + w < c.y0 || cy - R - w > c.y0 + KM) continue;
-      x.beginPath(); x.arc(cx - X0, cy - Y0, R, 0, Math.PI * 2);
-      x.lineWidth = w + 2 * ink; x.strokeStyle = ST.rib.ink; x.stroke();
-      x.lineWidth = w; x.strokeStyle = ST.rib.round[1]; x.stroke();
-      x.lineWidth = w * ST.rib.kerb; x.strokeStyle = ST.rib.round[0]; x.stroke();
-      x.beginPath(); x.arc(cx - X0, cy - Y0, Math.max(0, R - w / 2 - 0.3), 0, Math.PI * 2); x.fillStyle = ST.rib.isle; x.fill();
+  // vormpjes voor markering (RD-m, canvas al geschaald)
+  const quad = (x, p, col) => { x.beginPath(); x.moveTo(p[0] - X0, p[1] - Y0); for (let k = 2; k < p.length; k += 2) x.lineTo(p[k] - X0, p[k + 1] - Y0); x.closePath(); x.fillStyle = col; x.fill(); };
+  const rect = (x, cx, cy, ux, uy, lu, ln, col) => { const nx = -uy, ny = ux, a = lu / 2, b = ln / 2; quad(x, [cx - ux * a - nx * b, cy - uy * a - ny * b, cx + ux * a - nx * b, cy + uy * a - ny * b, cx + ux * a + nx * b, cy + uy * a + ny * b, cx - ux * a + nx * b, cy - uy * a + ny * b], col); };
+  // haaientanden over breedte wid; punt (dx,dy) wijst naar wie voorrang moet geven
+  function teeth(x, cx, cy, dx, dy, wid) {
+    const nx = -dy, ny = dx, n = Math.max(1, Math.floor(wid / 0.75));
+    for (let i = 0; i < n; i++) { const o = (i - (n - 1) / 2) * 0.75, bx = cx + nx * o, by = cy + ny * o; quad(x, [bx - nx * 0.25, by - ny * 0.25, bx + nx * 0.25, by + ny * 0.25, bx + dx * 0.6, by + dy * 0.6], ST.road.paint); }
+  }
+  const scaleRing = (I, rr) => { const o = [], k = rr / I.r; for (let i = 0; i < I.a.length; i += 2) o.push(I.cx + (I.a[i] - I.cx) * k, I.cy + (I.a[i + 1] - I.cy) * k); return o; };
+  // rotondes "Grafisch wit": echte vorm uit OSM, licht eiland met inktrand + witte binnenstreep. Rijbaan = de ringstraten zelf.
+  function islands2D(x, F, ink, fine) {
+    for (const I of F.isl) {
+      const ri = I.r - 7.6 / 2 - 0.2;
+      x.fillStyle = ST.road.isle; path(x, [scaleRing(I, ri)]); x.fill(); x.strokeStyle = ST.rib.ink; x.lineWidth = ink * 1.6; x.stroke();
+      if (fine) { const a = scaleRing(I, I.r - 7.6 / 2 + 0.55); x.beginPath(); x.moveTo(a[0] - X0, a[1] - Y0); for (let k = 2; k < a.length; k += 2) x.lineTo(a[k] - X0, a[k + 1] - Y0); x.lineWidth = 0.15; x.strokeStyle = ST.road.paint; x.stroke(); }
+    }
+  }
+  // oversteken "Per soort": zebra voor voetgangers (ook onbekend), rode fietsoversteek met blokken, met lichten = alleen blokjeslijnen, ongemarkeerd = niets
+  function zebras(x, F) {
+    const P = ST.road.paint;
+    for (const c of F.cross) {
+      const a = c.a, ax = a[0], ay = a[1], bx = a.at(-2), by = a.at(-1), len = Math.hypot(bx - ax, by - ay); if (len < 2) continue;
+      const ux = (bx - ax) / len, uy = (by - ay) / len, nx = -uy, ny = ux;
+      if (c.bike) { rect(x, (ax + bx) / 2, (ay + by) / 2, ux, uy, len, 2.6, ST.road.bikeX); for (let t = 0.25; t < len; t += 1) for (const s of [-1.5, 1.5]) rect(x, ax + ux * t + nx * s, ay + uy * t + ny * s, ux, uy, 0.45, 0.45, P); }
+      else if (c.k === 'l') { for (let t = 0.25; t < len; t += 0.8) for (const s of [-1.5, 1.5]) rect(x, ax + ux * t + nx * s, ay + uy * t + ny * s, ux, uy, 0.4, 0.4, P); }
+      else if (c.k !== 'g') for (let t = 0.5; t < len - 0.2; t += 1) rect(x, ax + ux * t, ay + uy * t, ux, uy, 0.5, 3, P);
     }
   }
   function paint(c, res) {
@@ -124,7 +220,7 @@
     X0 = c.x0; Y0 = c.y0;
     x.setTransform(1, 0, 0, 1, 0, 0); x.fillStyle = ST.base; x.fillRect(0, 0, res, res);
     x.setTransform(s, 0, 0, -s, 0, res); x.lineJoin = x.lineCap = 'round';
-    for (const f of F.land) { x.fillStyle = pick(ST.land[f.c] || ST.base, f.n); path(x, f.rs); x.fill('evenodd'); }
+    for (const f of F.land) { const col = pick(ST.land[f.c] || ST.base, f.n); x.fillStyle = col; path(x, f.rs); x.fill('evenodd'); if (GRASSY[f.c]) grassy(x, f, col, px <= 1.01); }
     for (const f of F.area) {
       if (isWat(f)) continue;
       x.fillStyle = ST.area[f.c] || ST.base; path(x, f.rs); x.fill('evenodd');
@@ -148,18 +244,36 @@
       }
       return { a: o };
     };
-    const RT = ST.rib, ink = Math.max(0.3, 0.6 * px); // inktrand: de linten lagen hoger en kregen een omlijning van de nabewerking
+    const RT = ST.rib, RD = ST.road, ink = Math.max(0.3, 0.6 * px); // inktrand: de linten lagen hoger en kregen een omlijning van de nabewerking
+    const fine = px <= 1.01; // strepen, haaientanden, zebra's pas vanaf 1024 px/km (anders pap; ver weg rustiger)
+    const wOf = f => Math.max(f.w + RT.extra, 1.6 * px), aw = f => wOf(f) * RT.kerb, asp = f => RANK[f.c] >= 1 ? RD.asp : RD.aspSoft;
     for (const br of [0, 1]) {
       const L = F.line.filter(f => f.br === br);
       if (br) for (const f of L) if (f.c !== 'beek') stroke(f, (RT.street[f.c] || f.c === 'snelweg' ? f.w + RT.extra : f.w) + 2.2, ST.bridge);
       for (const f of L) if (f.c === 'beek') stroke(f, Math.max(f.w, 1.6 * px), ST.line.beek);
-      // overige paden/fietspaden e.d. (hadden geen lint): oude grondstijl
-      for (const f of L) { if (f.c === 'beek' || f.c === 'spoor' || f.c === 'tram' || f.c === 'snelweg' || RT.street[f.c]) continue; stroke(f, Math.max(f.w, 1.2 * px), ST.line[f.c] || ST.line.pad); }
-      // straten: eerst alle stoepranden, dan alle wegdekken → kruisingen lopen in elkaar over
-      const S = L.filter(f => RT.street[f.c]), wOf = f => Math.max(f.w + RT.extra, 1.6 * px);
+      // overige paden e.d. (hadden geen lint): oude grondstijl
+      for (const f of L) { if (/^(beek|spoor|tram|snelweg|fiets|stoep)$/.test(f.c) || RT.street[f.c]) continue; stroke(f, Math.max(f.w, 1.2 * px), ST.line[f.c] || ST.line.pad); }
+      // stoepen "Volgens OSM": losse stoeplijnen + stoep langs straten met sidewalk=left/right/both; verder asfalt tot de tuin
+      for (const f of L) if (f.c === 'stoep') { stroke(f, Math.max(f.w, 1.8) + 0.35, RD.walkEdge); stroke(f, Math.max(f.w, 1.8), RD.walk); }
+      const S = L.filter(f => RT.street[f.c]);
+      for (const f of S) if (f.sw) {
+        const d = (f.w + RT.extra) / 2 + 0.9;
+        for (const [bit, o] of [[1, d], [2, -d]]) if (f.sw & bit) { const g = offset(f.a, o); stroke(g, 2.15, RD.walkEdge); stroke(g, 1.8, RD.walk); }
+      }
+      // fietspaden "Zacht terracotta": gedempt rood, iets smaller, geen rand
+      for (const f of L) if (f.c === 'fiets') stroke(f, Math.max(f.w, 1.2 * px) * 0.85, RD.bike);
+      // straten "Belijnd asfalt": inkt, stoeprand, donker asfalt (eerst alle randen, dan alle wegdekken → kruisingen lopen in elkaar over)
       for (const f of S) stroke(f, wOf(f) + 2 * ink, RT.ink);
       for (const f of S) stroke(f, wOf(f), RT.street[f.c][1]);
-      for (const f of S) stroke(f, wOf(f) * RT.kerb, RT.street[f.c][0]);
+      for (const f of S) stroke(f, aw(f), asp(f));
+      // markering: kantstrepen + middenstreep op doorgaande wegen (rang ≥ 3), strepen stoppen op de kruising, haaientanden waar een lagere weg aansluit
+      const J = br ? [] : F.jn;
+      if (fine) {
+        for (const f of S) if (RANK[f.c] >= 3 && aw(f) >= 5) { stroke(f, aw(f) - 0.7, RD.paint); stroke(f, aw(f) - 0.98, asp(f)); }
+        x.lineCap = 'butt'; x.setLineDash([3, 6]); for (const f of S) if (RANK[f.c] >= 3) stroke(f, 0.15, RD.paint); x.setLineDash([]); x.lineCap = 'round';
+        for (const n of J) { x.beginPath(); x.arc(n.x - X0, n.y - Y0, Math.max(0, n.maxW * RT.kerb / 2 - 0.1), 0, Math.PI * 2); x.fillStyle = asp(n.arms.find(a => RANK[a.f.c] === n.maxR).f); x.fill(); }
+        for (const n of J) if (n.maxR >= 3 && !n.ring) for (const a of n.arms) { const r = RANK[a.f.c]; if (r < n.maxR && r >= 1) { const d = n.maxW / 2 + 1; teeth(x, n.x + a.dx * d, n.y + a.dy * d, a.dx, a.dy, aw(a.f) - 0.6); } }
+      }
       // snelwegen: lichte berm, donker asfalt, witte kantstrepen, middenstreep 3 m / gat 9 m (alleen ≥ 2 stroken)
       const M = L.filter(f => f.c === 'snelweg');
       for (const f of M) stroke(f, f.w + 2 * ink, RT.ink);
@@ -178,7 +292,7 @@
       x.lineCap = 'butt'; x.setLineDash([0.27, 0.38]); for (const f of R) stroke(f, RT.railW * 0.46, RT.sleeper); x.setLineDash([]);
       for (const f of R) for (const d of [-0.75, 0.75]) stroke(offset(f.a, d), Math.max(0.19, 0.8 * px), RT.rail);
       x.lineCap = 'round';
-      if (!br) rounds(x, c, ink);
+      if (!br) { islands2D(x, F, ink, fine); if (fine) zebras(x, F); }
     }
     if (!c.gTex || c.gTex.image !== cv) {
       c.gTex?.dispose(); c.gTex = new THREE.CanvasTexture(cv); c.gTex.colorSpace = THREE.SRGBColorSpace; c.gTex.anisotropy = 8; // three kapt af op het maximum
@@ -247,39 +361,46 @@
     // iso: meters per schermpixel ≈ 0,77 · viewDist / schermhoogte (px) → texels per km die nodig zijn
     let need = 1300 * innerHeight * Math.min(devicePixelRatio || 1, 2) / vd;
     if (dt > vd * 0.9 + 300) need /= 4; // buiten beeld
-    let r = 256; while (r < 2048 && r < need * 0.8) r *= 2;
+    // vakken onder/naast het midden mogen 4096 px/km (strepen 0,15 m, zebra's 0,5 m); dat zijn er hooguit ±4 (64 MB elk op de GPU)
+    const max = dt < 120 && (H.renderer?.capabilities.maxTextureSize || 0) >= 4096 ? 4096 : 2048;
+    let r = 256; while (r < max && r < need * 0.8) r *= 2;
     c.gDt = dt;
     return r;
   }
   function refresh() {
-    refT = 0; if (!iso() || H.moving?.()) return; // zoomen/schuiven: pas bij stilstand ('still')
+    refT = 0; if (!iso()) return;
+    // tijdens zoomen/schuiven alleen nog-kale vakken (grond gaat voor, mooi laden onthult pas ná het schilderen); fijner pas bij stilstand ('still')
+    const mv = H.moving?.() && !H.intro?.();
     for (const c of H.chunks.values()) {
-      if (!c.terrain || !c.gOn) continue;
+      if (!c.terrain || !c.gOn || (mv && c.gTex)) continue;
       const r = want(c), cur = c.gRes || 0;
-      if (!cur || r > cur || r <= cur / 4) Q.set(c, r); else Q.delete(c);
+      if (!cur || r > cur || r <= cur / 4 || (cur > 2048 && r <= 2048)) Q.set(c, r); // 4096 meteen terug als het vak niet meer in het midden ligt else Q.delete(c);
     }
     pump(); water();
   }
   const later = () => { if (!refT) refT = setTimeout(refresh, 150); };
   function pump() { if (!busy && Q.size) { busy = true; setTimeout(step, 0); } }
   function step() {
-    busy = false; if (!iso() || !Q.size || H.moving?.()) return; // niet schilderen/uploaden midden in een beweging
-    let c = null; for (const k of Q.keys()) if (!c || (!k.gTex && c.gTex) || (!!k.gTex === !!c.gTex && k.gDt < c.gDt)) c = k;
-    const r = Q.get(c); Q.delete(c);
+    busy = false; if (!iso() || !Q.size) return;
+    const mv = H.moving?.() && !H.intro?.(); // midden in een beweging alleen kale vakken (grof); bijwerken pas bij stilstand
+    let c = null; for (const k of Q.keys()) if ((!mv || !k.gTex) && (!c || (!k.gTex && c.gTex) || (!!k.gTex === !!c.gTex && k.gDt < c.gDt))) c = k;
+    if (!c) return;
+    let r = Q.get(c); Q.delete(c);
+    const first = !c.gTex;
+    if (first && r > 512) { Q.set(c, r); r = 512; } // mooi laden: eerst grof (snel), daarna de echte resolutie
     paint(c, r);
     if (r >= 1024 && !c.gMDone && feats(c).wat) { waterMask(c); water(); }
-    H.redraw(); pump();
+    if (first) H.emit?.('ground', c); // iso/laden.js: nu pas inkleuren; app.js: panden mogen komen
+    H.redraw();
+    if (mv) { if (!busy && Q.size) { busy = true; setTimeout(step, 30); } } else pump(); // tijdens bewegen wat lucht tussen de vakken
   }
+  H.groundReady = c => !iso() || !!c.gTex; // app.js loadTick: panden pas na de grond
 
-  // ---------- water laten ademen: alleen in iso en als er water met masker in beeld is ----------
-  let stopAnim = null;
-  function water() {
-    const vd = H.viewDist(), on = iso() && [...H.chunks.values()].some(c => c.mTex && c.gDt !== undefined && c.gDt < vd * 0.9 + 300);
-    if (on && !stopAnim) stopAnim = H.animate(now => { GU.uGrT.value = now / 1000; });
-    else if (!on && stopAnim) { stopAnim(); stopAnim = null; }
-  }
+  // ---------- water: statisch schuimrandje (geen animatie = geen hele scène-render per stap; wens gebruiker: zo min mogelijk kosten aan water) ----------
+  // uGrT blijft vast → breedte varieert alleen met de ruis langs de oever. Vroeger 'ademde' het (sin(uGrT)), dat kostte 6–30 hele beelden/s.
+  function water() {}
 
-  H.on('chunk', c => { c.gOn = true; c.terrain.material.userData.groundChunk = c; c.terrain.material.needsUpdate = true; later(); });
+  H.on('terrain', c => { c.gOn = true; c.terrain.material.userData.groundChunk = c; c.terrain.material.needsUpdate = true; if (iso()) { Q.set(c, 512); want(c); pump(); } later(); }); // meteen in de rij (niet wachten op refresh)
   H.on('detail', later);
   H.on('still', () => { later(); pump(); });
   H.on('mode', () => { later(); water(); });

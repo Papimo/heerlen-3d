@@ -244,10 +244,11 @@
       const cs = cast && !im.userData.noShadow;
       if (im.castShadow !== cs) { im.castShadow = cs; ch = true; }
     }
-    v.group.visible = d < 6000; // poelen blijven langer staan: straten als kralensnoeren
+    v.group.visible = d < 6000 && H.fxOn('props'); // poelen blijven langer staan: straten als kralensnoeren
     return ch;
   }
   H.on('detail', () => { let ch = false; for (const v of VAK) ch = detail(v) || ch; if (ch) H.shadowDirty(); });
+  H.on('fx', k => { if (k !== 'props') return; for (const v of VAK) detail(v); H.shadowDirty(); });
 
   // ---------- lichtpoel alleen als het (een beetje) donker is; uNight loopt geleidelijk mee ----------
   let lit = false;

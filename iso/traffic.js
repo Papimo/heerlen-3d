@@ -89,7 +89,7 @@
       H.addDynamic(busMesh);
     }
     if (trains.length) { carMesh = new THREE.InstancedMesh(carGeo(), mat, trains.length * TRAIN.cars); carMesh.frustumCulled = false; H.addDynamic(carMesh); }
-    H.animate(tick);
+    H.animate(tick, 'verkeer');
   }
 
   // ---------- beweging ----------
@@ -106,10 +106,9 @@
   let last = 0, shown = false;
   function show(on) { if (on === shown) return false; shown = on; if (busMesh) busMesh.visible = on; if (carMesh) carMesh.visible = on; return true; }
   function tick(now) {
-    const vis = half() < HIDE_HALF;
+    const vis = half() < HIDE_HALF && H.fxOn('verkeer');
     if (!vis) return show(false) ? 'post' : 'none';
     const dt = last ? Math.min(0.2, (now - last) / 1000) : 0;
-    if (now - last < 50 && shown) return 'none';
     last = now; show(true);
     buses.forEach((b, i) => {
       if (b.wait > 0) b.wait -= dt; else b.s += BUS.speed * dt;

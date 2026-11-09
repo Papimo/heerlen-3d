@@ -5,7 +5,7 @@ const H3D = (() => {
   const H = { chunks: new Map(), listeners: {} };
   const on = (ev, fn) => (H.listeners[ev] ||= []).push(fn);
   const emit = (ev, ...a) => (H.listeners[ev] || []).forEach(fn => fn(...a));
-  H.on = on;
+  H.on = on; H.emit = emit; // iso/*.js: eigen gebeurtenissen (bv. 'ground' = grond van een vak geschilderd)
 
   // ---------- MRT (iso, stap 2): elk ingebouwd materiaal schrijft naast kleur ook normaal (view) + diepte naar uitvoer 1 ----------
   // Zo is de omlijning-invoer er in dezelfde render (geen 2e scène-render met NRM). Bij gewone targets/scherm wordt uitvoer 1 genegeerd.
@@ -65,6 +65,27 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
     roof: new THREE.MeshLambertMaterial({ color: '#bdb5ab', flatShading: true }),
     sel: new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.45, depthTest: true, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 }),
   };
+  // ---------- Mooi laden (design/11_laden.html, keuze 3·3·3·1+2): panden groeien op bouwjaar uit de grond ----------
+  // Per hoekpunt aGrow = starttijd (s sinds T0) van dat pand (vak klaar + bouwjaar × spreiding), aGBase = voet. Geen uniform per vak nodig.
+  // uGOn = 0 zodra niets meer groeit (dan geen enkele rekenstap extra). Schaduw pas als het staat (castShadow uit tijdens groeien).
+  const GROW = { dur: 0.5, spread: 1.8, jitter: 0.15 }; GROW.end = GROW.dur + GROW.spread + GROW.jitter;
+  const T0 = performance.now(), nowS = () => (performance.now() - T0) / 1000;
+  const GU = { uGT: { value: 0 }, uGOn: { value: 0 }, uGDur: { value: GROW.dur } };
+  const GROW_GLSL = `
+uniform float uGT, uGOn, uGDur; attribute float aGrow, aGBase;
+vec3 growB(vec3 p) {
+  if (uGOn < 0.5) return p;
+  float k = clamp((uGT - aGrow) / uGDur, 0.0, 1.0);
+  if (k <= 0.0) return vec3(0.0, -1e5, 0.0); // nog niet aan de beurt: weg
+  float q = k - 1.0; p.y = aGBase + (p.y - aGBase) * (1.0 + 2.70158 * q * q * q + 1.70158 * q * q); // uit de grond, klein beetje doorschieten
+  return p; }
+`;
+  function addGrow(s) {
+    Object.assign(s.uniforms, GU);
+    s.vertexShader = s.vertexShader.replace('#include <common>', '#include <common>' + GROW_GLSL)
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\ntransformed = growB(transformed);');
+  }
+  let growFloor = 0; const growing = new Set(); // growFloor: intro houdt groeien tegen tot de wolken openbreken
   let dirty = true;
   const QS = new URLSearchParams(location.search); // testschakelaars: ?nopost ?noshadow
   const redraw = () => { dirty = true; };
@@ -103,6 +124,7 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
     scene.add(sun, sun.target);
 
     controls = new THREE.OrbitControls(camera, renderer.domElement);
+    H.controls = controls;
     controls.screenSpacePanning = false;          // slepen = over de grond schuiven (kaartgevoel)
     controls.zoomToCursor = true;
     controls.enableDamping = true; controls.dampingFactor = 0.12;
@@ -110,7 +132,7 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
     controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_ROTATE };
     controls.minDistance = 25; controls.maxDistance = 15000;
     controls.maxPolarAngle = 1.45;
-    controls.addEventListener('change', redraw);
+    // geen controls 'change' → redraw: bij ortho (iso) vuurt die élke update (zoomChanged) → hele scène 15–30×/s bij stilstand. De lus vergelijkt zelf camera/doel/zoom (moved).
     controls.addEventListener('start', () => { controls.autoRotate = false; clearTimeout(idleT); emit('interact'); });
     controls.addEventListener('end', () => {
       if (mode === 'rond') idleT = setTimeout(() => { controls.autoRotate = true; }, 4000);
@@ -156,21 +178,65 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
     scene.add(ground);
     restoreView();
     if (mode !== '3d') applyMode(mode, false);
-    const t = controls.target, d2 = ([i, j]) => (i * area.km + 500 - O[0] - t.x) ** 2 + (j * area.km + 500 - O[1] + t.z) ** 2;
-    const order = area.chunks.slice().sort((p, q) => d2(p) - d2(q)); // dichtbij eerst
-    let next = 0, done = 0, busy = 0;
-    const finished = () => { busy--; emit('progress', ++done, order.length); if (done === order.length) allLoaded(); pump(); };
-    const pump = () => {
-      while (busy < 2 && next < order.length) {
-        const [i, j] = order[next++], s = document.createElement('script'); busy++;
-        s.src = `data/tiles/c_${i}_${j}.js`;
-        s.onerror = finished; s.onload = () => s.remove();
-        document.head.appendChild(s);
-      }
-    };
-    H._afterChunk = finished; // elk vak roept dit aan na verwerking
-    emit('progress', 0, order.length);
-    pump();
+    const km = area.km;
+    for (const [i, j] of area.chunks) {
+      const x0 = i * km - O[0], z1 = -(j * km - O[1]);
+      LS.set(i + '_' + j, { i, j, s: 0, c: null, cx: x0 + km / 2, cz: z1 - km / 2, box: new THREE.Box3(new THREE.Vector3(x0, 40, z1 - km), new THREE.Vector3(x0 + km, 340, z1)) });
+    }
+    emit('progress', 0, 1);
+    startIntro();
+  }
+  // ---------- Laden (design/11_laden.html optie 3 · grond eerst, panden daarna) ----------
+  // Alleen vakken in beeld + vooruit in de panrichting (±1,5 s), dichtbij eerst; per vak eerst het terrein (script + uitpakken), de panden
+  // pas als alle zichtbare vakken terrein hebben (of uiterlijk na 0,4 s). Stil + alles in beeld klaar → de rest rustig op de achtergrond
+  // (LOAD.fill; nodig voor lagen/verkeer/modellen/zoeken die op 'loaded' wachten). Toestand per vak s: 0 wacht · 1 script · 2 terrein · 3 klaar.
+  const LOAD = { scripts: 2, ahead: 1.5, bGap: 120, bForce: 400, gWait: 4000, fill: true, fillIdle: 1200 };
+  const LS = new Map(), lsFr = new THREE.Frustum(), lsM = new THREE.Matrix4(), lsVel = new THREE.Vector3(), lsPrev = new THREE.Vector3();
+  let lsBusy = 0, lsDone = 0, lsB = 0, lsTick = 0, lsStill = 0, lsFirst = true, lsProg = '', aheadO, aheadP;
+  H.loadState = () => LS; // iso/laden.js: welke vakken er zijn (voortgangsraster)
+  function lsRequest(e) {
+    e.s = 1; lsBusy++;
+    const s = document.createElement('script');
+    s.src = `data/tiles/c_${e.i}_${e.j}.js`;
+    s.onerror = () => { lsBusy--; e.s = 3; if (++lsDone === LS.size) allLoaded(); s.remove(); };
+    s.onload = () => s.remove();
+    document.head.appendChild(s);
+  }
+  function lsTerrain(i, j, c) { const e = LS.get(i + '_' + j); if (!e) return; lsBusy--; if (c) { e.s = 2; e.c = c; e.t2 = performance.now(); } else { e.s = 3; if (++lsDone === LS.size) allLoaded(); } }
+  function lsBuild(e) { e.s = 3; lsDone++; lsB = performance.now(); try { e.c._bld(); } catch (err) { console.error('vak', e.i, e.j, err); } e.c._bld = null; if (lsDone === LS.size) allLoaded(); }
+  function lsVisFn(cam) { cam.updateMatrixWorld(); lsM.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse); lsFr.setFromProjectionMatrix(lsM); const f = lsFr.clone(); return e => f.intersectsBox(e.box); }
+  function loadTick(now) {
+    if (!LS.size || lsDone === LS.size) return;
+    const dt = (now - (lsTick || now)) / 1000; lsTick = now;
+    if (dt > 0) { const a = Math.min(1, dt * 3); lsVel.x += ((controls.target.x - lsPrev.x) / dt - lsVel.x) * a; lsVel.z += ((controls.target.z - lsPrev.z) / dt - lsVel.z) * a; }
+    lsPrev.copy(controls.target);
+    // zichtbaar: tijdens de intro het beeld ná de landing; vooruit = zelfde camera 1,5 s verder in de panrichting
+    const ac = camera === ortho ? (aheadO ||= ortho.clone()) : (aheadP ||= persp.clone());
+    ac.copy(camera); if (intro) introPose(1, ac); ac.updateProjectionMatrix();
+    const inV = lsVisFn(ac);
+    ac.position.addScaledVector(lsVel, LOAD.ahead); const inA = intro ? inV : lsVisFn(ac);
+    const cx = controls.target.x + lsVel.x * LOAD.ahead / 2, cz = controls.target.z + lsVel.z * LOAD.ahead / 2;
+    const near = list => { let b = null, bd = Infinity; for (const e of list) { const d = (e.cx - cx) ** 2 + (e.cz - cz) ** 2; if (d < bd) { bd = d; b = e; } } return b; };
+    const vis = [], all = [...LS.values()];
+    for (const e of all) if (e.s < 3 && (inV(e) || inA(e))) vis.push(e);
+    while (lsBusy < LOAD.scripts) { const e = near(vis.filter(e => e.s === 0)); if (!e) break; lsRequest(e); }
+    // grond gaat voor: panden pas als de grond van het vak geschilderd is (iso/ground.js zet H.groundReady; uiterlijk na LOAD.gWait ms)
+    const gOk = e => !H.groundReady || H.groundReady(e.c) || now - e.t2 > LOAD.gWait;
+    const waitT = vis.some(e => e.s < 2 || (e.s === 2 && !gOk(e)));
+    const hold = intro && !intro.go; // intro wacht nog: eerst alleen terrein, panden pas als de wolken opengaan (groeien dan in beeld)
+    if (!hold && now - lsB > LOAD.bGap && (!waitT || now - lsB > LOAD.bForce)) { const e = near(vis.filter(e => e.s === 2 && gOk(e))); if (e) lsBuild(e); }
+    // voortgangsbalk alleen bij het eerste beeld (daarna laat de lijntekening zien wat er nog komt)
+    if (lsFirst) {
+      const inNow = all.filter(e => inV(e)), n = inNow.filter(e => e.s === 3).length, k = n + '/' + inNow.length;
+      if (k !== lsProg) { lsProg = k; emit('progress', n, inNow.length); }
+      if (n >= inNow.length && !intro) lsFirst = false;
+    }
+    if (moveNow || intro) lsStill = now;
+    if (LOAD.fill && !vis.length && now - lsStill > LOAD.fillIdle) { // achtergrond: één ding tegelijk, dichtbij eerst
+      const e2 = near(all.filter(e => e.s === 2 && gOk(e)));
+      if (e2 && now - lsB > LOAD.bForce) lsBuild(e2);
+      else if (!lsBusy) { const e0 = near(all.filter(e => e.s === 0)); if (e0) lsRequest(e0); }
+    }
   }
   function allLoaded() {
     // gemeentegrens als lijntje over het terrein
@@ -263,20 +329,25 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
         for (const key of [rk, wk]) { const D = A(Int32Array, key); let p = 0; for (let k = 0; k < D.length; k++) idx[w++] = (p += D[k]); }
         const seed = new Float32Array(nv).fill(0.37); // vast willekeurig getal per pand (iso: kleur per pand); ver-weg-variant één tint
         const lift = y => (EXAG - 1) * (y - H0), done = new Uint8Array(nv);
+        const grow = perBuilding ? new Float32Array(nv) : null, gbase = perBuilding ? new Float32Array(nv) : null, gt0 = Math.max(nowS(), growFloor);
         if (perBuilding) for (let b = 0; b < c.bR.length; b++) {
           const r0 = c.bR[b] * 3, r1 = (b + 1 < c.bR.length ? c.bR[b + 1] : nr) * 3, w0 = (nr + c.bW[b]) * 3, w1 = (nr + (b + 1 < c.bW.length ? c.bW[b + 1] : nw)) * 3;
           let lo = Infinity;
           for (let k = w0; k < w1; k++) lo = Math.min(lo, pos[idx[k] * 3 + 1] + 1); // voet = laagste muurpunt + 1 m
           if (lo === Infinity) { const v = idx[r0] * 3; lo = demAt(c, pos[v] + O[0], O[1] - pos[v + 2]); }
           const dy = EXAG !== 1 ? lift(lo) : 0, sd = Math.abs((Math.sin(b * 12.9898 + c.i * 78.233 + c.j * 3.71) * 43758.5453) % 1);
-          for (const [a, e] of [[r0, r1], [w0, w1]]) for (let k = a; k < e; k++) { const v = idx[k]; seed[v] = sd; if (!done[v]) { done[v] = 1; pos[v * 3 + 1] += dy; } }
+          // groeien op bouwjaar: oud eerst (1880 → 2020 = 0 → 1 × spreiding), onbekend = midden; klein beetje toeval tegen gelijk opploppen
+          const yr = c.year[b], dY = yr > 1000 ? Math.min(1, Math.max(0, (yr - 1880) / 140)) : 0.6, gT = gt0 + dY * GROW.spread + (sd * 7.13 % 1) * GROW.jitter;
+          for (const [a, e] of [[r0, r1], [w0, w1]]) for (let k = a; k < e; k++) { const v = idx[k]; seed[v] = sd; if (!done[v]) { done[v] = 1; pos[v * 3 + 1] += dy; grow[v] = gT; gbase[v] = lo + dy; } }
         }
         if (EXAG !== 1) for (let v = 0; v < nv; v++) if (!done[v]) pos[v * 3 + 1] += lift(demAt(c, pos[v * 3] + O[0], O[1] - pos[v * 3 + 2]));
+        if (perBuilding) for (let v = 0; v < nv; v++) if (!done[v]) gbase[v] = pos[v * 3 + 1];
         if (perBuilding) sortWalls(c, pos, idx, nr, nw); // iso: muren per richting (A1)
         const g = new THREE.BufferGeometry();
         g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
         g.setIndex(new THREE.BufferAttribute(idx, 1));
         g.setAttribute('aSeed', new THREE.BufferAttribute(seed, 1));
+        if (perBuilding) { g.setAttribute('aGrow', new THREE.BufferAttribute(grow, 1)); g.setAttribute('aGBase', new THREE.BufferAttribute(gbase, 1)); c.growEnd = gt0 + GROW.end; }
         g.addGroup(0, nr * 3, 0); g.addGroup(nr * 3, nw * 3, 1);
         g.computeBoundingSphere(); g.computeBoundingBox();
         const m = new THREE.Mesh(g, [MAT.roof, MAT.wall]);
@@ -284,16 +355,6 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
         scene.add(m);
         return m;
       };
-      c.mesh = build('v', 'roof', 'wall', h.nv, h.nr, h.nw, true);
-      wallGroups(c, isoWallMask());
-      // schaduwkaart: altijd alle muren (zon staat los van de camera); eerste muurgroep tijdelijk over alle muren, de rest leeg
-      c.mesh.onBeforeShadow = (r, o, cam, sc, geo, dm, gr) => {
-        if (!gr || gr.materialIndex !== 1 || c.wMask === WALL_ALL) return;
-        gr._s = gr.start; gr._n = gr.count;
-        if (gr === geo.groups[1]) { gr.start = c.nr * 3; gr.count = c.nw * 3; } else gr.count = 0;
-      };
-      c.mesh.onAfterShadow = (r, o, cam, sc, geo, dm, gr) => { if (gr && gr._n !== undefined) { gr.start = gr._s; gr.count = gr._n; gr._n = undefined; } };
-      if (h.nv1) { c.lo = build('v1', 'roof1', 'wall1', h.nv1, h.nr1, h.nw1); c.lo.visible = false; c.lo.castShadow = false; }
       // terrein
       const N = h.demN, s = h.demStep, tp = new Float32Array(N * N * 3);
       let minH = Infinity;
@@ -310,15 +371,37 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
       c.terrain.userData.chunk = c;
       scene.add(c.terrain);
       if (H.baseH === undefined || minH - 3 < H.baseH) { H.baseH = minH - 3; if (ground) ground.position.y = H.baseH; }
-      H.chunks.set(h.i + '_' + h.j, c);
+      H.chunks.set(h.i + '_' + h.j, c); // vanaf hier telt het vak mee (hoogte, grond); c.mesh komt pas in stap 2 → overal `if (c.mesh)`
       c.level = 0;
-      chunkMarks(c);
-      applyHidden(c);
-      emit('chunk', c); // iso/*.js: eigen spul per vak (c.i, c.j, c.x0, c.y0 in RD, c.mesh, c.terrain)
+      treesFor(c);
+      emit('terrain', c); // iso/*.js: terrein is er (grond schilderen, lijntekening kleurt in)
       shadowDirty = true; redraw();
-    } catch (e) { console.error('vak', h.i, h.j, e); }
-    H._afterChunk?.();
+      // stap 2 (loadTick kiest wanneer): panden, groeien op bouwjaar
+      c._bld = () => {
+        c.mesh = build('v', 'roof', 'wall', h.nv, h.nr, h.nw, true);
+        wallGroups(c, isoWallMask());
+        // schaduwkaart: altijd alle muren (zon staat los van de camera); eerste muurgroep tijdelijk over alle muren, de rest leeg
+        c.mesh.onBeforeShadow = (r, o, cam, sc, geo, dm, gr) => {
+          if (!gr || gr.materialIndex !== 1 || c.wMask === WALL_ALL) return;
+          gr._s = gr.start; gr._n = gr.count;
+          if (gr === geo.groups[1]) { gr.start = c.nr * 3; gr.count = c.nw * 3; } else gr.count = 0;
+        };
+        c.mesh.onAfterShadow = (r, o, cam, sc, geo, dm, gr) => { if (gr && gr._n !== undefined) { gr.start = gr._s; gr.count = gr._n; gr._n = undefined; } };
+        if (h.nv1) { c.lo = build('v1', 'roof1', 'wall1', h.nv1, h.nr1, h.nw1); c.lo.visible = false; c.lo.castShadow = false; }
+        c.growing = true; c.mesh.castShadow = false; growing.add(c);
+        if (c.lo) c.lo.visible = false;
+        applyHidden(c);
+        emit('chunk', c); // iso/*.js: eigen spul per vak (c.i, c.j, c.x0, c.y0 in RD, c.mesh, c.terrain)
+        redraw();
+      };
+      lsTerrain(h.i, h.j, c);
+    } catch (e) { console.error('vak', h.i, h.j, e); lsTerrain(h.i, h.j, null); }
   };
+  // groeien klaar → schaduw aan, opgelichte plekken (kopieën zonder groei-animatie), gebakken licht (iso/bake.js luistert naar 'grown')
+  function growDone(c) {
+    c.growing = false; growing.delete(c); lastLod = 0; shadowDirty = true;
+    chunkMarks(c); emit('grown', c);
+  }
 
   // ---------- Kaarttegels op het terrein: detail naar afstand ----------
   const TS = 256, lon2px = (lon, z) => (lon + 180) / 360 * TS * 2 ** z;
@@ -350,7 +433,7 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
   const LO_FAR = 2300, SHADOW_OFF = 3600;
   // iso: welke muurstukken naar de camera wijzen (bit 0 = altijd, bit 1+q = richting q); tijdens draaien/vliegen alles
   function isoWallMask() {
-    if (camera !== ortho || fly) return WALL_ALL;
+    if (camera !== ortho || fly || intro) return WALL_ALL;
     const a = Math.atan2(camera.position.z - controls.target.z, camera.position.x - controls.target.x), Q = Math.PI / 2;
     const off = (((a - Q / 2) % Q) + Q) % Q;
     if (Math.min(off, Q - off) > 2 * Math.PI / 180) return WALL_ALL;
@@ -364,7 +447,7 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
     const mv = moveNow; // tijdens bewegen alleen grover (goedkoper) maken; fijner, schaduw en emit('detail') pas bij stilstand
     let ch = setWallMask(isoWallMask());
     const dist = viewDist();
-    const shadows = !QS.has('noshadow') && (sun.castShadow ? dist < SHADOW_OFF + 300 : dist < SHADOW_OFF - 300); // marge: niet steeds wisselen; ?noshadow = test (strepen op mobiel)
+    const shadows = !QS.has('noshadow') && (U.uBaked.value > 0.5 || sun.castShadow ? dist < SHADOW_OFF + 300 : dist < SHADOW_OFF - 300); // marge: niet steeds wisselen; ?noshadow = test (strepen op mobiel)
     if (shadows !== sun.castShadow && !mv) { sun.castShadow = shadows; ch = true; }
     const S = shadowExt() + 200;
     // iso: één terreinstap voor alle vakken naar pixels per meter (ortho = overal dezelfde schaal): rastercel 10 m ≥ ±6 px, anders grover
@@ -373,9 +456,9 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
     const ppm = camera === ortho ? dbs.y / (2 * isoHalf()) : 0, isoSt = ppm >= 0.6 ? 1 : ppm >= 0.3 ? 2 : 4;
     for (const c of H.chunks.values()) {
       const d = chunkDist(c, camera.position) * lens(), far = !!c.lo && camera !== ortho && (c.lo.visible ? d > LO_FAR - 200 : d > LO_FAR + 200); // iso: altijd LoD 2.2 (A1)
-      if (c.lo && c.lo.visible !== far && (far || !mv)) { c.lo.visible = far; c.mesh.visible = !far; ch = true; }
+      if (c.mesh && c.lo && c.lo.visible !== far && (far || !mv)) { c.lo.visible = far; c.mesh.visible = !far; ch = true; }
       const cast = shadows && !far && chunkDist(c, controls.target, 0) < S;
-      if (c.mesh.castShadow !== cast && !mv) { c.mesh.castShadow = cast; ch = true; }
+      if (c.mesh && !c.growing && c.mesh.castShadow !== cast && !mv) { c.mesh.castShadow = cast; ch = true; }
       if (c.trees) { // bomen: dichtbij alles, verder weg uitgedund, heel ver weg geen
         const f = d < 1800 ? 1 : d < 4000 ? 1 / 3 : d < 8000 ? 1 / 8 : 0, lo = dbs.y / (2 * d * TAN21) < TREE_LO_PPM; // d × lens → px/m zoals in iso
         for (const im of c.trees) {
@@ -518,7 +601,7 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
       ndc.set((e.clientX - r.left) / r.width * 2 - 1, -(e.clientY - r.top) / r.height * 2 + 1);
       ray.setFromCamera(ndc, camera);
       const objs = [];
-      for (const c of H.chunks.values()) objs.push(c.mesh, c.terrain);
+      for (const c of H.chunks.values()) { if (c.mesh) objs.push(c.mesh); objs.push(c.terrain); }
       const hit = ray.intersectObjects(objs, false)[0];
       selKey = null;
       if (!hit) { select(null); emit('pick', null); return; }
@@ -562,6 +645,59 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
   const U = { uNight: { value: 0 }, uIso: { value: 0 }, uLvl: { value: 1 }, uDim: { value: 0 }, uEye: { value: new THREE.Vector3() },
     uPalR: { value: pal(['#c95f48', '#b85443', '#5f7f9e', '#d08a52', '#a9584a', '#6f8f6a', '#c96e4f', '#6d86a3']) },   // iso-daken
     uPalW: { value: pal(['#f2dcb6', '#f4e6c9', '#dfe6cf', '#d6e2e8', '#efd5c4', '#f7ecd8', '#e9d3c9', '#e7e2cc']) } }; // iso-gevels
+  // A2 gebakken licht (iso/bake.js vult de atlas): uBk = atlas (R zon zichtbaar · G contactschaduw · BA hoogte), uBkI = vak → atlasplek
+  Object.assign(U, { uBk: { value: null }, uBkI: { value: null }, uBkR: { value: new THREE.Vector4(0, 0, 512, 0) }, uBkN: { value: new THREE.Vector2(0, 0) }, uBaked: { value: 0 }, uBkAO: { value: 0 } });
+  const SUN_DIR = new THREE.Vector3(-0.55, 0.75, 0.35); H.SUN_DIR = SUN_DIR; // vaste zonrichting (× 3000 = zonpositie t.o.v. het doel)
+  const BAKE_GLSL = `
+  uniform sampler2D uBk, uBkI; uniform vec4 uBkR; uniform vec2 uBkN; uniform float uBaked, uBkAO; varying vec3 vBkW;
+  vec4 bkTexel(ivec2 g) { // g = texel over het hele vakkenraster (x oost, y noord)
+    int P = int(uBkR.z);
+    if (g.x < 0 || g.y < 0) return vec4(0.0);
+    ivec2 c = g / P;
+    if (c.x >= int(uBkN.x) || c.y >= int(uBkN.y)) return vec4(0.0);
+    vec4 s = texelFetch(uBkI, c, 0);
+    if (s.b < 0.5) return vec4(0.0);
+    return texelFetch(uBk, ivec2(s.rg * 255.0 + 0.5) * P + (g - c * P), 0);
+  }
+  // x = zon zichtbaar, y = contactschaduw (1 = open), z = laagste oppervlak rondom onder dit punt, w = gewicht (0 = niets bruikbaars)
+  // tol: texels waarvan het oppervlak > tol boven het punt ligt tellen niet (dak naast de straat, kruin boven de stam)
+  vec4 bake(vec3 p, float tol) {
+    vec2 g = vec2(p.x - uBkR.x, -p.z - uBkR.y) * (uBkR.z / 1000.0) - 0.5;
+    ivec2 i = ivec2(floor(g)); vec2 f = fract(g);
+    vec2 acc = vec2(0.0); float ws = 0.0, mn = -1e5;
+    for (int k = 0; k < 4; k++) {
+      ivec2 o = ivec2(k & 1, k >> 1);
+      vec4 t = bkTexel(i + o);
+      if (t == vec4(0.0)) continue;
+      float h = (t.b * 65280.0 + t.a * 255.0) / 65535.0 * 1000.0 - 100.0;
+      if (h < p.y + 0.5) mn = mn < -9e4 ? h : min(mn, h);
+      float w = (o.x == 1 ? f.x : 1.0 - f.x) * (o.y == 1 ? f.y : 1.0 - f.y) * (1.0 - smoothstep(tol, tol + 1.5, h - p.y));
+      acc += t.rg * w; ws += w;
+    }
+    return vec4(ws > 0.001 ? acc / ws : vec2(1.0), mn, ws);
+  }`;
+  // kind: 'wall' (alleen contactschaduw onderaan, uit de hoogte rondom), 'surf' (zon + contactschaduw), 'terr' (idem, terrein)
+  function addBake(s, kind) {
+    Object.assign(s.uniforms, { uBk: U.uBk, uBkI: U.uBkI, uBkR: U.uBkR, uBkN: U.uBkN, uBaked: U.uBaked, uBkAO: U.uBkAO, uIso: U.uIso });
+    s.vertexShader = s.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vBkW;')
+      .replace('#include <project_vertex>', `#include <project_vertex>
+      { vec4 bw = vec4(transformed, 1.0);
+      #ifdef USE_INSTANCING
+      bw = instanceMatrix * bw;
+      #endif
+      vBkW = (modelMatrix * bw).xyz; }`);
+    let L = THREE.ShaderChunk.lights_fragment_begin;
+    const a = L.indexOf('getShadow( directionalShadowMap[ i ]'), b = L.indexOf('RE_Direct( directLight', a);
+    if (a > 0 && b > a) L = L.slice(0, b) + 'directLight.color *= bkSun;\n\t\t' + L.slice(b);
+    L = L.replace('directLight.color *= ( directLight.visible && receiveShadow ) ? getShadow( directionalShadowMap[ i ]', 'directLight.color *= ( uBaked < 0.5 && directLight.visible && receiveShadow ) ? getShadow( directionalShadowMap[ i ]');
+    const wall = kind === 'wall';
+    s.fragmentShader = s.fragmentShader.replace('#include <common>', '#include <common>' + BAKE_GLSL) // uIso declareren addCel/terrMat zelf
+      .replace('#include <lights_fragment_begin>', `vec4 bkV = (uIso > 0.5 && (uBaked > 0.5 || uBkAO > 0.5)) ? bake(vBkW, ${wall ? '0.0' : '1.5'}) : vec4(1.0, 1.0, -1e5, 0.0);
+      float bkSun = uBaked > 0.5 && ${wall ? 'false' : 'true'} ? bkV.x : 1.0;
+      ` + L)
+      .replace('#include <opaque_fragment>', `if (uBkAO > 0.5 && uIso > 0.5) outgoingLight *= ${wall ? 'mix(0.7, 1.0, smoothstep(0.0, 3.5, vBkW.y - bkV.z))' : 'mix(1.0, bkV.y, step(0.001, bkV.w))'};
+      #include <opaque_fragment>`);
+  }
   // ---------- Andere gebouwen dimmen (vager, platter) ----------
   let dim = false;
   try { dim = localStorage.getItem('h3d.dim') === '1'; } catch {}
@@ -579,7 +715,7 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
 
   // ---------- Licht: dag / avond / nu (volgt de klok), met verlichte ramen en gloeiende plekken ----------
   // iso: licht in 3 harde tinten (licht/half/schaduw), relatief aan het lichtniveau (uLvl) zodat de avond donkerder blijft
-  function addCel(s) {
+  function addCel(s, key = '') {
     Object.assign(s.uniforms, { uIso: U.uIso, uLvl: U.uLvl });
     s.fragmentShader = s.fragmentShader.replace('#include <common>', '#include <common>\nuniform float uIso, uLvl;')
       .replace('#include <opaque_fragment>', `if (uIso > 0.5) {
@@ -588,8 +724,9 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
         outgoingLight = diffuseColor.rgb * uLvl * (l < 0.62 ? 0.52 : l < 1.05 ? 0.8 : 1.04) + totalEmissiveRadiance;
       }
       #include <opaque_fragment>`);
+    if (!key.startsWith('sky-')) addBake(s, /wall/.test(key) ? 'wall' : 'surf'); // ballon/vogels hangen hoog boven de grond: geen grondschaduw
   }
-  const celify = (m, key) => { const prev = m.onBeforeCompile; m.onBeforeCompile = (s, r) => { prev.call(m, s, r); addCel(s); }; if (key) m.customProgramCacheKey = () => key + (PATCH[key] ? pkey(key) : ''); return m; };
+  const celify = (m, key) => { const prev = m.onBeforeCompile; m.onBeforeCompile = (s, r) => { prev.call(m, s, r); addCel(s, key || ''); }; if (key) m.customProgramCacheKey = () => key + (PATCH[key] ? pkey(key) : ''); return m; };
   H.celify = celify; // eigen materialen in iso/*.js dezelfde cel-look geven (key = unieke naam)
   // ---------- Aanhaakpunten voor iso/*.js: shader-stukjes aanrijgen ----------
   // H.patchTerrain/patchWall/patchRoof(naam, (shader, materiaal) => …): draait na de eigen aanpassingen en vóór de cel-shading.
@@ -608,14 +745,22 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
   H.patchWall = (name, fn) => addPatch('wall', name, fn);
   H.patchRoof = (name, fn) => addPatch('roof', name, fn);
   // kleur per pand (aSeed) i.p.v. neutraal grijs, in alle modussen; dimmen = grotendeels ontkleuren
+  // daken = "Mijnstreek" (design/10_wegen.html optie 4·2): schuin = antraciet / rode / oranje / bruine pannen met pannenrijen (0,42 m),
+  // plat = donker bitumen of licht grind. Kleur per pand uit aSeed; rijen vervagen ver weg tot hun gemiddelde (geen moiré). Stad-onafhankelijk.
+  const ROOF_MIJN = `
+        vec3 dn = normalize(cross(dFdx(vRW), dFdy(vRW))); if (dn.y < 0.0) dn = -dn;
+        float h1 = fract(vS * 13.7), rw = vRW.y / 0.42, fw = fwidth(rw);
+        float rows = mix(1.0 - smoothstep(0.0, fw * 1.5 + 0.04, fract(rw)), 0.08, smoothstep(0.3, 0.8, fw));
+        vec3 T[4]; T[0] = vec3(0.25, 0.26, 0.28); T[1] = vec3(0.62, 0.25, 0.17); T[2] = vec3(0.74, 0.39, 0.22); T[3] = vec3(0.36, 0.23, 0.18);
+        p = dn.y > 0.97 ? (h1 < 0.6 ? vec3(0.30, 0.30, 0.31) : vec3(0.55, 0.53, 0.49)) : T[int(h1 * 3.999)] * (1.0 - 0.25 * rows);`;
   const isoPal = (s, roof) => {
     Object.assign(s.uniforms, { uPalR: U.uPalR, uPalW: U.uPalW, uDim: U.uDim });
-    s.vertexShader = s.vertexShader.replace('#include <common>', '#include <common>\nattribute float aSeed; varying float vS;')
-      .replace('#include <project_vertex>', '#include <project_vertex>\nvS = aSeed;');
-    s.fragmentShader = s.fragmentShader.replace('#include <common>', '#include <common>\nvarying float vS; uniform vec3 uPalR[8]; uniform vec3 uPalW[8]; uniform float uDim;')
+    s.vertexShader = s.vertexShader.replace('#include <common>', `#include <common>\nattribute float aSeed; varying float vS;${roof ? ' varying vec3 vRW;' : ''}`)
+      .replace('#include <project_vertex>', `#include <project_vertex>\nvS = aSeed;${roof ? ' vRW = (modelMatrix * vec4(transformed, 1.0)).xyz;' : ''}`);
+    s.fragmentShader = s.fragmentShader.replace('#include <common>', `#include <common>\nvarying float vS; uniform vec3 uPalR[8]; uniform vec3 uPalW[8]; uniform float uDim;${roof ? ' varying vec3 vRW;' : ''}`)
       .replace('#include <color_fragment>', `#include <color_fragment>
       {
-        vec3 p = ${roof ? 'uPalR[int(fract(vS * 7.31) * 7.999)]' : 'uPalW[int(vS * 7.999)]'};
+        vec3 p = ${roof ? 'uPalR[int(fract(vS * 7.31) * 7.999)]' : 'uPalW[int(vS * 7.999)]'};${roof ? ROOF_MIJN : ''}
         diffuseColor.rgb = mix(p, vec3(dot(p, vec3(0.3, 0.59, 0.11)) * 1.1), 0.7 * uDim);
       }`);
   };
@@ -633,6 +778,7 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
           diffuseColor.rgb = pow(clamp(c, 0.0, 1.0), vec3(2.2));
         }`);
       runPatch('terrain', s, m);
+      addBake(s, 'terr');
     };
     return m;
   }
@@ -657,6 +803,7 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
     runPatch('wall', s, MAT.wall);
   };
   celify(MAT.wall, 'wall');
+  for (const m of [MAT.roof, MAT.wall]) { const prev = m.onBeforeCompile; m.onBeforeCompile = (s, r) => { prev.call(m, s, r); addGrow(s); }; }
   const C = (...a) => a.map(h => new THREE.Color(h));
   const SKYC = C('#d3e6f2', '#e2b79a', '#1c2640'), SUNC = C('#ffecc8', '#ffb27a', '#aebfff');
   const ZEN = C('#5b9ee6', '#6a6aa8', '#070d22'), ZEN_ISO = C('#78b4ea', '#6a6aa8', '#070d22'); // lucht bovenin (verloop naar de horizon = mistkleur)
@@ -717,15 +864,17 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
       for (const [f0, f1, o] of runs) for (let k = (o + f0) * 3; k < (o + f1) * 3; k++) I[k] = keep[i++];
       bak.delete(b);
     } else return;
-    c.mesh.geometry.index.needsUpdate = true; shadowDirty = true; redraw();
+    c.mesh.geometry.index.needsUpdate = true; shadowDirty = true; rebuildHighlights(); redraw(); // opgelichte kopie (plekken) ook weg
   }
   function applyHidden(c) { if (hidden.size) for (let b = 0; b < c.ids.length; b++) if (hidden.has(bagId(c, b))) setHidden(c, b, true); }
   H.hideBuilding = (id, on = true) => { // BAG-pand-id (16 cijfers of 'NL.IMBAG.Pand.…'); geldt ook voor vakken die nog laden
     const k = normId(id); on ? hidden.add(k) : hidden.delete(k);
-    for (const c of H.chunks.values()) for (let b = 0; b < c.ids.length; b++) if (bagId(c, b) === k) setHidden(c, b, on);
+    for (const c of H.chunks.values()) if (c.mesh) for (let b = 0; b < c.ids.length; b++) if (bagId(c, b) === k) setHidden(c, b, on); // zonder mesh: applyHidden in stap 2
   };
   H.showBuilding = id => H.hideBuilding(id, false);
-  H.findBuilding = id => { const k = normId(id); for (const c of H.chunks.values()) for (let b = 0; b < c.ids.length; b++) if (bagId(c, b) === k) return { c, b, info: buildingInfo(c, b) }; return null; };
+  H.findBuilding = id => { const k = normId(id); for (const c of H.chunks.values()) if (c.mesh) for (let b = 0; b < c.ids.length; b++) if (bagId(c, b) === k) return { c, b, info: buildingInfo(c, b) }; return null; };
+  H.allWalls = on => on ? setWallMask(WALL_ALL) : setWallMask(isoWallMask()); // A2 bakken: alle muren tekenen, daarna terug
+  H.overlayObjs = () => [outline, selMesh].filter(Boolean); // lijntjes/selectie: niet meebakken
   H.wallRuns = (c, b) => wallRuns(c, b); // muurreeksen van pand b [f0, f1) t.o.v. muurbegin (na A1 per richting gesorteerd)
   H.facesOf = (c, b) => facesOf(c, b, []); // hoekpunt-indices in c.mesh.geometry (dak + muur)
   setInterval(() => { if (lightMode === 'nu') { nightGoal = goalFor('nu'); redraw(); } }, 60000);
@@ -753,7 +902,7 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
     m.customProgramCacheKey = () => 'bizwall';
     m.onBeforeCompile = sh => {
       Object.assign(sh.uniforms, u, { uNight: U.uNight, uEye: U.uEye });
-      addCel(sh);
+      addCel(sh, 'bizwall');
       sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute float aBase; varying float vB; varying vec3 vW2;')
         .replace('#include <project_vertex>', '#include <project_vertex>\nvB = aBase; vW2 = (modelMatrix * vec4(transformed, 1.0)).xyz;');
       sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
@@ -832,12 +981,17 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
     for (const it of list) {
       const p = old.get(it.key);
       const m = p && p.x === it.x && p.y === it.y ? Object.assign(p, { color: it.color }) : { key: it.key, x: it.x, y: it.y, color: it.color, best: { d: Infinity } };
-      if (m !== p) for (const c of H.chunks.values()) if (near(c, m)) linkIn(c, m);
+      if (m !== p) for (const c of H.chunks.values()) if (c.mesh && !c.growing && near(c, m)) linkIn(c, m); // groeiend vak: chunkMarks in growDone
       next.set(it.key, m);
     }
     marks.clear(); for (const [k, m] of next) marks.set(k, m);
     rebuildHighlights();
   };
+  // bouwjaar-filter (zoeken "jaren 30"): alle panden met bouwjaar y0…y1 oplichten in één kleur (dak + gevel zonder bedrijfsband)
+  let era = null;
+  H.countEra = (y0, y1) => { let n = 0; for (const c of H.chunks.values()) { if (!c.year) continue; for (let b = 0; b < c.year.length; b++) { const y = c.year[b]; if (y >= y0 && y <= y1) n++; } } return n; };
+  H.setEra = (y0, y1, col = '#d9822b') => { era = y0 ? { y0, y1, col } : null; rebuildHighlights(); return era ? H.countEra(y0, y1) : 0; };
+  H.getEra = () => era;
   let hlT = 0;
   function rebuildHighlights() { // gebundeld: hooguit één keer per beeld
     if (hlT) return;
@@ -858,12 +1012,24 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
         let a = groups.get(m.color); if (!a) groups.set(m.color, a = { roof: [], wall: [], base: [] });
         copyFaces(m.best.c, m.best.b, a);
       }
-      for (const [col, a] of groups) for (const part of ['roof', 'wall']) {
+      if (era) { // panden van een plek houden hun categoriekleur; verborgen panden (eigen modellen) overslaan
+        const a = { roof: [], wall: [], base: [], era: true }; groups.set('era', a);
+        for (const c of H.chunks.values()) {
+          if (!c.mesh || !c.year) continue;
+          for (let b = 0; b < c.year.length; b++) {
+            const y = c.year[b]; if (!(y >= era.y0 && y <= era.y1)) continue;
+            if (c.hideBak?.has(b) || byBuilding.has(c.i + '_' + c.j + ':' + b)) continue;
+            copyFaces(c, b, a);
+          }
+        }
+      }
+      for (const [key, a] of groups) for (const part of ['roof', 'wall']) {
+        const col = a.era ? era.col : key;
         if (!a[part].length) continue;
         const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(a[part], 3));
         if (part === 'wall') geo.setAttribute('aBase', new THREE.Float32BufferAttribute(a.base, 1));
         geo.computeBoundingSphere();
-        const me = new THREE.Mesh(geo, part === 'roof' ? matFor(col) : matWall(col)); me.receiveShadow = true;
+        const me = new THREE.Mesh(geo, part === 'roof' || a.era ? matFor(col) : matWall(col)); me.receiveShadow = true;
         scene.add(me); hlMeshes.push(me);
       }
       if (selKey && !selMesh) H.selectMark(selKey); // vak van de gekozen plek kwam later binnen
@@ -899,6 +1065,51 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
     let d = fly.sb.theta - fly.sa.theta; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; fly.sb.theta = fly.sa.theta + d;
     redraw();
   };
+  // ---------- Eerste beeld (design/11_laden.html "Eerste beeld" 1+2): hoog boven een wolkendek, recht van boven; daalt (halve hoogte ×7 → 1)
+  // én kantelt naar iso terwijl de wolken openbreken. Wacht (wolken dicht) tot de vakken van het landingsbeeld terrein hebben (max INTRO.hold).
+  // Klikken/scrollen/toets = meteen landen. Alleen iso; ?nointro = overslaan. Wolkendek zelf: iso/laden.js (H.introCover()).
+  const INTRO = { dur: 3000, k: 7, polar0: 0.03, hold: 6000 };
+  let intro = null;
+  const easeOut3 = t => 1 - (1 - t) ** 3;
+  function introPose(t, cam = camera) { // t 0 = boven de wolken … 1 = geland
+    const h = intro.h * INTRO.k ** (1 - easeOut3(t)), phi = INTRO.polar0 + (ISO_POLAR - INTRO.polar0) * ease(t);
+    cam.zoom = ISO_H0 / h; cam.updateProjectionMatrix();
+    cam.position.copy(controls.target).add(new THREE.Vector3().setFromSpherical(new THREE.Spherical(isoD(h), phi, intro.az)));
+    cam.up.set(0, 1, 0); cam.lookAt(controls.target); cam.updateMatrixWorld();
+  }
+  function startIntro() {
+    if (camera !== ortho || QS.has('nointro') || intro) return;
+    const h = fly?.hb ?? snapHalf(isoHalf()), az = snapAz(fly?.sb.theta ?? controls.getAzimuthalAngle());
+    if (fly) controls.target.copy(fly.b); // bewaarde plek (applyMode zette een vlucht van 1 ms klaar)
+    fly = null;
+    intro = { t0: performance.now(), go: 0, h, az };
+    controls.enabled = false; controls.minPolarAngle = 0; controls.minZoom = ISO_H0 / (intro.h * INTRO.k * 1.05);
+    document.body.classList.add('intro');
+    introPose(0);
+    const skip = () => { if (intro) { intro.go = performance.now() - INTRO.dur; growFloor = 0; } };
+    for (const ev of ['pointerdown', 'wheel', 'keydown', 'touchstart']) addEventListener(ev, skip, { once: true, passive: true });
+    redraw();
+  }
+  function introStep(now) {
+    if (!intro.go) { // wachten tot het landingsbeeld terrein heeft
+      let ready = true;
+      const ac = aheadO ||= ortho.clone(); ac.copy(ortho); introPose(1, ac); const inV = lsVisFn(ac);
+      for (const e of LS.values()) if (e.s < 2 && inV(e)) { ready = false; break; }
+      if (!ready && now - intro.t0 < INTRO.hold) { introPose(0); return; }
+      intro.go = now; growFloor = nowS() + INTRO.dur / 1000 * 0.45; // panden beginnen te groeien als de wolken opengaan
+    }
+    const t = Math.min(1, (now - intro.go) / INTRO.dur);
+    introPose(t);
+    if (t >= 1) {
+      intro = null; growFloor = 0;
+      controls.minPolarAngle = controls.maxPolarAngle = ISO_POLAR; controls.minZoom = ISO_H0 / ISO_LEVELS[ISO_LEVELS.length - 1];
+      controls.enabled = true; document.body.classList.remove('intro');
+      emit('intro-end');
+    }
+  }
+  H.intro = () => !!intro;
+  // wolkendek-dekking 0–1 voor iso/laden.js: dicht tijdens het wachten, breekt open tijdens de daling
+  H.introCover = () => !intro ? 0 : !intro.go ? 1 : 1 - THREE.MathUtils.smoothstep((performance.now() - intro.go) / INTRO.dur, 0.3, 0.95);
   H.view = name => {
     const [x, y] = toRD(controls.target), sph = new THREE.Spherical().setFromVector3(camera.position.clone().sub(controls.target));
     if (name === 'boven') H.flyTo(x, y, { dist: sph.radius, polar: 0.05 });
@@ -1036,8 +1247,9 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
       // geen MSAA: omlijning dekt de randen (stap 9). Diepte heeft float32 nodig (half-float gaf streepruis); blenden op float32 vraagt EXT_float_blend
       useMRT = renderer.capabilities.isWebGL2 && !!renderer.getContext().getExtension('EXT_float_blend');
       RTS.f = makeTargets(); ({ c: rtC, n: rtN } = RTS.f);
-      NRM =new THREE.ShaderMaterial({ // normaal (uit de afgeleiden) + diepte; bomen via instanceMatrix
-        vertexShader: `varying vec3 vV; void main() { vec4 p = vec4(position, 1.0);
+      NRM =new THREE.ShaderMaterial({ // normaal (uit de afgeleiden) + diepte; bomen via instanceMatrix; groeiende panden (aGrow ontbreekt = 0 = staat al)
+        uniforms: GU,
+        vertexShader: `${GROW_GLSL} varying vec3 vV; void main() { vec4 p = vec4(growB(position), 1.0);
           #ifdef USE_INSTANCING
           p = instanceMatrix * p;
           #endif
@@ -1138,7 +1350,7 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
 
   // ---------- Prestatiemeter (toets P; Shift+P = continu tekenen voor een eerlijke fps-meting) ----------
   // Telt per getekend beeld: draw calls/driehoeken (alle passes incl. schaduw/NRM/posts), CPU-tijd (tekenen + rest van de tik), GPU-tijd (WebGL2 timer-query, Chrome).
-  const M = { on: false, stress: false, el: null, raf: 0, full: 0, post: 0, shadow: 0, cpu: 0, cpuMax: 0, tick: 0, gpu: {}, gpuF: new Set(), calls: 0, tris: 0, t0: 0, tick0: 0, last: 0, q: [], cur: null, fr: 0, ext: null };
+  const M = { af: {}, on: false, stress: false, el: null, raf: 0, full: 0, post: 0, shadow: 0, cpu: 0, cpuMax: 0, tick: 0, gpu: {}, gpuF: new Set(), calls: 0, tris: 0, t0: 0, tick0: 0, last: 0, q: [], cur: null, fr: 0, ext: null };
   // GPU-tijd per pass: mq('naam') sluit de lopende meting en start een nieuwe (timer-queries kunnen niet nesten)
   function mq(label) {
     if (!M.on || !M.ext) return;
@@ -1193,11 +1405,11 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
       `CPU beeld (incl. labels) ${n ? f(M.cpu / n) : '–'} ms (max ${f(M.cpuMax)}) · hele tik ${n ? f(M.tick / n) : '–'} ms`,
       `GPU ${gpu == null ? (M.ext ? '–' : 'n.v.t. (geen timer-query)') : f(gpu) + ' ms/beeld: ' + ge.map(([k, v]) => k + ' ' + f(v / gn)).join(' · ')}`,
       `draw calls ${M.calls} · driehoeken ${(M.tris / 1e6).toFixed(2)} M · schaduwkaart ${M.shadow}× ververst`,
-      `modus ${camera === ortho ? 'iso (' + (sz.y / (2 * isoHalf())).toFixed(2) + ' px/m)' : 'persp'} · ${sz.x}×${sz.y} px (pr ${renderer.getPixelRatio()}) · posts ${posts.filter(p => p.enabled !== false).length} · bewegend ${dn} · animaties ${anims.size}`,
+      `modus ${camera === ortho ? 'iso (' + (sz.y / (2 * isoHalf())).toFixed(2) + ' px/m)' : 'persp'} · ${sz.x}×${sz.y} px (pr ${renderer.getPixelRatio()}) · posts ${posts.filter(p => p.enabled !== false).length} · bewegend ${dn} · animaties ${anims.size}${Object.keys(M.af).length ? ' (hele beelden/s: ' + Object.entries(M.af).map(([k, v]) => k + ' ' + f(v / sec)).join(', ') + ')' : ''}`,
       `shaders ${ri.programs.length} · geometrieën ${ri.memory.geometries} · texturen ${ri.memory.textures}`,
       'P = sluiten · Shift+P = continu tekenen aan/uit',
     ].join('\n');
-    Object.assign(M, { last: now, raf: 0, full: 0, post: 0, shadow: 0, cpu: 0, cpuMax: 0, tick: 0, gpu: {} }); M.gpuF.clear();
+    Object.assign(M, { af: {}, last: now, raf: 0, full: 0, post: 0, shadow: 0, cpu: 0, cpuMax: 0, tick: 0, gpu: {} }); M.gpuF.clear();
   }
   addEventListener('keydown', meterKey);
 
@@ -1207,11 +1419,13 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
   const lastCP = new THREE.Vector3(), lastCT = new THREE.Vector3();
   H.moving = () => moveNow; // slepen/zoomen/vliegen bezig (tot 250 ms erna); bij stilstand emit('still')
   const PR = Math.min(devicePixelRatio, 2), PR_MOVE = Math.min(devicePixelRatio, 1);
-  // H.animate((now, dt) => …): elke ±33 ms aanroepen zolang er iets beweegt (niet als de tab verborgen is); return false = stoppen.
+  // H.animate((now, dt) => …): één gedeelde tik voor alles wat beweegt (20/s, Zuinig 10/s; niet als de tab verborgen is); return false = stoppen.
+  // Modules houden geen eigen klokje bij: alles stapt samen → hooguit één nabewerking per tik. H.animMs() = huidige tik (ms).
   // Return 'post' = alleen de nabewerking veranderde (scène niet opnieuw renderen, alleen iso), 'none' = deze tik niets.
   // Geeft een stop-functie terug. Bewegende dingen werpen geen schaduw (schaduwkaart staat stil); H.shadowDirty() = schaduw één keer verversen.
   const anims = new Set(); let animT = 0, postDirty = false;
-  H.animate = fn => { anims.add(fn); redraw(); return () => anims.delete(fn); };
+  H.animate = (fn, src) => { if (src) fn.src = src; anims.add(fn); redraw(); return () => anims.delete(fn); }; // src = naam in de meter (wie vraagt hele beelden)
+  const animMs = () => fxOn.zuinig ? 100 : 50; H.animMs = animMs;
   H.shadowDirty = () => { shadowDirty = true; redraw(); };
   const IDLE_MS = 120000; let inputT = performance.now();
   for (const ev of ['pointerdown', 'pointermove', 'wheel', 'keydown', 'touchstart']) addEventListener(ev, () => { const was = performance.now() - inputT > IDLE_MS; inputT = performance.now(); if (was) redraw(); }, { passive: true });
@@ -1227,6 +1441,11 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
     const dir = Math.sign(wAcc); wAcc = 0;
     H.isoZoom(dir, e.clientX, e.clientY);
   }
+  H.zoomStep = dir => { // knoppen − / +: iso = vaste zoomstand, anders afstand × 1,8
+    if (camera === ortho) return H.isoZoom(dir);
+    const [x, y] = toRD(controls.target), d = camera.position.distanceTo(controls.target) * Math.pow(1.8, dir);
+    H.flyTo(x, y, { dist: Math.max(controls.minDistance, Math.min(controls.maxDistance, d)), ms: 380, arc: false }); emit('interact');
+  };
   H.isoZoom = (dir, cx, cy) => { // dir +1 = verder uit, −1 = dichterbij; cx/cy = schermpunt dat blijft staan (anders midden)
     if (camera !== ortho) return;
     const h0 = isoHalf(), k = Math.max(0, Math.min(ISO_LEVELS.length - 1, levelOf(fly?.hb ?? h0) + dir)), h1 = ISO_LEVELS[k];
@@ -1263,12 +1482,13 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
       if (t >= 1) fly = null;
       dirty = true;
     }
+    if (intro && area) { introStep(now); dirty = true; }
     const ctl = controls.update();
     // OrbitControls meldt bij ortho (iso) élke update als veranderd (zoomChanged) → zelf vergelijken, anders tekent iso eindeloos en is nooit 'stil'
     const moved = ctl && (camera.position.distanceToSquared(lastCP) > 1e-8 || controls.target.distanceToSquared(lastCT) > 1e-8 || camera.zoom !== lastZ);
     lastCP.copy(camera.position); lastCT.copy(controls.target); lastZ = camera.zoom;
     if (moved) dirty = true;
-    if ((moved && !controls.autoRotate) || fly) moveT = now; // slepen/zoomen/vliegen (rustig ronddraaien telt niet)
+    if ((moved && !controls.autoRotate) || fly || intro) moveT = now; // slepen/zoomen/vliegen (rustig ronddraaien telt niet)
     const moving = now - moveT < 250;
     if (moving !== moveNow) { moveNow = moving; dirty = true; if (!moving) { lastLod = 0; emit('still'); } } // stilstand: scherp + detail/tegels/grond bijwerken
     // iso: canvas blijft op max 1,5 (omlijning + nabewerking zijn per pixel); kleiner tekenen tijdens bewegen gebeurt in draw() → geen canvas-herallocatie
@@ -1281,16 +1501,21 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
       if (Math.abs(d) > 0.3) { controls.target.y += d * 0.25; camera.position.y += d * 0.25; dirty = true; }
     }
     updateTextures(now);
+    loadTick(now);
+    if (growing.size) { // panden groeien: elk scherm-beeld tekenen (vloeiender dan de 20/s-tik); klaar → schaduw aan
+      const t = nowS(); GU.uGT.value = t; GU.uGOn.value = 1; dirty = true;
+      for (const c of growing) if (t >= c.growEnd) growDone(c);
+    } else if (GU.uGOn.value) { GU.uGOn.value = 0; dirty = true; }
     if (selMesh) { // knipperen: 3 s, daarna rustig
       const t = (now - pulseT0) / 1000;
       const o = t < 3 ? 0.15 + 0.4 * (0.5 + 0.5 * Math.sin(t * 7)) : 0.3;
       if (Math.abs(o - MAT.sel.opacity) > 0.005) { MAT.sel.opacity = o; dirty = true; }
     }
-    if (anims.size && !document.hidden && now - inputT < IDLE_MS && now - animT >= 33) { // na 2 min zonder invoer: wolken/ballon/verkeer pauzeren
+    if (anims.size && !document.hidden && now - inputT < IDLE_MS && now - animT >= animMs() - 4) { // −4: rAF-jitter, anders valt 50 ms soms op 67 // na 2 min zonder invoer: wolken/ballon/verkeer pauzeren
       const adt = Math.min(200, now - (animT || now)); animT = now;
       for (const f of anims) {
         const r = f(now, adt);
-        if (r === false) anims.delete(f); else if (r === 'post') postDirty = true; else if (r !== 'none') dirty = true;
+        if (r === false) anims.delete(f); else if (r === 'post') postDirty = true; else if (r !== 'none') { dirty = true; if (M.on) M.af[f.src || f.name || '?'] = (M.af[f.src || f.name || '?'] || 0) + 1; }
       }
     }
     if (!dirty) {
@@ -1310,11 +1535,15 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
     }
     // zon + schaduwkader rond het doel, grootte naar zoom
     const S = shadowExt(), sc = sun.shadow.camera;
+    // A2: iso op stand 700/2200 = gebakken zonschaduw (schaduwkaart niet bijwerken); dichterbij scherpe live schaduw. Contactschaduw in iso altijd (zodra gebakken)
+    const bk = iso && H.bakeReady === true && isoHalf() > 400 ? 1 : 0;
+    if (bk !== U.uBaked.value) { U.uBaked.value = bk; if (!bk) shadowDirty = true; }
+    U.uBkAO.value = iso && U.uBk.value && fxOn.ao ? 1 : 0;
     const key = Math.round(controls.target.x / 20) + ',' + Math.round(controls.target.z / 20) + ',' + Math.round(S / 50);
-    if (!moving && (shadowDirty || key !== shadowKey)) { // tijdens bewegen blijft de schaduwkaart staan
+    if (!moving && !bk && (shadowDirty || key !== shadowKey)) { // tijdens bewegen blijft de schaduwkaart staan
       shadowDirty = false; shadowKey = key; renderer.shadowMap.needsUpdate = true;
       sun.target.position.copy(controls.target);
-      sun.position.copy(controls.target).add(new THREE.Vector3(-0.55, 0.75, 0.35).multiplyScalar(3000));
+      sun.position.copy(controls.target).add(SUN_DIR.clone().multiplyScalar(3000));
       sc.left = -S; sc.right = S; sc.top = S; sc.bottom = -S; sc.near = 100; sc.far = 6000; sc.updateProjectionMatrix();
     } else if (moving) dirty = true; // blijven tekenen tot stilstand, dan één keer met verse schaduw
     if (iso) { scene.fog.near = 1e7; scene.fog.far = 2e7; }
@@ -1329,6 +1558,14 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
   // ---------- Lagen (data/layers.js): water, spoor, snelwegen als linten op het terrein; labels/bekende gebouwen in labels.js/ui.js ----------
   const layerOn = { straten: 1, wijken: 1, water: 1, spoor: 1, wegen: 1, bomen: 1, gebouwen: 1 };
   try { Object.assign(layerOn, JSON.parse(localStorage.getItem('h3d.layers') || '{}')); } catch {}
+  // effecten aan/uit (menu's Sfeer/Stad in ui.js); elk iso-bestand leest H.fxOn(k) en luistert naar 'fx'
+  // zuinig = geen effect maar een stand: gedeelde animatietik 10/s i.p.v. 20/s, water stil (standaard uit)
+  const FXK = ['wolken', 'lucht', 'verkeer', 'props', 'randen', 'ao', 'diorama', 'zuinig'];
+  const fxOn = Object.fromEntries(FXK.map(k => [k, k === 'zuinig' ? 0 : 1]));
+  try { const t = localStorage.getItem('h3d.tilt'); if (t != null) fxOn.randen = t === '0' ? 0 : 1; Object.assign(fxOn, JSON.parse(localStorage.getItem('h3d.fx') || '{}')); } catch {}
+  H.FXK = FXK;
+  H.fxOn = k => !!fxOn[k];
+  H.setFx = (k, on) => { fxOn[k] = on ? 1 : 0; try { localStorage.setItem('h3d.fx', JSON.stringify(fxOn)); } catch {} shadowDirty = true; emit('fx', k, !!on); redraw(); };
   const layerObjs = {}; // laag → [meshes]
   let layersBuilt = false, allIn = false;
   H.layerOn = k => !!layerOn[k];
@@ -1340,7 +1577,7 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
   // linten (wegen/spoor/water als 3D-strook) niet in iso: daar schildert iso/ground.js ze in dezelfde stijl op de grond (±6,5 ms GPU)
   function layerVis(k, o) { return !!layerOn[k] && !(o.userData.ribbon && camera === ortho); }
   function ribbonsForMode() { for (const k in layerObjs) for (const o of layerObjs[k]) if (o.userData.ribbon) o.visible = layerVis(k, o); }
-  H.layers = d => { H.layerData = d; emit('layers', d); buildLayers(); };
+  H.layers = d => { H.layerData = d; emit('layers', d); for (const c of H.chunks.values()) treesFor(c); buildLayers(); };
   // hoogte alleen waar een vak geladen is (anders null → lint daar onderbreken)
   const hAt = (x, y) => H.chunks.get(Math.floor(x / area.km) + '_' + Math.floor(y / area.km))?.dem ? heightAt(x, y) : null;
   // lijnen [{ xy, w, bridge }] → één geometrie. uv: u dwars (0..1), v langs in meters. Brug: hoogte lineair tussen de eindpunten.
@@ -1465,14 +1702,13 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
       const ig = new THREE.CylinderGeometry(1, 1, 1, 32).translate(0, -0.5, 0), im = new THREE.InstancedMesh(ig, new THREE.MeshLambertMaterial({ color: '#8cc46c' }), isle.length);
       const m4 = new THREE.Matrix4();
       isle.forEach(([x, y, r, h], i) => im.setMatrixAt(i, m4.makeScale(r, 3, r).setPosition(x - O[0], h + 1.1, -(y - O[1]))));
-      im.computeBoundingSphere(); add('wegen', im);
+      im.computeBoundingSphere(); add('wegen', im, true); // als lint: niet in iso (daar schildert iso/ground.js de echte rotondevorm)
     }
     // snelwegen: overal dezelfde breedte (OSM-rijstroken wisselen per stuk → rafelig): rijbaan 2 stroken, afrit 1; hoger dan straten
     const lanes1 = [], lanes2 = [];
     for (const [type, , bridge, xy] of d.roads) (type.endsWith('+') ? lanes1 : lanes2).push({ xy, w: type.endsWith('+') ? 6 : 10.5, bridge });
     addR('wegen', ribbonGeo(lanes2, 1.4, 2), ribbonMat({ map: laneTex(2) }, -4));
     addR('wegen', ribbonGeo(lanes1, 1.3, 2), ribbonMat({ map: laneTex(1) }, -4));
-    if (d.woods) buildTrees(d.woods);
     shadowDirty = true; redraw();
   }
 
@@ -1493,10 +1729,12 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
     g.setAttribute('position', new THREE.BufferAttribute(P, 3)); g.setAttribute('color', new THREE.BufferAttribute(C, 3));
     return g;
   }
-  function buildTrees(woods) {
+  // bomen per vak (zodra het terrein er is): punten één keer voor heel Heerlen (scanlijn, vaste volgorde), hoogte + meshes per vak
+  let treePts = null, treeRes = null;
+  function treePoints(woods) {
     let seed = 1234567;
     const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
-    const per = new Map(); // vak → [x, y, h, naald]
+    const per = new Map(); // 'i_j' → [x, y, naald]
     for (const [needle, a] of woods) {
       let y0 = Infinity, y1 = -Infinity;
       for (let k = 1; k < a.length; k += 2) { y0 = Math.min(y0, a[k]); y1 = Math.max(y1, a[k]); }
@@ -1505,19 +1743,27 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
         for (let k = 0; k + 3 < a.length; k += 2) { const ya = a[k + 1], yb = a[k + 3]; if ((ya <= y) !== (yb <= y)) xs.push(a[k] + (y - ya) / (yb - ya) * (a[k + 2] - a[k])); }
         xs.sort((p, q) => p - q);
         for (let k = 0; k + 1 < xs.length; k += 2) for (let x = Math.ceil(xs[k] / TREE_SP) * TREE_SP + ((y / TREE_SP) & 1) * TREE_SP / 2; x < xs[k + 1]; x += TREE_SP) {
-          const px = x + (rnd() - 0.5) * TREE_SP * 0.8, py = y + (rnd() - 0.5) * TREE_SP * 0.8;
-          const c = H.chunks.get(Math.floor(px / area.km) + '_' + Math.floor(py / area.km)); if (!c) continue;
-          let L = per.get(c); if (!L) per.set(c, L = []);
-          L.push(px, py, heightAt(px, py), needle || rnd() < 0.15 ? 1 : 0);
+          const px = x + (rnd() - 0.5) * TREE_SP * 0.8, py = y + (rnd() - 0.5) * TREE_SP * 0.8, key = Math.floor(px / area.km) + '_' + Math.floor(py / area.km);
+          let L = per.get(key); if (!L) per.set(key, L = []);
+          L.push(px, py, needle || rnd() < 0.15 ? 1 : 0);
         }
       }
     }
-    const geo = [treeGeo(false), treeGeo(true)], geoLo = [treeGeo(false, true), treeGeo(true, true)], mat = celify(new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), 'tree');
+    return per;
+  }
+  function treesFor(c) {
+    const woods = H.layerData?.woods; if (!woods || c.trees || !scene) return;
+    treePts ||= treePoints(woods);
+    const P = treePts.get(c.i + '_' + c.j); c.trees = []; if (!P) return;
+    let seed = 7654321 + c.i * 1013 + c.j * 7919;
+    const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    const L = []; for (let k = 0; k < P.length; k += 3) L.push(P[k], P[k + 1], heightAt(P[k], P[k + 1]), P[k + 2]);
+    if (!treeRes) treeRes = { geo: [treeGeo(false), treeGeo(true)], geoLo: [treeGeo(false, true), treeGeo(true, true)], mat: celify(new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), 'tree') };
+    const { geo, geoLo, mat } = treeRes;
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), ps = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0), col = new THREE.Color();
-    for (const [c, L] of per) {
+    {
       const n = L.length / 4, ord = Array.from({ length: n }, (_, k) => k);
       for (let k = n - 1; k > 0; k--) { const j = Math.floor(rnd() * (k + 1)); [ord[k], ord[j]] = [ord[j], ord[k]]; }
-      c.trees = [];
       for (const kind of [0, 1]) {
         const idx = ord.filter(k => L[k * 4 + 3] === kind); if (!idx.length) continue;
         const im = new THREE.InstancedMesh(geo[kind], mat, idx.length);

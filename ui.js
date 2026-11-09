@@ -88,10 +88,12 @@
     const counts = {};
     for (const p of H3D.places) counts[p.cat] = (counts[p.cat] || 0) + 1;
     counts.mijn = state.pins.length;
-    $('chips').innerHTML = Object.entries(CATS).filter(([, c]) => !c.hidden).map(([k, c]) =>
+    const vis = Object.entries(CATS).filter(([, c]) => !c.hidden), on = vis.filter(([k]) => state.on.has(k));
+    $('g-plek').querySelector('small').textContent = on.length ? on.map(([, c]) => c.icon).join('') : '';
+    $('chipl').innerHTML = Object.entries(CATS).filter(([, c]) => !c.hidden).map(([k, c]) =>
       `<button class="chip${state.on.has(k) ? ' on' : ''}" data-cat="${k}" style="--c:${c.color}${c.dark ? ';--t:#1d1a16' : ''}" title="${c.label} tonen/verbergen"><span>${c.icon}</span>${c.label}<small>${counts[k] || 0}</small></button>`).join('');
   }
-  $('chips').addEventListener('click', e => {
+  $('chipl').addEventListener('click', e => {
     const b = e.target.closest('.chip'); if (!b) return;
     const k = b.dataset.cat;
     if (state.on.has(k)) state.on.delete(k); else state.on.add(k);
@@ -283,8 +285,22 @@
   const q = $('q'), res = $('results');
   let addrT = 0, addrTok = 0, lastList = [], nameHit = true;
   function catOf(text) { const t = norm(text).trim(); return Object.entries(CATS).find(([, c]) => c.words.includes(t))?.[0]; }
+  // bouwjaar in de zoekvraag: "jaren 30 huis", "jaren 1960", "30s", "1930-1939", "1920 tot 1940", "bouwjaar 1925", "van voor 1900", "na 2010"
+  function eraOf(text) {
+    const t = norm(text), Y = 2030;
+    let m = t.match(/(1[5-9]\d\d|20[0-3]\d)\s*(?:-|–|tot|t\/m|tm)\s*(1[5-9]\d\d|20[0-3]\d)/); if (m) { const a = +m[1], b = +m[2]; return [Math.min(a, b), Math.max(a, b), `${Math.min(a, b)}–${Math.max(a, b)}`]; }
+    m = t.match(/jaren\s*'?(\d{2}|\d{4})\b/) || t.match(/\b'?(\d{2}|1[5-9]\d0|20[0-3]0)s\b/);
+    if (m) { let d = +m[1]; if (d < 100) d = d === 0 || d === 10 ? 2000 + d : 1900 + d; d -= d % 10; return [d, d + 9, `jaren ${String(d).slice(d < 2000 ? 2 : 0)} (${d}–${d + 9})`]; }
+    m = t.match(/\b(?:van\s+)?voor\s+(1[5-9]\d\d|20[0-3]\d)\b/); if (m) return [1000, +m[1] - 1, `van vóór ${m[1]}`];
+    m = t.match(/\b(?:na|vanaf|sinds)\s+(1[5-9]\d\d|20[0-3]\d)\b/); if (m) return [+m[1] + (/na/.test(m[0]) ? 1 : 0), Y, `${/na/.test(m[0]) ? 'na' : 'vanaf'} ${m[1]}`];
+    m = t.match(/\b(?:bouwjaar|gebouwd(?:\s+in)?|uit|in)\s+(1[5-9]\d\d|20[0-3]\d)\b/); if (m) return [+m[1], +m[1], `bouwjaar ${m[1]}`];
+    return null;
+  }
+  let eraHead = '', eraHit = null;
   function search(text) {
     const t = norm(text).trim(), words = t.split(/\s+/).filter(Boolean);
+    eraHit = t ? eraOf(text) : null;
+    eraHead = eraHit ? `<button class="res" data-era="1"><span style="--c:#d9822b">🏠</span><b>Panden ${esc(eraHit[2])}</b><small>Bouwjaar uit 3D BAG · licht ze op in de kaart</small><em>${H3D.countEra(eraHit[0], eraHit[1]).toLocaleString('nl-NL')}</em></button>` : '';
     if (!t) { res.innerHTML = ''; res.hidden = true; return; }
     const cat = catOf(text);
     if (cat) return showList(cat);
@@ -327,7 +343,7 @@
     const ad = addr.map((a, i) => `<button class="res" data-addr="${i}"><span style="--c:#777">⌖</span><b>${esc(a.name.replace(/, Heerlen$/, ''))}</b><small>${TYPE_NL[a.type] || a.type}</small><em>${fmtD(distTo(a))}</em></button>`).join('');
     const adBlock = ad ? `<div class="sep">Adressen en straten</div>${ad}` : '';
     const body = !it && !ad ? '<div class="empty">Niets gevonden in Heerlen</div>' : !head && !nameHit ? adBlock + (it ? `<div class="sep">Plekken</div>${it}` : '') : it + adBlock;
-    res.innerHTML = (head || '') + body;
+    res.innerHTML = (head || '') + (head ? '' : eraHead) + body;
     res.hidden = false;
   }
   function showList(cat) {
@@ -346,6 +362,12 @@
     if (e.key === 'Enter') res.querySelector('.res')?.click();
   });
   $('qx').addEventListener('click', () => { q.value = ''; search(''); q.focus(); });
+  // dichtgeklapt zoeken: vergrootglas → balk; dicht bij verlaten als hij leeg is en er geen lijst open staat
+  const sbox = $('search');
+  const openSearch = () => { sbox.classList.add('open'); q.focus(); };
+  $('qopen').addEventListener('click', openSearch);
+  q.addEventListener('blur', () => setTimeout(() => { if (!q.value && res.hidden && !sbox.contains(document.activeElement)) sbox.classList.remove('open'); }, 150));
+  new MutationObserver(() => { if (!res.hidden) sbox.classList.add('open'); }).observe(res, { attributes: true, attributeFilter: ['hidden'] }); // categorie-lijst opent de balk mee
   res.addEventListener('change', e => { if (e.target.id === 'openonly') { setOpenOnly(e.target.checked); showList(e.target.dataset.cat); } });
   // ---------- Filter "nu open": dichte plekken grijs op de kaart (lijst: alleen open) ----------
   const openBtn = $('openf'), showOpen = () => openBtn.classList.toggle('on', state.openOnly);
@@ -355,12 +377,43 @@
   setInterval(() => { if (state.openOnly) rebuildPins(); }, 60000); // tijd loopt door
   // ---------- Lagen aan/uit ----------
   const LAYERS = { straten: 'Straatnamen', wijken: 'Wijken en stations', water: 'Water', spoor: 'Spoor', wegen: 'Wegen', bomen: 'Bossen', gebouwen: '◆ Bekende gebouwen' };
-  $('layers').querySelector('div').innerHTML = Object.entries(LAYERS).map(([k, l]) => `<label><input type="checkbox" data-layer="${k}"${H3D.layerOn(k) ? ' checked' : ''}> ${l}</label>`).join('');
-  $('layers').addEventListener('change', e => { const k = e.target.dataset.layer; if (k) H3D.setLayer(k, e.target.checked); });
+  $('layers').innerHTML = Object.entries(LAYERS).map(([k, l]) => `<label><input type="checkbox" data-layer="${k}"${H3D.layerOn(k) ? ' checked' : ''}> ${l}</label>`).join('');
+  $('layers').addEventListener('change', e => { const k = e.target.dataset.layer; if (k) { H3D.setLayer(k, e.target.checked); showCounts(); } });
+  // ---------- Effecten: menu's Sfeer (licht + wolken, lucht, randen) en Stad (verkeer, meubilair, schaduw, diorama) ----------
+  const FX = { // naam, icoon, kosten 1–3, uitleg
+    wolken: ['Wolkschaduw', '☁', 2, '±1,3 ms per beeld'], lucht: ['Ballon en vogels', '🎈', 1, 'af en toe iets in de lucht'], randen: ['Zachte randen', '◎', 3, '±2,1 ms per beeld · toets T'],
+    zuinig: ['Zuinig', '🍃', 0, 'animaties 10/s i.p.v. 20/s, water stil — rustiger voor laptop/accu'],
+    verkeer: ['Bussen en treinen', '🚌', 1, '±0,2 ms per beeld'], props: ['Straatmeubilair', '🌳', 2, 'straatbomen, lantaarns, bankjes'], ao: ['Contactschaduw', '◐', 1, 'één keer gebakken, daarna bijna gratis'], diorama: ['Diorama-rand', '▱', 1, 'aardlagen langs de gemeentegrens'],
+  };
+  const GRP = { sfeer: ['wolken', 'lucht', 'randen'], stad: ['verkeer', 'props', 'ao', 'diorama'] };
+  const FXK_ALL = [...GRP.sfeer, ...GRP.stad];
+  const fxRow = k => { const [n, ic, c, t] = FX[k]; return `<label title="${t}"><span class="ic">${ic}</span>${n}<span class="cost">${c ? [1, 2, 3].map(i => `<i class="${i <= c ? 'f' : ''}"></i>`).join('') : ''}</span><input type="checkbox" class="sw" data-fx="${k}"${H3D.fxOn(k) ? ' checked' : ''}></label>`; };
+  const LIGHTS = { dag: '☀ Dag', avond: '🌙 Avond', nu: '🕒 Nu' };
+  const sfeer = $('g-sfeer').querySelector('div'), stad = $('g-stad').querySelector('div');
+  sfeer.innerHTML = `<h4>Licht</h4><div class="lseg">${Object.entries(LIGHTS).map(([k, l]) => `<button data-light="${k}">${l}</button>`).join('')}</div><div class="sep2"></div><h4>Effecten</h4>${GRP.sfeer.map(fxRow).join('')}<div class="sep2"></div>${fxRow('zuinig')}`;
+  stad.innerHTML = GRP.stad.map(fxRow).join('') + '<p class="hint">Contactschaduw wordt één keer gebakken (±10 s), daarna bijna gratis.</p>';
+  const showLight = () => sfeer.querySelectorAll('[data-light]').forEach(b => b.classList.toggle('on', b.dataset.light === H3D.getLight()));
+  sfeer.addEventListener('click', e => { const b = e.target.closest('[data-light]'); if (b) { H3D.setLight(b.dataset.light); showLight(); } });
+  showLight();
+  function showCounts() {
+    const n = (keys, on) => keys.filter(on).length + '/' + keys.length;
+    $('g-kaart').querySelector('small').textContent = n(Object.keys(LAYERS), H3D.layerOn);
+    for (const g in GRP) $('g-' + g).querySelector('small').textContent = n(GRP[g], H3D.fxOn);
+    const all = Object.keys(LAYERS).filter(H3D.layerOn).length + FXK_ALL.filter(H3D.fxOn).length; // samen op de ene knop
+    $('g-view').querySelector('summary small').textContent = all + '/' + (Object.keys(LAYERS).length + FXK_ALL.length);
+  }
+  document.addEventListener('change', e => { const k = e.target.dataset?.fx; if (k) H3D.setFx(k, e.target.checked); });
+  H3D.on('fx', (k, on) => { const i = document.querySelector(`[data-fx="${k}"]`); if (i) i.checked = on; showCounts(); });
+  showCounts();
+  // één groep tegelijk open; klik ernaast sluit
+  const grps = [...document.querySelectorAll('.grp')];
+  grps.forEach(d => d.addEventListener('toggle', () => { if (d.open) grps.forEach(o => o !== d && o.removeAttribute('open')); }));
+  document.addEventListener('pointerdown', e => { if (!e.target.closest('.grp')) grps.forEach(d => d.removeAttribute('open')); });
   H3D.on('layer', k => { if (k === 'gebouwen') rebuildPins(); });
   res.addEventListener('click', e => {
     const b = e.target.closest('.res'); if (!b) return;
-    if (b.dataset.addr != null) {
+    if (b.dataset.era) setEra(eraHit);
+    else if (b.dataset.addr != null) {
       const a = shownAddr[+b.dataset.addr];
       H3D.flyTo(a.x, a.y, { dist: a.type === 'adres' ? 220 : a.type === 'weg' ? 500 : 1200 });
       card(`<div class="kind" style="--c:#777">⌖ ${TYPE_NL[a.type] || a.type}</div><h2>${esc(a.name)}</h2>
@@ -373,24 +426,32 @@
   });
   document.addEventListener('pointerdown', e => { if (!e.target.closest('#search')) res.hidden = true; });
 
+  // bouwjaar-filter aan/uit: chip bij de categorieën met × ; zet dimmen tijdelijk aan zodat de rest wegvalt
+  let eraChip = null, eraDimmed = false;
+  function setEra(e) {
+    const n = H3D.setEra(e ? e[0] : 0, e ? e[1] : 0);
+    if (e && !H3D.getDim()) { H3D.setDim(true); eraDimmed = true; showDim(); }
+    if (!e && eraDimmed) { H3D.setDim(false); eraDimmed = false; showDim(); }
+    eraChip?.remove(); eraChip = null;
+    if (e) {
+      eraChip = Object.assign(document.createElement('button'), { className: 'chip', title: 'Bouwjaar-filter uitzetten' });
+      eraChip.style.setProperty('--c', '#d9822b');
+      eraChip.innerHTML = `<span>🏠</span>Panden ${esc(e[2])} <small>${n.toLocaleString('nl-NL')}</small> ×`;
+      eraChip.addEventListener('click', () => setEra(null));
+      $('chips').appendChild(eraChip);
+    }
+    q.value = ''; res.hidden = true;
+  }
+
   // ---------- Kaartstijl, weergave, kompas ----------
-  function renderStyles() {
-    $('styles').innerHTML = Object.entries(H3D.STYLES).map(([k, s]) => `<button data-style="${k}" class="${H3D.getStyle() === k ? 'on' : ''}">${s.label}</button>`).join('');
+  function renderStyles() { // kaartstijl-knoppen zijn weg (iso tekent eigen grond); alleen de bronvermelding
     $('attr').innerHTML = `${H3D.STYLES[H3D.getStyle()].attr} · Gebouwen © <a href="https://3dbag.nl" target="_blank" rel="noopener">3D BAG</a> · Terrein AHN · Plekken © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>`;
   }
-  $('styles').addEventListener('click', e => { const b = e.target.closest('[data-style]'); if (b) { H3D.setStyle(b.dataset.style); renderStyles(); } });
-  const showMode = () => document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === H3D.getMode()));
-  document.querySelectorAll('[data-mode]').forEach(b => b.addEventListener('click', () => { H3D.setMode(b.dataset.mode); showMode(); b.closest('details')?.removeAttribute('open'); }));
-  showMode(); H3D.on('mode', showMode);
+  const showMode = () => {}; // modusknoppen Plat/3D/Rondkijken zijn weg; iso is de enige weergave
   const dimBtn = $('dim'), showDim = () => dimBtn.classList.toggle('on', H3D.getDim());
   dimBtn.addEventListener('click', () => { H3D.setDim(!H3D.getDim()); showDim(); });
   showDim();
   document.querySelectorAll('[data-view]').forEach(b => b.addEventListener('click', () => H3D.view(b.dataset.view)));
-  // licht: dag → avond → nu (volgt de klok)
-  const LIGHTS = { dag: '☀ Dag', avond: '🌙 Avond', nu: '🕒 Nu' }, lightBtn = $('light');
-  const showLight = () => { lightBtn.textContent = LIGHTS[H3D.getLight()]; };
-  lightBtn.addEventListener('click', () => { const k = Object.keys(LIGHTS); H3D.setLight(k[(k.indexOf(H3D.getLight()) + 1) % k.length]); showLight(); });
-  showLight();
 
   // ---------- Rondleiding: in Rondkijken een voor een langs je pins, anders langs de dichtstbijzijnde plekken in beeld ----------
   const tour = { on: false, i: 0, list: [], t: 0 }, tourBtn = $('tour');
@@ -462,10 +523,13 @@
     renderStyles(); renderChips(); rebuildPins();
     document.addEventListener('keydown', e => {
       if (e.target.closest('input,textarea') || e.ctrlKey || e.metaKey || e.altKey) return;
-      if (e.key === '/' && document.activeElement !== q) { e.preventDefault(); q.focus(); }
+      if (e.key === '/' && document.activeElement !== q) { e.preventDefault(); $('search').classList.add('open'); q.focus(); }
       else if (e.key === 'q' || e.key === 'Q') H3D.isoTurn(-1); // iso: kwartslag draaien
       else if (e.key === 'e' || e.key === 'E') H3D.isoTurn(1);
+      else if (e.key === '+' || e.key === '=') H3D.zoomStep(-1);
+      else if (e.key === '-' || e.key === '_') H3D.zoomStep(1);
     });
     document.querySelectorAll('[data-rot]').forEach(b => b.addEventListener('click', () => H3D.isoTurn(+b.dataset.rot)));
+    document.querySelectorAll('[data-zoom]').forEach(b => b.addEventListener('click', () => H3D.zoomStep(+b.dataset.zoom)));
   });
 })();
