@@ -156,8 +156,8 @@ body.no-webgl #nowebgl { display: grid; }
 .grp[open] summary { background: var(--ink); color: var(--paper); }
 .grp > div { position: absolute; right: 0; top: 44px; min-width: 230px; background: var(--paper); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); padding: 8px; z-index: 5; }
 .grp h4 { margin: 4px 6px 6px; font: 600 11px var(--sans); letter-spacing: .06em; text-transform: uppercase; color: var(--ink2); }
-.grp .lseg { display: flex; border: 1px solid var(--line); border-radius: 10px; padding: 3px; margin: 0 4px 4px; }
-.grp .lseg button { flex: 1; border: 0; background: none; padding: 5px 8px; border-radius: 7px; font-size: 13px; white-space: nowrap; }
+.grp .lseg { display: flex; flex-wrap: wrap; gap: 2px; border: 1px solid var(--line); border-radius: 10px; padding: 3px; margin: 0 4px 4px; }
+.grp .lseg button { flex: 1 1 auto; min-width: 0; border: 0; background: none; padding: 5px 6px; border-radius: 7px; font-size: 13px; white-space: nowrap; }
 .grp .lseg button.on { background: var(--ink); color: var(--paper); }
 .grp .sep2 { height: 1px; background: var(--line); margin: 8px 2px; }
 .grp label { display: flex; gap: 8px; align-items: center; padding: 6px 8px; border-radius: 8px; cursor: pointer; font-size: 13px; white-space: nowrap; }
@@ -172,6 +172,7 @@ body.no-webgl #nowebgl { display: grid; }
 .grp input.sw:checked::after { left: 14px; }
 /* één knop Weergave: Kaart · Sfeer · Stad naast elkaar; Plekken: categorieën uitklappen */
 .grp.wide > div { display: grid; grid-template-columns: repeat(3, minmax(210px, 1fr)); gap: 4px 10px; min-width: 660px; }
+.grp.wide section { min-width: 0; } /* knoppenrij mag niet onder de buurkolom doorlopen (Winter was onklikbaar) */
 .grp.wide section + section { border-left: 1px solid var(--line); padding-left: 10px; }
 .grp h3 { margin: 4px 6px 8px; font: 700 13px var(--sans); }
 .grp h3 small { font-size: 11px; font-weight: 600; color: var(--ink2); }

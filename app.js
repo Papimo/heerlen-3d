@@ -103,7 +103,7 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
   const redraw = () => { dirty = true; };
   const BUILD = 'anime-1 licht randje, daken op bouwjaar, middag zacht, bolle bomen (2026-11-09)', DBG_U = { value: new THREE.Vector2(1, 1) }; // ?gpu: versie zichtbaar + schakelaars omlijning (x = vlaklijnen, y = dieptelijnen)
   H.redraw = redraw;
-  H.VERSION = '0.6.2'; // getoond onderaan (ui.js #attr); bij release ophogen
+  H.VERSION = '0.6.3'; // getoond onderaan (ui.js #attr); bij release ophogen
   // na de upload naar de GPU de kopie in het werkgeheugen weggooien (canvas → 1×1, DataTexture-data → null). Opnieuw tekenen = nieuw canvas/nieuwe textuur
   H.freeAfterUpload = tex => { tex.onUpdate = () => { tex.onUpdate = null; const im = tex.image; if (im && im.getContext) im.width = im.height = 1; else if (im && im.data) im.data = null; }; return tex; };
 
@@ -151,7 +151,7 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
     scene.add(hemi);
     sun = new THREE.DirectionalLight('#fff4e2', 2.2);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(3072, 3072); // groot kader (shadowExt) zodat schaduw bij schuiven al klaarligt
+    sun.shadow.mapSize.set(2048, 2048);
     sun.shadow.bias = -0.0004;
     sun.shadow.normalBias = 0.6;
     scene.add(sun, sun.target);
@@ -243,10 +243,10 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
     startIntro();
   }
   // ---------- Laden (design/11_laden.html optie 3 · grond eerst, panden daarna) ----------
-  // Alleen vakken in beeld + vooruit in de panrichting (±2,5 s), dichtbij eerst; per vak eerst het terrein (script + uitpakken), de panden
+  // Alleen vakken in beeld + vooruit in de panrichting (±1,5 s), dichtbij eerst; per vak eerst het terrein (script + uitpakken), de panden
   // pas als alle zichtbare vakken terrein hebben (of uiterlijk na 0,4 s). Stil + alles in beeld klaar → de rest rustig op de achtergrond
   // (LOAD.fill; nodig voor lagen/verkeer/modellen/zoeken die op 'loaded' wachten). Toestand per vak s: 0 wacht · 1 script · 2 terrein · 3 klaar.
-  const LOAD = { scripts: 2, ahead: 2.5, bGap: 120, bForce: 400, gWait: 4000, fill: true, fillIdle: 1200 };
+  const LOAD = { scripts: 2, ahead: 1.5, bGap: 120, bForce: 400, gWait: 4000, fill: true, fillIdle: 1200 };
   const LS = new Map(), lsFr = new THREE.Frustum(), lsM = new THREE.Matrix4(), lsVel = new THREE.Vector3(), lsPrev = new THREE.Vector3();
   let lsBusy = 0, lsDone = 0, lsB = 0, lsTick = 0, lsStill = 0, lsFirst = true, lsProg = '', aheadO, aheadP;
   H.loadState = () => LS; // iso/laden.js: welke vakken er zijn (voortgangsraster)
@@ -266,7 +266,7 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
     const dt = (now - (lsTick || now)) / 1000; lsTick = now;
     if (dt > 0) { const a = Math.min(1, dt * 3); lsVel.x += ((controls.target.x - lsPrev.x) / dt - lsVel.x) * a; lsVel.z += ((controls.target.z - lsPrev.z) / dt - lsVel.z) * a; }
     lsPrev.copy(controls.target);
-    // zichtbaar: tijdens de intro het beeld ná de landing; vooruit = zelfde camera 2,5 s verder in de panrichting
+    // zichtbaar: tijdens de intro het beeld ná de landing; vooruit = zelfde camera 1,5 s verder in de panrichting
     const ac = camera === ortho ? (aheadO ||= ortho.clone()) : (aheadP ||= persp.clone());
     ac.copy(camera); if (intro) introPose(1, ac); ac.updateProjectionMatrix();
     const inV = lsVisFn(ac);
@@ -533,8 +533,10 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
   const lens = () => camera === ortho ? isoHalf() / TAN21 / camera.position.distanceTo(controls.target) : Math.tan(persp.fov * Math.PI / 360) / TAN21;
   const viewDist = () => camera.position.distanceTo(controls.target) * lens();
   // halve breedte van het schaduwkader (en waarbinnen panden schaduw werpen)
-  const shadowExt = () => camera === ortho ? Math.max(500, Math.min(4000, Math.max(isoHalf() * ortho.right / ISO_H0, isoHalf() * 3.2) * 1.25))
-    : Math.max(350, Math.min(3200, viewDist() * 1.5));
+  const shadowExt = () => camera === ortho ? Math.max(350, Math.min(3000, Math.max(isoHalf() * ortho.right / ISO_H0, isoHalf() * 2.2) * 1.1))
+    : Math.max(350, Math.min(2600, viewDist() * 1.1));
+  // schaduwkader schuift vooruit in de laatste schuifrichting (zelfde kosten, schaduw ligt al klaar waar je heen gaat); render-lus zet shC
+  const shC = new THREE.Vector3(), shLast = new THREE.Vector3(), shDir = new THREE.Vector3(), SH_AHEAD = 0.25; // meer = achterkant van het beeld valt buiten het kader let shKeep = false;
   H.lens = lens;
   function wantLevel(c) {
     if (camera === ortho) { // iso: overal dezelfde schaal → tegelniveau uit meters per schermpixel (incl. pixeldichtheid), niet uit afstand
@@ -573,7 +575,7 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
     for (const c of H.chunks.values()) {
       const d = chunkDist(c, camera.position) * lens(), far = !!c.lo && camera !== ortho && (c.lo.visible ? d > LO_FAR - 200 : d > LO_FAR + 200); // iso: altijd LoD 2.2 (A1)
       if (c.mesh && c.lo && c.lo.visible !== far && (far || !mv)) { c.lo.visible = far; c.mesh.visible = !far; ch = true; }
-      const cast = shadows && !far && chunkDist(c, controls.target, 0) < S;
+      const cast = shadows && !far && chunkDist(c, shC, 0) < S;
       if (c.mesh && !c.growing && c.mesh.castShadow !== cast && !mv) { c.mesh.castShadow = cast; ch = true; }
       if (c.trees) { // bomen: dichtbij alles, verder weg uitgedund, heel ver weg geen
         const f = d < 1800 ? 1 : d < 4000 ? 1 / 3 : d < 8000 ? 1 / 8 : 0, lo = dbs.y / (2 * d * TAN21) < TREE_LO_PPM; // d × lens → px/m zoals in iso
@@ -1928,10 +1930,14 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     const key = Math.round(controls.target.x / 20) + ',' + Math.round(controls.target.z / 20) + ',' + Math.round(S / 50);
     if (!moving && !bk && (shadowDirty || key !== shadowKey)) { // tijdens bewegen blijft de schaduwkaart staan
       shadowDirty = false; shadowKey = key; renderer.shadowMap.needsUpdate = true;
-      sun.target.position.copy(controls.target);
+      const dx = controls.target.x - shLast.x, dz = controls.target.z - shLast.z; // schuifrichting sinds vorige stilstand (klein = vorige houden)
+      if (shKeep && dx * dx + dz * dz > 400) shDir.set(dx, 0, dz).normalize();
+      shKeep = true; shLast.copy(controls.target);
+      shC.copy(controls.target).addScaledVector(shDir, S * SH_AHEAD);
+      sun.target.position.copy(shC);
       // dieptebereik krap om het kader: bias in meters i.p.v. vast 0,0004 × 5900 m (= 2,4 m → schaduw 'zweefde' los naast het pand)
       const R = S * 1.5 + 600, tx = 2 * S / sun.shadow.mapSize.x;
-      sun.position.copy(controls.target).add(SUN_DIR.clone().normalize().multiplyScalar(R + 100));
+      sun.position.copy(shC).add(SUN_DIR.clone().normalize().multiplyScalar(R + 100));
       sc.left = -S; sc.right = S; sc.top = S; sc.bottom = -S; sc.near = 100; sc.far = 2 * R + 100; sc.updateProjectionMatrix();
       sun.shadow.bias = -(0.12 + tx * 0.5) / (2 * R); sun.shadow.normalBias = Math.min(1.5, 0.15 + tx * 0.4);
       U.uPerM.value = 1 / (2 * S); U.uDR.value = 2 * R;

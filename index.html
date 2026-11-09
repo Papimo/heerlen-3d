@@ -84,6 +84,6 @@
 <script src="iso/daken.js"></script>
 <script src="iso/bake.js"></script>
 <script src="iso/laden.js"></script>
-<script>if (/^https?:$/.test(location.protocol) && "serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {}); // tweede bezoek uit cache (alleen online)</script>
+<script>if (/^https?:$/.test(location.protocol) && "serviceWorker" in navigator) { const had = !!navigator.serviceWorker.controller; navigator.serviceWorker.register("sw.js").catch(() => {}); navigator.serviceWorker.addEventListener("controllerchange", () => { if (had && !window.h3dSwR) { window.h3dSwR = 1; location.reload(); } }); } // tweede bezoek uit cache (alleen online); nieuwe versie gepubliceerd → één keer herladen, anders zag je eerst de oude</script>
 </body>
 </html>
