@@ -254,11 +254,22 @@ body.drop canvas { cursor: crosshair; }
 body.drop #drophint { display: block; }
 #drivehud { display: none; position: fixed; inset: auto 0 18px 0; z-index: 30; pointer-events: none; font: 14px/1.3 system-ui, sans-serif; color: #fff; text-align: center; }
 body.drive #drivehud { display: block; }
-#drivehud .dspd { display: inline-flex; align-items: baseline; gap: 4px; padding: 4px 14px; border-radius: 12px; background: rgba(30, 32, 38, .78); }
-#drivehud .dspd b { font-size: 30px; font-variant-numeric: tabular-nums; min-width: 2.2ch; }
+#drivehud .dgauge { position: fixed; left: 16px; bottom: 16px; width: 150px; height: 150px; filter: drop-shadow(0 2px 6px rgba(0, 0, 0, .45)); }
+#drivehud .dgauge .face { fill: rgba(30, 32, 38, .82); stroke: rgba(255, 255, 255, .25); stroke-width: 1.5; }
+#drivehud .dgauge line { stroke: rgba(255, 255, 255, .55); stroke-width: 1; }
+#drivehud .dgauge line.big { stroke: #fff; stroke-width: 2; }
+#drivehud .dgauge text { fill: #fff; font: 600 7px system-ui, sans-serif; text-anchor: middle; }
+#drivehud .dgauge .ndl { stroke: #ff4a3d; stroke-width: 2.5; stroke-linecap: round; }
+#drivehud .dgauge .hubc { fill: #ff4a3d; }
+#drivehud .dgauge .dnum { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+#drivehud .dgauge .dunit { font-size: 6px; opacity: .75; }
+#drivehud .dseat { pointer-events: auto; position: fixed; right: 16px; top: 16px; display: flex; gap: 4px; padding: 4px; border-radius: 12px; background: rgba(30, 32, 38, .78); }
+#drivehud .dseat button { display: flex; flex-direction: column; align-items: center; min-width: 46px; padding: 4px 6px; border: 0; border-radius: 8px; background: transparent; color: #fff; font: 700 15px/1.1 system-ui, sans-serif; cursor: pointer; }
+#drivehud .dseat button small { font-size: 10px; font-weight: 500; opacity: .8; }
+#drivehud .dseat button.on { background: rgba(255, 255, 255, .22); }
 #drivehud .dstreet { margin-top: 6px; font-weight: 600; text-shadow: 0 1px 3px rgba(0, 0, 0, .7); min-height: 1.3em; }
 #drivehud .dexit { pointer-events: auto; position: fixed; right: 16px; bottom: 18px; padding: 8px 12px; border: 0; border-radius: 10px; background: rgba(30, 32, 38, .86); color: #fff; font: 600 14px system-ui, sans-serif; cursor: pointer; }
 #drivehud .dhelp { margin-top: 6px; font-size: 12px; opacity: .85; text-shadow: 0 1px 3px rgba(0, 0, 0, .8); }
 #drivehud kbd { display: inline-block; padding: 0 5px; margin: 0 1px; border-radius: 4px; background: rgba(255, 255, 255, .18); font: inherit; }
 body.drive #labels, body.drive #pins, body.drive #compass, body.drive #zoom, body.drive #tour { display: none !important; }
-@media (max-width: 640px) { #drivehud .dhelp { display: none; } }
+@media (max-width: 640px) { #drivehud .dhelp { display: none; } #drivehud .dgauge { width: 110px; height: 110px; } }

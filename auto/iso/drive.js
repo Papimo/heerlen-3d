@@ -11,6 +11,15 @@
     vMax: 22, vBoost: 33, vRev: 5, vOff: 8, // m/s (80 / 120 km/u; buiten de weg 29 km/u)
     acc: 4.5, brake: 9, hand: 12, drag: 0.35, offDrag: 3, steerMax: 0.6, grav: 4.9,
   };
+  const SEATS = [ // zithoogtes (toets 1–4 of knoppen in beeld): [naam, hoogte, voor/achter]
+    ['laag', 1.04, 0.36], ['normaal', 1.18, 0.3], ['hoog', 1.34, 0.24], ['bus', 1.6, 0.1],
+  ];
+  let seat = 1; try { seat = Math.min(3, Math.max(0, +localStorage.getItem('h3d-seat') || 1)); } catch (e) {}
+  function setSeat(i) {
+    seat = i; CAR.eye[1] = SEATS[i][1]; CAR.eye[2] = SEATS[i][2];
+    try { localStorage.setItem('h3d-seat', i); } catch (e) {}
+    hud?.querySelectorAll('.dseat button').forEach((b, k) => b.classList.toggle('on', k === i));
+  }
   const CELL = 50; // m, raster voor wegstukken
   let car = null, cam = null, on = false, drop = false;
   const S = { x: 0, z: 0, y: 0, yaw: 0, v: 0, steer: 0, pitch: 0, roll: 0, lookY: 0, lookP: 0, street: '', off: false };
@@ -126,11 +135,22 @@
   let hud = null;
   function makeHud() {
     hud = document.createElement('div'); hud.id = 'drivehud';
-    hud.innerHTML = '<div class="dspd"><b>0</b><small>km/u</small></div><div class="dstreet"></div>'
+    let ticks = '';
+    for (let k = 0; k <= 140; k += 10) { // 0–140 km/u over 240°
+      const a = (-120 + k / 140 * 240) * Math.PI / 180, big = k % 20 === 0, r1 = big ? 40 : 43;
+      ticks += `<line x1="${(Math.sin(a) * r1).toFixed(1)}" y1="${(-Math.cos(a) * r1).toFixed(1)}" x2="${(Math.sin(a) * 47).toFixed(1)}" y2="${(-Math.cos(a) * 47).toFixed(1)}"${big ? ' class="big"' : ''}/>`;
+      if (big) ticks += `<text x="${(Math.sin(a) * 32).toFixed(1)}" y="${(-Math.cos(a) * 32 + 3).toFixed(1)}">${k}</text>`;
+    }
+    hud.innerHTML = '<svg class="dgauge" viewBox="-52 -52 104 104"><circle r="50" class="face"/>' + ticks
+      + '<line class="ndl" x1="0" y1="6" x2="0" y2="-41"/><circle r="4" class="hubc"/><text class="dnum" y="24">0</text><text class="dunit" y="33">km/u</text></svg>'
+      + '<div class="dseat">' + SEATS.map((s, i) => `<button type="button" title="Zithoogte ${s[0]} (toets ${i + 1})">${i + 1}<small>${s[0]}</small></button>`).join('') + '</div>'
+      + '<div class="dstreet"></div>'
       + '<button type="button" class="dexit">Uitstappen <kbd>Esc</kbd></button>'
-      + '<div class="dhelp"><kbd>W</kbd><kbd>↑</kbd> gas · <kbd>S</kbd><kbd>↓</kbd> rem / achteruit · <kbd>A</kbd><kbd>D</kbd> sturen · <kbd>spatie</kbd> handrem · <kbd>Shift</kbd> harder · slepen = rondkijken</div>';
+      + '<div class="dhelp"><kbd>W</kbd><kbd>↑</kbd> gas · <kbd>S</kbd><kbd>↓</kbd> rem / achteruit · <kbd>A</kbd><kbd>D</kbd> sturen · <kbd>spatie</kbd> handrem · <kbd>Shift</kbd> harder · <kbd>1</kbd>–<kbd>4</kbd> zithoogte · slepen = rondkijken</div>';
     document.body.appendChild(hud);
     hud.querySelector('.dexit').addEventListener('click', () => stop());
+    hud.querySelectorAll('.dseat button').forEach((b, i) => b.addEventListener('click', () => setSeat(i)));
+    setSeat(seat);
     const hint = document.createElement('div'); hint.id = 'drophint'; hint.textContent = 'Klik op een weg om de auto neer te zetten · Esc = annuleren';
     document.body.appendChild(hint);
   }
@@ -245,7 +265,9 @@
     // laden + schaduwkader volgen een punt vóór de auto
     const t = H.controls; if (t) t.target.set(S.x - Math.sin(S.yaw) * 120, S.y, S.z - Math.cos(S.yaw) * 120);
     if (hud) {
-      hud.querySelector('.dspd b').textContent = Math.round(Math.abs(S.v) * 3.6);
+      const kmh = Math.abs(S.v) * 3.6;
+      hud.querySelector('.dnum').textContent = Math.round(kmh);
+      hud.querySelector('.ndl').setAttribute('transform', `rotate(${(-120 + Math.min(1.03, kmh / 140) * 240).toFixed(1)})`);
       hud.querySelector('.dstreet').textContent = S.street + (S.off ? ' · buiten de weg' : '');
     }
   }
@@ -265,6 +287,7 @@
     if (typing(e)) return;
     if (e.code === 'Escape') { if (on) stop(); else setDrop(false); e.preventDefault(); e.stopPropagation(); return; }
     if (!on) return;
+    const d = /^(Digit|Numpad)([1-4])$/.exec(e.code); if (d) { setSeat(+d[2] - 1); e.preventDefault(); e.stopPropagation(); return; }
     keys.add(e.code); e.preventDefault(); e.stopPropagation();
   }, true);
   addEventListener('keyup', e => { if (on) { keys.delete(e.code); e.stopPropagation(); } }, true);
