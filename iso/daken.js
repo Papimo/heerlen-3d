@@ -95,12 +95,12 @@
 
   // ---------- panden van een vak ----------
   function scan(c) {
-    const g = c.mesh?.geometry; if (!g || !c.biz || !g.attributes.aInfo) return;
-    const P = g.attributes.position.array, I = g.index.array, info = g.attributes.aInfo.array, seed = g.attributes.aSeed.array, n = c.bR.length;
+    const g = c.mesh?.geometry; if (!g || !c.biz || !c.pA) return;
+    const P = g.attributes.position.array, I = g.index.array, n = c.bR.length;
     for (let b = 0; b < n; b++) {
       if (c.biz[b * 2 + 1] < 0.6 * 255) continue;
       const r0 = c.bR[b] * 3, r1 = (b + 1 < n ? c.bR[b + 1] : c.nr) * 3; if (r1 <= r0) continue;
-      const v0 = I[r0], ar = info[v0 * 4 + 1], ht = info[v0 * 4 + 2] / 10, sd = seed[v0], isHal = ar > 2500 && ht < 16;
+      const v0 = I[r0], ar = c.pA[b], ht = c.pH[b] / 10, sd = c.pS[b], isHal = ar > 2500 && ht < 16;
       if (!isHal) { const mk = (sd * 3.1) % 1; if (mk < 0.34 || mk >= 0.67) continue; } // alleen grind-daken krijgen kasten
       const T = [];
       for (let k = r0; k + 2 < r1; k += 3) {

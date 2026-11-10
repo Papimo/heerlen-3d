@@ -76,26 +76,68 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
   // uGOn = 0 zodra niets meer groeit (dan geen enkele rekenstap extra). Schaduw pas als het staat (castShadow uit tijdens groeien).
   const GROW = { dur: 0.5, spread: 1.8, jitter: 0.15 }; GROW.end = GROW.dur + GROW.spread + GROW.jitter;
   const T0 = performance.now(), nowS = () => (performance.now() - T0) / 1000;
-  const GU = { uGT: { value: 0 }, uGOn: { value: 0 }, uGDur: { value: GROW.dur }, uEra: { value: new THREE.Vector3(0, 0, 0) } }; // uEra = bouwjaar y0, y1, krimp 0…1 (H.setEra)
+  const GU = { uGT: { value: 0 }, uGOn: { value: 0 }, uGDur: { value: GROW.dur }, uEra: { value: new THREE.Vector3(0, 0, 0) }, uPand: { value: null } }; // uEra = bouwjaar y0, y1, krimp 0…1 (H.setEra)
   const ERA_T = 0.9; let eraGoal = 0, eraT = 0; // s heen/terug
   const TREE_U = { uTT: { value: 1e4 } }; let treeFadeEnd = 0; // bomen groeien (treesFor/updateDetail)
+  // ---------- Pand-textuur (roadmap 86, ?nopandtex = oude attributen per hoekpunt) ----------
+  // Per hoekpunt alleen aPand (2× u16) = texel van het pand; één RGBA32F-textuur voor alle vakken, PW breed, 3 textuurrijen per pand-rij:
+  // rij +0 = (groei-start, voet, seed, bouwjaar), +1 = (dakoppervlak m², hoogte dm, lange as, biz hoek×256 + plat), +2 = vrij voor 87 (kleur/oplichten/verbergen).
+  // Pand-rij 0 is gereserveerd: texel 0 = neutraal (geometrie zonder aPand leest die = staat al), texel 1 = ver-weg-variant (seed 0,37).
+  const PANDTEX = typeof WebGL2RenderingContext !== 'undefined' && !new URLSearchParams(location.search).has('nopandtex');
+  const PW = 256, PAND = { tex: null, data: null, rows: 0, next: 1, fresh: false };
+  H.pand = PAND; H.PANDTEX = PANDTEX;
+  function pandAlloc(n) { // n pand-rijen reserveren → eerste pand-rij; te klein = grotere textuur (alles opnieuw naar de GPU, zeldzaam)
+    const r0 = PAND.next; PAND.next += n;
+    if (PAND.next > PAND.rows) {
+      const rows = PAND.next + 96, d = new Float32Array(PW * rows * 3 * 4);
+      if (PAND.data) d.set(PAND.data); else d[4 + 2] = 0.37;
+      const t = new THREE.DataTexture(d, PW, rows * 3, THREE.RGBAFormat, THREE.FloatType);
+      t.minFilter = t.magFilter = THREE.NearestFilter; t.generateMipmaps = false; t.needsUpdate = true;
+      if (PAND.tex) PAND.tex.dispose();
+      PAND.tex = t; PAND.data = d; PAND.rows = rows; PAND.fresh = true; GU.uPand.value = t;
+    }
+    return r0;
+  }
+  function pandPush(r0, n) { // pand-rijen r0…r0+n naar de GPU (alleen dat stuk; een nieuwe textuur gaat vanzelf in zijn geheel)
+    if (PAND.fresh || !renderer) { PAND.fresh = false; return; }
+    const src = new THREE.DataTexture(PAND.data.subarray(r0 * 3 * PW * 4, (r0 + n) * 3 * PW * 4), PW, n * 3, THREE.RGBAFormat, THREE.FloatType);
+    renderer.copyTextureToTexture(new THREE.Vector2(0, r0 * 3), src, PAND.tex); src.dispose();
+  }
+  const PAND_GLSL = PANDTEX ? `
+uniform highp sampler2D uPand; attribute vec2 aPand; vec4 pdA, pdB;
+void pandRead() { ivec2 t = ivec2(aPand + 0.5); pdA = texelFetch(uPand, t, 0); pdB = texelFetch(uPand, t + ivec2(0, 1), 0); }
+#define pGrow pdA.x
+#define pGBase pdA.y
+#define pSeed pdA.z
+#define pInfo vec4(pdA.w, pdB.xyz)
+#define pBiz (vec2(floor(pdB.w / 256.0), mod(pdB.w, 256.0)) / 255.0)
+` : `
+attribute float aGrow, aGBase, aSeed; attribute vec4 aInfo; attribute vec2 aBiz;
+void pandRead() {}
+#define pGrow aGrow
+#define pGBase aGBase
+#define pSeed aSeed
+#define pInfo aInfo
+#define pBiz aBiz
+`;
   const GROW_GLSL = `
-uniform float uGT, uGOn, uGDur; uniform vec3 uEra; attribute float aGrow, aGBase;
+uniform float uGT, uGOn, uGDur; uniform vec3 uEra;${PAND_GLSL}
 vec3 growB(vec3 p) {
   if (uGOn < 0.5) return p;
-  float k = clamp((uGT - aGrow) / uGDur, 0.0, 1.0);
+  pandRead();
+  float k = clamp((uGT - pGrow) / uGDur, 0.0, 1.0);
   if (k <= 0.0) return vec3(0.0, -1e5, 0.0); // nog niet aan de beurt: weg
-  float q = k - 1.0; p.y = aGBase + (p.y - aGBase) * (1.0 + 2.70158 * q * q * q + 1.70158 * q * q); // uit de grond, klein beetje doorschieten
+  float q = k - 1.0; p.y = pGBase + (p.y - pGBase) * (1.0 + 2.70158 * q * q * q + 1.70158 * q * q); // uit de grond, klein beetje doorschieten
   return p; }
 `;
   function addGrow(s) {
     Object.assign(s.uniforms, GU);
     s.vertexShader = s.vertexShader.replace('#include <common>', '#include <common>' + GROW_GLSL)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
-transformed = growB(transformed);
-if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter: rest krimpt de grond in (licht verspringend per pand), aInfo uit isoPal
-  float k = clamp(uEra.z * 1.5 - aSeed * 0.5, 0.0, 1.0), f = 1.0 - k * k * (3.0 - 2.0 * k);
-  transformed = f < 0.01 ? vec3(0.0, -1e5, 0.0) : vec3(transformed.x, aGBase + (transformed.y - aGBase) * f, transformed.z); }`);
+pandRead(); transformed = growB(transformed);
+if (uEra.z > 0.0 && (pInfo.x < uEra.x || pInfo.x > uEra.y)) { // bouwjaar-filter: rest krimpt de grond in (licht verspringend per pand), aInfo uit isoPal
+  float k = clamp(uEra.z * 1.5 - pSeed * 0.5, 0.0, 1.0), f = 1.0 - k * k * (3.0 - 2.0 * k);
+  transformed = f < 0.01 ? vec3(0.0, -1e5, 0.0) : vec3(transformed.x, pGBase + (transformed.y - pGBase) * f, transformed.z); }`);
   }
   let growFloor = 0; const growing = new Set(); // growFloor: intro houdt groeien tegen tot de wolken openbreken
   let dirty = true;
@@ -467,12 +509,16 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
           for (const key of [rk, wk]) { const D = A(Int32Array, key); let p = 0; for (let k = 0; k < D.length; k++) idx[w++] = (p += D[k]); }
         }
         if (G) G[vk] = null; // niet twee keer gebruiken / niet vasthouden
-        const seed = new Float32Array(nv).fill(0.37); // vast willekeurig getal per pand (iso: kleur per pand); ver-weg-variant één tint
+        const TX = PANDTEX, seed = TX ? null : new Float32Array(nv).fill(0.37); // vast willekeurig getal per pand (iso: kleur per pand); ver-weg-variant één tint
         const lift = y => (EXAG - 1) * (y - H0), done = new Uint8Array(nv);
-        const grow = perBuilding ? new Float32Array(nv) : null, gbase = perBuilding ? new Float32Array(nv) : null, gt0 = Math.max(nowS(), growFloor);
-        const info = perBuilding ? new Uint16Array(nv * 4) : null; // anime-look: bouwjaar, dakoppervlak m², hoogte dm, lange as (1 = x)
+        const grow = perBuilding && !TX ? new Float32Array(nv) : null, gbase = grow ? new Float32Array(nv) : null, gt0 = Math.max(nowS(), growFloor);
+        const info = perBuilding && !TX ? new Uint16Array(nv * 4) : null; // anime-look: bouwjaar, dakoppervlak m², hoogte dm, lange as (1 = x)
         // bedrijfspanden (design/16): lange as van het dak (PCA, 0–255 = -90°…+90°) + deel plat dak (0–255); per pand ook in c.biz voor iso/daken.js
-        const biz = perBuilding ? new Uint8Array(nv * 2) : null; if (perBuilding) c.biz = new Uint8Array(c.bR.length * 2);
+        const biz = perBuilding && !TX ? new Uint8Array(nv * 2) : null; if (perBuilding) c.biz = new Uint8Array(c.bR.length * 2);
+        // pand-textuur: aPand per hoekpunt (ver-weg-variant: overal texel 1,0); per pand ook c.pA/c.pH/c.pS (oppervlak, hoogte dm, seed) voor iso/daken.js
+        const pand = TX ? new Uint16Array(nv * 2) : null, pRows = Math.ceil(c.bR.length / PW), pR0 = TX && perBuilding ? pandAlloc(pRows) : 0, PD = PAND.data;
+        if (TX && !perBuilding) for (let v = 0; v < nv; v++) pand[v * 2] = 1;
+        if (perBuilding) { c.pA = new Uint16Array(c.bR.length); c.pH = new Uint16Array(c.bR.length); c.pS = new Float32Array(c.bR.length); c.pRow = pR0; }
         if (perBuilding) for (let b = 0; b < c.bR.length; b++) {
           const r0 = c.bR[b] * 3, r1 = (b + 1 < c.bR.length ? c.bR[b + 1] : nr) * 3, w0 = (nr + c.bW[b]) * 3, w1 = (nr + (b + 1 < c.bW.length ? c.bW[b + 1] : nw)) * 3;
           let lo = Infinity;
@@ -494,17 +540,29 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
           const bTh = Math.round((0.5 * Math.atan2(2 * cxz, cxx - czz) / Math.PI + 0.5) * 255), bFl = ar ? Math.round(fa / ar * 255) : 0;
           c.biz[b * 2] = bTh; c.biz[b * 2 + 1] = bFl;
           const iY = yr > 1000 ? yr : 0, iA = Math.min(65535, Math.round(ar)), iH = top > lo ? Math.min(65535, Math.round((top - lo) * 10)) : 0, iX = (xb - xa) > (zb - za) ? 1 : 0;
-          for (const [a, e] of [[r0, r1], [w0, w1]]) for (let k = a; k < e; k++) { const v = idx[k]; seed[v] = sd; info[v * 4] = iY; info[v * 4 + 1] = iA; info[v * 4 + 2] = iH; info[v * 4 + 3] = iX; biz[v * 2] = bTh; biz[v * 2 + 1] = bFl; if (!done[v]) { done[v] = 1; pos[v * 3 + 1] += dy; grow[v] = gT; gbase[v] = lo + dy; } }
+          c.pA[b] = iA; c.pH[b] = iH; c.pS[b] = sd;
+          const px = b % PW, py = (pR0 + (b / PW | 0)) * 3;
+          if (TX) { const o = (py * PW + px) * 4, o2 = o + PW * 4; PD[o] = gT; PD[o + 1] = lo + dy; PD[o + 2] = sd; PD[o + 3] = iY; PD[o2] = iA; PD[o2 + 1] = iH; PD[o2 + 2] = iX; PD[o2 + 3] = bTh * 256 + bFl; }
+          for (const [a, e] of [[r0, r1], [w0, w1]]) for (let k = a; k < e; k++) {
+            const v = idx[k];
+            if (TX) { pand[v * 2] = px; pand[v * 2 + 1] = py; } else { seed[v] = sd; info[v * 4] = iY; info[v * 4 + 1] = iA; info[v * 4 + 2] = iH; info[v * 4 + 3] = iX; biz[v * 2] = bTh; biz[v * 2 + 1] = bFl; }
+            if (!done[v]) { done[v] = 1; pos[v * 3 + 1] += dy; if (grow) { grow[v] = gT; gbase[v] = lo + dy; } }
+          }
         }
         if (EXAG !== 1) for (let v = 0; v < nv; v++) if (!done[v]) pos[v * 3 + 1] += lift(demAt(c, pos[v * 3] + O[0], O[1] - pos[v * 3 + 2]));
-        if (perBuilding) for (let v = 0; v < nv; v++) if (!done[v]) gbase[v] = pos[v * 3 + 1];
+        if (gbase) for (let v = 0; v < nv; v++) if (!done[v]) gbase[v] = pos[v * 3 + 1];
+        if (TX && perBuilding) pandPush(pR0, pRows);
         if (perBuilding) sortWalls(c, pos, idx, nr, nw); // iso: muren per richting (A1)
         const g = new THREE.BufferGeometry();
         g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
         g.setIndex(new THREE.BufferAttribute(idx, 1));
-        g.setAttribute('aSeed', new THREE.BufferAttribute(seed, 1));
-        if (perBuilding) { g.setAttribute('aInfo', new THREE.BufferAttribute(info, 4)); g.setAttribute('aBiz', new THREE.BufferAttribute(biz, 2, true)); }
-        if (perBuilding) { g.setAttribute('aGrow', new THREE.BufferAttribute(grow, 1)); g.setAttribute('aGBase', new THREE.BufferAttribute(gbase, 1)); c.growEnd = gt0 + GROW.end; }
+        if (TX) g.setAttribute('aPand', new THREE.BufferAttribute(pand, 2));
+        else {
+          g.setAttribute('aSeed', new THREE.BufferAttribute(seed, 1));
+          if (perBuilding) { g.setAttribute('aInfo', new THREE.BufferAttribute(info, 4)); g.setAttribute('aBiz', new THREE.BufferAttribute(biz, 2, true)); }
+          if (perBuilding) { g.setAttribute('aGrow', new THREE.BufferAttribute(grow, 1)); g.setAttribute('aGBase', new THREE.BufferAttribute(gbase, 1)); }
+        }
+        if (perBuilding) c.growEnd = gt0 + GROW.end;
         g.addGroup(0, nr * 3, 0); g.addGroup(nr * 3, nw * 3, 1);
         g.computeBoundingSphere(); g.computeBoundingBox();
         const m = new THREE.Mesh(g, [MAT.roof, MAT.wall]);
@@ -1097,9 +1155,9 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
         } }`;
   const isoPal = (s, roof) => {
     Object.assign(s.uniforms, { uPalR: U.uPalR, uPalW: U.uPalW, uDim: U.uDim, uAnime: U.uAnime });
-    // vI = (bouwjaar, dakoppervlak, voet, lange as), vHt = hoogte in m; aGBase komt uit GROW_GLSL (addGrow, ook op deze materialen)
-    s.vertexShader = s.vertexShader.replace('#include <common>', `#include <common>\nattribute float aSeed; attribute vec4 aInfo; attribute vec2 aBiz; varying float vS, vHt; varying vec3 vRW; varying vec4 vI; varying vec2 vBz;`)
-      .replace('#include <project_vertex>', `#include <project_vertex>\nvS = aSeed; vRW = (modelMatrix * vec4(transformed, 1.0)).xyz; vI = vec4(aInfo.x, aInfo.y, aGBase, aInfo.w); vHt = aInfo.z * 0.1; vBz = vec2((aBiz.x - 0.5) * 3.14159265, aBiz.y);`);
+    // vI = (bouwjaar, dakoppervlak, voet, lange as), vHt = hoogte in m; pSeed/pInfo/pBiz/pGBase komen uit PAND_GLSL (via addGrow, ook op deze materialen)
+    s.vertexShader = s.vertexShader.replace('#include <common>', `#include <common>\nvarying float vS, vHt; varying vec3 vRW; varying vec4 vI; varying vec2 vBz;`)
+      .replace('#include <project_vertex>', `#include <project_vertex>\nvS = pSeed; vRW = (modelMatrix * vec4(transformed, 1.0)).xyz; vec4 pI = pInfo; vec2 pB = pBiz; vI = vec4(pI.x, pI.y, pGBase, pI.w); vHt = pI.z * 0.1; vBz = vec2((pB.x - 0.5) * 3.14159265, pB.y);`);
     s.fragmentShader = s.fragmentShader.replace('#include <common>', `#include <common>\nvarying float vS, vHt; varying vec3 vRW; varying vec4 vI; uniform vec3 uPalR[8]; uniform vec3 uPalW[8]; uniform float uDim, uAnime;\n#define BK_FOOT vI.z\n${BIZ_COMMON}`)
       .replace('#include <color_fragment>', `#include <color_fragment>
       {
@@ -1772,7 +1830,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
       // geen MSAA: omlijning dekt de randen (stap 9). Diepte heeft float32 nodig (half-float gaf streepruis); blenden op float32 vraagt EXT_float_blend
       useMRT = !QS.has('nomrt') && renderer.capabilities.isWebGL2 && !!renderer.getContext().getExtension('EXT_float_blend');
       RTS.f = makeTargets(); ({ c: rtC, n: rtN } = RTS.f);
-      NRM =new THREE.ShaderMaterial({ // normaal (uit de afgeleiden) + diepte; bomen via instanceMatrix; groeiende panden (aGrow ontbreekt = 0 = staat al)
+      NRM =new THREE.ShaderMaterial({ // normaal (uit de afgeleiden) + diepte; bomen via instanceMatrix; groeiende panden (aPand/aGrow ontbreekt = 0 = staat al)
         uniforms: GU,
         vertexShader: `${GROW_GLSL} varying vec3 vMrtV; ${MRT_OFF} void main() { vec4 p = vec4(growB(position), 1.0);
           #ifdef USE_INSTANCING
