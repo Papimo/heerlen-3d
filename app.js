@@ -104,7 +104,7 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
   const redraw = () => { dirty = true; full = true; };
   const BUILD = 'anime-1 licht randje, daken op bouwjaar, middag zacht, bolle bomen (2026-11-09)', DBG_U = { value: new THREE.Vector2(1, 1) }; // ?gpu: versie zichtbaar + schakelaars omlijning (x = vlaklijnen, y = dieptelijnen)
   H.redraw = redraw;
-  H.VERSION = '0.9-test4'; // getoond onderaan (ui.js #attr); bij release ophogen
+  H.VERSION = '0.9-test5'; // getoond onderaan (ui.js #attr); bij release ophogen
   // na de upload naar de GPU de kopie in het werkgeheugen weggooien (canvas → 1×1, DataTexture-data → null). Opnieuw tekenen = nieuw canvas/nieuwe textuur
   H.freeAfterUpload = tex => { tex.onUpdate = () => { tex.onUpdate = null; const im = tex.image; if (im && im.getContext) im.width = im.height = 1; else if (im && im.data) im.data = null; }; return tex; };
 
@@ -2406,8 +2406,9 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
   // inkt (zwarte omlijning i.p.v. licht randje) standaard uit, bouwjaar (daken/gevels op bouwjaar i.p.v. Mijnstreek-palet) standaard aan
   const FXK = ['wolken', 'lucht', 'verkeer', 'props', 'randen', 'ao', 'diorama', 'zuinig', 'inkt', 'bouwjaar', 'film'];
   // wolken (wolkschaduw) standaard uit (buggy): alleen aan als de gebruiker hem zelf aanzet (eigen sleutel h3d.wolken, oude h3d.fx-waarde telt niet)
-  const fxOn = Object.fromEntries(FXK.map(k => [k, k === 'zuinig' || k === 'wolken' || k === 'inkt' || k === 'film' ? 0 : 1]));
-  try { const t = localStorage.getItem('h3d.tilt'); if (t != null) fxOn.randen = t === '0' ? 0 : 1; Object.assign(fxOn, JSON.parse(localStorage.getItem('h3d.fx') || '{}')); fxOn.wolken = localStorage.getItem('h3d.wolken') === '1' ? 1 : 0; } catch { fxOn.wolken = 0; }
+  const fxOn = Object.fromEntries(FXK.map(k => [k, k === 'zuinig' || k === 'wolken' || k === 'inkt' ? 0 : 1])); // film (Filmisch licht) standaard aan sinds 0.9-test5
+  try { const t = localStorage.getItem('h3d.tilt'); if (t != null) fxOn.randen = t === '0' ? 0 : 1; Object.assign(fxOn, JSON.parse(localStorage.getItem('h3d.fx') || '{}')); fxOn.wolken = localStorage.getItem('h3d.wolken') === '1' ? 1 : 0;
+    if (!localStorage.getItem('h3d.film1')) { fxOn.film = 1; localStorage.setItem('h3d.film1', '1'); } } catch { fxOn.wolken = 0; } // eenmalig: bewaarde 'uit' van vóór de nieuwe standaard telt niet; daarna geldt de eigen keuze
   // uLine 0 = inkt (silhouet + vouwen) · 1 = dun (alleen dieptesprongen, 45%); film = licht E + nabewerking (gloed, ACES, waas)
   const applyLook = () => { U.uLine.value = fxOn.inkt ? 0 : 1; U.uAnime.value = fxOn.bouwjaar ? 1 : 0;
     if (isoFilm !== fxOn.film) { isoFilm = U.uFilm.value = fxOn.film; sunKey = ''; applyNight(); } };
