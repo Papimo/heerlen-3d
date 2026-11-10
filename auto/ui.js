@@ -587,8 +587,12 @@
   tourBtn.addEventListener('click', () => setTour(!tour.on));
   H3D.on('interact', () => { if (tour.on) setTour(false); }); // zelf slepen/zoomen = rondleiding stopt
   let lastAz = NaN;
+  let pRef = null, pSkip = 0; // iso-pannen: pins-laag verschuiven i.p.v. elk beeld opnieuw plaatsen (zoals labels.js)
+  H3D.on('still', () => { pRef = null; });
   H3D.on('frame', () => {
-    placePins();
+    const s = H3D.panShift?.(pRef), pe = $('pins');
+    if (s && ++pSkip < 4) pe.style.transform = `translate(${s[0].toFixed(1)}px,${s[1].toFixed(1)}px)`;
+    else { pSkip = 0; pe.style.transform = ''; placePins(); pRef = H3D.panRef?.(); }
     const az = H3D.azimuth();
     if (!(Math.abs(az - lastAz) < 1e-3)) { lastAz = az; $('needle').style.transform = `rotate(${(az * 180 / Math.PI).toFixed(1)}deg)`; }
   });

@@ -568,7 +568,7 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
   const shadowExt = () => camera === ortho ? Math.max(350, Math.min(3000, Math.max(isoHalf() * ortho.right / ISO_H0, isoHalf() * 2.2) * 1.1))
     : Math.max(350, Math.min(2600, viewDist() * 1.1));
   // schaduwkader schuift vooruit in de laatste schuifrichting (zelfde kosten, schaduw ligt al klaar waar je heen gaat); render-lus zet shC
-  const shC = new THREE.Vector3(), shLast = new THREE.Vector3(), shDir = new THREE.Vector3(), SH_AHEAD = 0.25; // meer = achterkant van het beeld valt buiten het kader
+  const shC = new THREE.Vector3(), shLast = new THREE.Vector3(), shDir = new THREE.Vector3(), SH_AHEAD = 0.25, shFw = new THREE.Vector3(), DRV_SH = 280; // DRV_SH: zover vooruit moet de schaduw kloppen tijdens rijden (m) // meer = achterkant van het beeld valt buiten het kader
   let shKeep = false;
   H.lens = lens;
   function wantLevel(c) {
@@ -1599,6 +1599,15 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
   H.target = () => toRD(controls.target);
   H.azimuth = () => controls.getAzimuthalAngle();
   H.camera = () => camera;
+  // pannen in iso = zuivere verschuiving op het scherm → labels/pins schuiven als laag mee i.p.v. elk beeld opnieuw plaatsen (labels.js, ui.js)
+  // panRef() na volledig plaatsen; panShift(ref) → [dx, dy] px, of null als zoom/draaiing/venster veranderde (dan opnieuw plaatsen)
+  const PSV = new THREE.Vector3();
+  H.panRef = () => { if (camera !== ortho) return null; PSV.set(0, 0, 0).project(camera); return { x: PSV.x, y: PSV.y, z: camera.zoom, q: camera.quaternion.clone(), w: innerWidth, h: innerHeight }; };
+  H.panShift = r => {
+    if (!r || camera !== ortho || camera.zoom !== r.z || innerWidth !== r.w || innerHeight !== r.h || camera.quaternion.angleTo(r.q) > 1e-6) return null;
+    PSV.set(0, 0, 0).project(camera); const d = [(PSV.x - r.x) / 2 * r.w, (r.y - PSV.y) / 2 * r.h];
+    return Math.abs(d[0]) + Math.abs(d[1]) > 0.05 ? d : null; // niet bewogen (nieuwe pin, laag aan/uit) → gewoon opnieuw plaatsen
+  };
   // ---------- Rijden (iso/drive.js): eigen perspectief-camera binnen de iso-look ----------
   const frameFns = new Set();
   H.addFrame = f => { frameFns.add(f); return () => frameFns.delete(f); }; // f(now, dt) → true = opnieuw tekenen
@@ -2035,14 +2044,23 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     const bk = iso && !driveCam && H.bakeReady === true && isoHalf() > 400 ? 1 : 0; // rijden: altijd scherpe live schaduw
     if (bk !== U.uBaked.value) { U.uBaked.value = bk; if (!bk) shadowDirty = true; }
     U.uBkAO.value = iso && U.uBk.value && fxOn.ao && !fxOn.zuinig ? 1 : 0; // Zuinig: geen contactschaduw (±6,5 ms GPU per beeld)
-    const kq = driveCam ? 80 : 20; // rijden: schaduwkaart (= hele stad nog eens tekenen) pas na 80 m opnieuw; kader is ≥ 700 m breed
-    const key = Math.round(controls.target.x / kq) + ',' + Math.round(controls.target.z / kq) + ',' + Math.round(S / 50);
+    // rijden: kader ligt vóór de auto; schaduwkaart (= hele stad nog eens tekenen) pas opnieuw als het zichtbare stuk (auto + DRV_SH m vooruit) er bijna uit valt
+    // → rechtdoor rijden ±1× per 250–300 m, bocht van ±90° = 1×. Iso: per 20 m van het doel (zoals altijd)
+    let key = Math.round(controls.target.x / 20) + ',' + Math.round(controls.target.z / 20) + ',' + Math.round(S / 50);
+    if (driveCam) {
+      camera.getWorldDirection(shFw); shFw.y = 0; if (shFw.lengthSq() < 1e-6) shFw.set(0, 0, -1); shFw.normalize();
+      const p = camera.position, r = S - 20, ax = p.x + shFw.x * DRV_SH - shC.x, az = p.z + shFw.z * DRV_SH - shC.z, bx = p.x - shC.x, bz = p.z - shC.z;
+      const ok = ax * ax + az * az < r * r && bx * bx + bz * bz < (r - 30) * (r - 30);
+      key = 'drv' + Math.round(S / 50); // zelfde sleutel = niet bijwerken; net ingestapt of kader te klein → andere sleutel
+      if (!ok) shadowDirty = true;
+    }
     if (!moving && !bk && (shadowDirty || key !== shadowKey)) { // tijdens bewegen blijft de schaduwkaart staan
       shadowDirty = false; shadowKey = key; renderer.shadowMap.needsUpdate = true;
       const dx = controls.target.x - shLast.x, dz = controls.target.z - shLast.z; // schuifrichting sinds vorige stilstand (klein = vorige houden)
       if (shKeep && dx * dx + dz * dz > 400) shDir.set(dx, 0, dz).normalize();
       shKeep = true; shLast.copy(controls.target);
-      shC.copy(controls.target).addScaledVector(shDir, S * SH_AHEAD);
+      if (driveCam) { shC.copy(camera.position).addScaledVector(shFw, S - 100); shC.y = controls.target.y; } // auto ±100 m van de achterrand, rest vooruit
+      else shC.copy(controls.target).addScaledVector(shDir, S * SH_AHEAD);
       sun.target.position.copy(shC);
       // dieptebereik krap om het kader: bias in meters i.p.v. vast 0,0004 × 5900 m (= 2,4 m → schaduw 'zweefde' los naast het pand)
       const R = S * 1.5 + 600, tx = 2 * S / sun.shadow.mapSize.x;
