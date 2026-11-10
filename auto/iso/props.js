@@ -528,22 +528,22 @@
 
   // ---------- uitdunnen naar afstand (gelijkwaardige afstand = chunkDist × lens, zoals bossen) ----------
   function detail(v) {
-    const d = H.chunkDist(v.c) * H.lens();
-    const f = d < 1800 ? 1 : d < 4000 ? 1 / 3 : 0, cast = d < 1800, lo = !!H.treeLo?.(d); let ch = false;
+    const d = H.chunkDist(v.c) * H.lens(), drv = !!H.driving?.(), far = drv && H.chunkDist(v.c) > (H.DRV_FAR || 650) + 100;
+    const f = far ? 0 : drv ? 1 : d < 1800 ? 1 : d < 4000 ? 1 / 3 : 0, cast = !drv && d < 1800, lo = !!H.treeLo?.(d); let ch = false;
     for (const im of v.trees) {
       const g = lo ? im.geoLo : im.geoHi; if (im.geometry !== g) { im.geometry = g; ch = true; }
       const n = Math.round(im.full * f);
       if (im.count !== n) { im.count = n; ch = true; }
       if (im.castShadow !== cast) { im.castShadow = cast; ch = true; }
     }
-    const near = d < 2200; // lantaarns, banken, toestellen: klein → ver weg weg
+    const near = drv ? !far : d < 2200; // lantaarns, banken, toestellen: klein → ver weg weg
     for (const im of v.small) {
       if (im.geoLo) { const g = lo ? im.geoLo : im.geoHi; if (im.geometry !== g) { im.geometry = g; ch = true; } }
       if (im.visible !== near) { im.visible = near; ch = true; }
       const cs = cast && !im.userData.noShadow;
       if (im.castShadow !== cs) { im.castShadow = cs; ch = true; }
     }
-    v.group.visible = d < 6000 && H.fxOn('props'); // poelen blijven langer staan: straten als kralensnoeren
+    v.group.visible = !far && d < 6000 && H.fxOn('props'); // rijden: alleen binnen de kijkafstand // poelen blijven langer staan: straten als kralensnoeren
     return ch;
   }
   H.on('detail', () => { let ch = false; for (const v of VAK) ch = detail(v) || ch; if (ch) H.shadowDirty(); });

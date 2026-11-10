@@ -100,7 +100,8 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
   let growFloor = 0; const growing = new Set(); // growFloor: intro houdt groeien tegen tot de wolken openbreken
   let dirty = true;
   const QS = new URLSearchParams(location.search); // testschakelaars: ?nopost ?noshadow
-  const redraw = () => { dirty = true; };
+  let full = true; // perf-08: dirty zonder full = alleen de camera schoof (iso: scrollend tekenen, zie scrollDraw)
+  const redraw = () => { dirty = true; full = true; };
   const BUILD = 'anime-1 licht randje, daken op bouwjaar, middag zacht, bolle bomen (2026-11-09)', DBG_U = { value: new THREE.Vector2(1, 1) }; // ?gpu: versie zichtbaar + schakelaars omlijning (x = vlaklijnen, y = dieptelijnen)
   H.redraw = redraw;
   H.VERSION = '0.8.0'; // getoond onderaan (ui.js #attr); bij release ophogen
@@ -611,10 +612,10 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
       const cast = shadows && !far && chunkDist(c, shC, 0) < S;
       if (c.mesh && !c.growing && c.mesh.castShadow !== cast && !mv) { c.mesh.castShadow = cast; ch = true; }
       if (c.trees) { // bomen: dichtbij alles, verder weg uitgedund, heel ver weg geen
-        const f = d < 1800 ? 1 : d < 4000 ? 1 / 3 : d < 8000 ? 1 / 8 : 0, lo = dbs.y / (2 * d * TAN21) < TREE_LO_PPM; // d × lens → px/m zoals in iso
+        const f = driveCam ? (chunkDist(c, camera.position) < DRV_FAR + 100 ? 1 : 0) : d < 1800 ? 1 : d < 4000 ? 1 / 3 : d < 8000 ? 1 / 8 : 0, lo = dbs.y / (2 * d * TAN21) < TREE_LO_PPM; // d × lens → px/m zoals in iso
         for (const im of c.trees) {
           const g = lo ? im.geoLo : im.geoHi; if (im.geometry !== g && (lo || !mv)) { im.geometry = g; ch = true; }
-          const n = Math.round(im.full * f), cs = cast && f === 1;
+          const n = Math.round(im.full * f), cs = cast && f === 1 && !driveCam; // rijden: bomen werpen geen schaduw (scheelt schaduwpass)
           if (n > im.count) { const t = nowS(); TREE_U.uTT.value = t; const A = im.aTA.array; for (let k = im.count; k < n; k++) A[k] = t + Math.random() * TREE_SPREAD; im.aTA.needsUpdate = true; treeFadeEnd = t + TREE_SPREAD + TREE_FADE; im.count = n; ch = true; }
           else if (n < im.count) { im.count = n; ch = true; }
           if (im.castShadow !== cs && !mv) { im.castShadow = cs; ch = true; }
@@ -1542,6 +1543,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
   let mode = 'iso', idleT = 0; // iso = hoofdmodus en start altijd zo; plat/3d/rond bevroren (menu "Oud", geen nieuwe functies)
   const FOV = { plat: 12, '3d': 42, rond: 42, iso: 42 };
   let driveCam = null;
+  const DRV_FAR = 650; H.DRV_FAR = DRV_FAR; // rijden: kijkafstand (m); daarachter niets tekenen, mist vanaf 45%
   const isoCam = () => camera === ortho || (!!driveCam && camera === driveCam); // iso-pijplijn (grond, omlijning, bewegende laag)
   const visHalf = () => camera === ortho ? isoHalf() : camera.position.distanceTo(controls.target) * Math.tan(persp.fov * Math.PI / 360);
   function useCam(cam) { // wisselen tussen perspectief en ortho met dezelfde zichtbare halve hoogte en kijkrichting
@@ -1695,8 +1697,9 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     return postOk;
   }
   H.postOk = () => canPost();
-  function draw() {
+  function draw(fullDraw = true) {
     if (isoCam() && preScene.length) { mq('voor-scène'); for (const fn of preScene) fn(camera); mq('kleur'); } // meter: grond-pass e.d. apart
+    if (!isoCam() || !canPost() || !useMRT) SC.ok = false;
     if (isoCam() && !canPost()) { camera.layers.enable(1); renderer.render(scene, camera); camera.layers.set(0); return; } // bewegende laag (verkeer) direct mee
     if (!isoCam()) { renderer.render(scene, camera); return; }
     if (!rtC) {
@@ -1714,9 +1717,9 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
       });
       // tN/tDN highp: three r160 zet geen sampler-precisie → standaard lowp → telefoon (Mali e.d.) las de diepte als 16 bit → streeplijnen
       post = new THREE.ShaderMaterial({
-        uniforms: { tC: { value: useMRT ? rtC.texture[0] : rtC.texture }, tN: { value: rtN.texture }, tSky: { value: skyTex }, uMrt: { value: useMRT ? 1 : 0 }, uPd: { value: 0 }, tD: { value: null }, tDN: { value: null }, uDyn: { value: 0 }, uRes: { value: new THREE.Vector2() }, uW: { value: 2 }, uK: { value: 0.85 }, uInk: { value: H.isoColors.ink }, uLine: U.uLine, uFilm: U.uFilm, uDbg: DBG_U },
+        uniforms: { tC: { value: useMRT ? rtC.texture[0] : rtC.texture }, tN: { value: rtN.texture }, tSky: { value: skyTex }, uMrt: { value: useMRT ? 1 : 0 }, uPd: { value: 0 }, uFog: { value: new THREE.Vector2() }, tD: { value: null }, tDN: { value: null }, uDyn: { value: 0 }, uRes: { value: new THREE.Vector2() }, uW: { value: 2 }, uK: { value: 0.85 }, uInk: { value: H.isoColors.ink }, uLine: U.uLine, uFilm: U.uFilm, uDbg: DBG_U },
         vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
-        fragmentShader: `varying vec2 vUv; uniform sampler2D tC, tD, tSky; uniform highp sampler2D tN, tDN; uniform vec2 uRes; uniform float uW, uK, uDyn, uMrt, uLine, uFilm, uPd; uniform vec3 uInk; uniform vec2 uDbg;
+        fragmentShader: `varying vec2 vUv; uniform sampler2D tC, tD, tSky; uniform highp sampler2D tN, tDN; uniform vec2 uRes; uniform float uW, uK, uDyn, uMrt, uLine, uFilm, uPd; uniform vec2 uFog; uniform vec3 uInk; uniform vec2 uDbg;
           ${NRM_GLSL}
           ivec2 tq(highp sampler2D t, vec2 o) { return clamp(ivec2(gl_FragCoord.xy + o), ivec2(0), textureSize(t, 0) - 1); } // exacte pixel (vUv+o/uRes rondde op telefoons af → strepen)
           vec4 N(vec2 o) { ivec2 u = tq(tN, o); vec2 s = texelFetch(tN, u, 0).xy; // xyz = normaal, w = diepte
@@ -1740,6 +1743,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
               c.rgb = mix(vec3(dot(t, vec3(0.2126, 0.7152, 0.0722))), t, 1.15); }
             float ed = smoothstep(1.7, 2.1, dd) * uDbg.y;
             c.rgb = uLine > 0.5 ? mix(c.rgb, uInk, ed * 0.45) : mix(c.rgb, uInk, k * uK); // dun (alleen silhouet) of inkt
+            if (uFog.y > 0.0 && n0.w > 0.0) c.rgb = mix(c.rgb, texture2D(tSky, vUv).rgb, smoothstep(uFog.x, uFog.y, n0.w)); // rijden: mist naar de lucht erachter (verbergt de kijkgrens)
             gl_FragColor = c;
             #include <colorspace_fragment>
           }`,
@@ -1756,10 +1760,12 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     if (rtC.width !== rtS.x || rtC.height !== rtS.y) { rtC.setSize(rtS.x, rtS.y); rtN.setSize(rtS.x, rtS.y); }
     post.uniforms.tC.value = useMRT ? rtC.texture[0] : rtC.texture; post.uniforms.tN.value = rtN.texture;
     if (useMRT) { // één render: kleur (uitvoer 0, zonder lucht, leeg = alfa 0) + normaal/diepte (uitvoer 1)
+      if (!fullDraw && scrollDraw()) { runPosts(); return; }
       const bg = scene.background; scene.background = null;
       renderer.getClearColor(clr); const ca = renderer.getClearAlpha(); renderer.setClearColor(0x000000, 0);
       renderer.setRenderTarget(rtC); renderer.render(scene, camera);
       renderer.setClearColor(clr, ca); scene.background = bg; renderer.setRenderTarget(null);
+      scAnchor();
       runPosts(); return;
     }
     renderer.setRenderTarget(rtC); renderer.render(scene, camera);
@@ -1773,6 +1779,75 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     for (const o of hid) o.visible = true;
     renderer.setRenderTarget(null);
     runPosts();
+  }
+  // ---------- perf-08 stap 1: scrollend tekenen bij iso-pannen ----------
+  // Ortho + zelfde draaiing/zoom: pannen = het beeld schuift. Vorig beeld (MRT: kleur + normaal/diepte) op hele pixels verschoven kopiëren
+  // en alleen de nieuw onthulde strook/stroken tekenen; setViewOffset → culling werkt ook op de strook (minder hoekpunten).
+  // Diepte (G) = afstand tot de camera → bij kopiëren corrigeren met de verschuiving langs de kijkrichting.
+  // Volledig tekenen bij alles wat via redraw() loopt (laden, groeien, licht, schaduwkaart vers …) en bij stilstand. ?noscroll = uit.
+  const SC = { ok: false, pos: new THREE.Vector3(), q: new THREE.Quaternion(), m: new THREE.Matrix4(), zoom: 0, w: 0, h: 0, near: 0, far: 0 };
+  let rtC2 = null, scMat = null, scam = null;
+  const scR = new THREE.Vector3(), scU = new THREE.Vector3(), scF = new THREE.Vector3(), scD = new THREE.Vector3(), scP = new THREE.Vector3();
+  function scAnchor() {
+    SC.ok = camera === ortho && !QS.has('noscroll'); if (!SC.ok) return;
+    camera.updateMatrixWorld();
+    SC.pos.copy(camera.position); SC.q.copy(camera.quaternion); SC.m.copy(camera.matrixWorld);
+    SC.zoom = camera.zoom; SC.w = rtC.width; SC.h = rtC.height; SC.near = camera.near; SC.far = camera.far;
+  }
+  function scrollDraw() { // true = rtC bijgewerkt door schuiven + stroken; false = volledig tekenen
+    if (!SC.ok || camera !== ortho || renderer.shadowMap.needsUpdate) return false;
+    if (camera.zoom !== SC.zoom || rtC.width !== SC.w || rtC.height !== SC.h || camera.near !== SC.near || camera.far !== SC.far || camera.quaternion.angleTo(SC.q) > 1e-7) return false;
+    const W = SC.w, Hh = SC.h, ppx = Hh / ((ortho.top - ortho.bottom) / ortho.zoom);
+    scR.setFromMatrixColumn(SC.m, 0).normalize(); scU.setFromMatrixColumn(SC.m, 1).normalize(); scF.setFromMatrixColumn(SC.m, 2).normalize().negate();
+    scD.subVectors(camera.position, SC.pos);
+    const px = scD.dot(scR) * ppx, py = scD.dot(scU) * ppx, sx = Math.round(px), sy = Math.round(py);
+    if (Math.abs(sx) > W / 3 || Math.abs(sy) > Hh / 3) return false; // grote sprong: volledig is even duur
+    // nieuw anker = echte camera min de restverschuiving (< ½ px) → stroken vallen exact op het pixelraster van de kopie
+    scP.copy(camera.position).addScaledVector(scR, -(px - sx) / ppx).addScaledVector(scU, -(py - sy) / ppx);
+    const dz = scD.subVectors(scP, SC.pos).dot(scF);
+    mq('scroll');
+    if (!scMat) scMat = new THREE.ShaderMaterial({
+      uniforms: { tA: { value: null }, tB: { value: null }, uOff: { value: new THREE.Vector2() }, uDz: { value: 0 } },
+      vertexShader: '#include <common>\nvoid main() { gl_Position = vec4(position.xy, 0.0, 1.0); }',
+      fragmentShader: `#include <common>
+        uniform sampler2D tA; uniform highp sampler2D tB; uniform vec2 uOff; uniform float uDz;
+        void main() {
+          ivec2 p = ivec2(gl_FragCoord.xy) + ivec2(uOff), sz = textureSize(tA, 0);
+          if (any(lessThan(p, ivec2(0))) || any(greaterThanEqual(p, sz))) { gl_FragColor = vec4(0.0); gNrm = vec4(0.0); return; }
+          gl_FragColor = texelFetch(tA, p, 0);
+          vec2 n = texelFetch(tB, p, 0).xy; if (n.y > 0.0) n.y = max(n.y - uDz, 1e-3);
+          gNrm = vec4(n, 0.0, 1.0);
+        }`,
+      depthTest: false, depthWrite: false,
+    });
+    if (!rtC2) rtC2 = makeTargets().c;
+    if (rtC2.width !== W || rtC2.height !== Hh) rtC2.setSize(W, Hh);
+    const u = scMat.uniforms; u.tA.value = rtC.texture[0]; u.tB.value = rtC.texture[1]; u.uOff.value.set(sx, sy); u.uDz.value = dz;
+    pq.material = scMat; renderer.setRenderTarget(rtC2); renderer.render(postScene, postCam); pq.material = post;
+    // onthulde stroken (GL-coördinaten, y omhoog): camera naar rechts (sx > 0) → rechts nieuw; omhoog (sy > 0) → boven nieuw
+    const strips = [];
+    if (sx) strips.push(sx > 0 ? [W - sx, 0, sx, Hh] : [0, 0, -sx, Hh]);
+    if (sy) strips.push(sy > 0 ? [0, Hh - sy, W, sy] : [0, 0, W, -sy]);
+    if (strips.length) {
+      if (!scam) scam = ortho.clone();
+      scam.copy(camera); scam.position.copy(scP); scam.updateMatrixWorld();
+      const bg = scene.background; scene.background = null;
+      renderer.getClearColor(clr); const ca = renderer.getClearAlpha(); renderer.setClearColor(0x000000, 0);
+      for (const [x, y, w, h] of strips) {
+        scam.setViewOffset(W, Hh, x, Hh - y - h, w, h);
+        rtC2.viewport.set(x, y, w, h); rtC2.scissor.set(x, y, w, h); rtC2.scissorTest = true;
+        renderer.setRenderTarget(rtC2); renderer.render(scene, scam);
+      }
+      scam.clearViewOffset();
+      rtC2.viewport.set(0, 0, W, Hh); rtC2.scissor.set(0, 0, W, Hh); rtC2.scissorTest = false;
+      renderer.setClearColor(clr, ca); scene.background = bg;
+    }
+    renderer.setRenderTarget(null);
+    const t = rtC; rtC = rtC2; rtC2 = t;
+    RTS.f = { c: rtC, n: rtN = { texture: rtC.texture[1], setSize() {} } };
+    post.uniforms.tC.value = rtC.texture[0]; post.uniforms.tN.value = rtN.texture;
+    SC.pos.copy(scP);
+    return true;
   }
   // nabewerking los: ook zonder nieuwe scène-render (rtC/rtN hergebruiken) als alleen een post-animatie (wolken) verandert
   function runPosts() {
@@ -1798,7 +1873,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     const ppm = dbs.y / (2 * isoHalf());
     // uW altijd 1: symmetrisch bemonsterd → lijn ±2 px; uW 2 gaf ±4 px (te dik bij startzoom)
     post.uniforms.uRes.value.copy(rtS); post.uniforms.uW.value = 1; // uRes = maat van rtN (kleiner tijdens bewegen)
-    post.uniforms.uK.value = driveCam ? 0.75 : 0.85 * Math.min(1, 0.4 + ppm * 0.3); post.uniforms.uPd.value = driveCam ? 1 : 0;
+    post.uniforms.uK.value = driveCam ? 0.75 : 0.85 * Math.min(1, 0.4 + ppm * 0.3); post.uniforms.uPd.value = driveCam ? 1 : 0; post.uniforms.uFog.value.set(driveCam ? DRV_FAR * 0.45 : 0, driveCam ? DRV_FAR * 0.95 : 0);
     const on = posts.filter(p => p.enabled !== false && (!driveCam || p.drive)); for (const p of on) p.before?.(); // rijden: wolken/tilt/papier gaan uit van de iso-camera
     const steps = [post, ...on.map(p => p.material)];
     if (steps.length > 1) {
@@ -1957,11 +2032,11 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
   }
   function loop(now) {
     requestAnimationFrame(loop);
-    if (M.on) { M.raf++; M.tick0 = performance.now(); meterShow(now); if (M.stress) dirty = true; }
+    if (M.on) { M.raf++; M.tick0 = performance.now(); meterShow(now); if (M.stress) dirty = full = true; }
     const dt = Math.min(100, now - (lastT || now)); lastT = now;
     if (night !== nightGoal) { // licht rustig laten overgaan (±2 s)
       night += Math.sign(nightGoal - night) * Math.min(Math.abs(nightGoal - night), dt / 2000);
-      applyNight(); dirty = true;
+      applyNight(); dirty = full = true;
     }
     if (fly) {
       const t = Math.min(1, (now - fly.t0) / fly.ms), e = ease(t);
@@ -1978,8 +2053,8 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
       if (t >= 1) fly = null;
       dirty = true;
     }
-    if (intro && area) { introStep(now); dirty = true; }
-    for (const f of frameFns) if (f(now, dt)) dirty = true; // iso/drive.js e.d.: elk scherm-beeld
+    if (intro && area) { introStep(now); dirty = full = true; }
+    for (const f of frameFns) if (f(now, dt)) dirty = full = true; // iso/drive.js e.d.: elk scherm-beeld
     keyPan(now); glideStep(now);
     const ctl = controls.update();
     // OrbitControls meldt bij ortho (iso) élke update als veranderd (zoomChanged) → zelf vergelijken, anders tekent iso eindeloos en is nooit 'stil'
@@ -1988,12 +2063,12 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     if (moved) dirty = true;
     if ((moved && !controls.autoRotate && !driveCam) || fly || intro) moveT = now; // rijden telt niet als 'bewegen' (anders bevriest de schaduw onderweg) // slepen/zoomen/vliegen (rustig ronddraaien telt niet)
     const moving = now - moveT < 250;
-    if (moving !== moveNow) { moveNow = moving; dirty = true; if (!moving) { lastLod = 0; emit('still'); } } // stilstand: scherp + detail/tegels/grond bijwerken
+    if (moving !== moveNow) { moveNow = moving; dirty = full = true; if (!moving) { lastLod = 0; emit('still'); } } // stilstand: scherp + detail/tegels/grond bijwerken
     // iso: canvas blijft op max 1,5 (omlijning + nabewerking zijn per pixel); kleiner tekenen tijdens bewegen gebeurt in draw() → geen canvas-herallocatie
     const prW = fxOn.zuinig ? 1 : isoCam() ? Math.min(PR, 1.5) : moving ? PR_MOVE : PR; // Zuinig: altijd 1 (scherp scherm = tot 4× minder pixels)
     // traag? tijdens slepen/zoomen (niet de intro) beelden per seconde tellen; 4 s gemiddeld < 20/s → één keer 'slow' (ui.js stelt Zuinig voor)
     if (moving && moveNow && !intro && !fxOn.zuinig && !slowSaid && !document.hidden) { slowT += dt; slowN++; if (slowT > 4000) { if (slowN * 1000 / slowT < 20) { slowSaid = true; emit('slow', Math.round(slowN * 1000 / slowT)); } slowT = slowN = 0; } }
-    if (renderer.getPixelRatio() !== prW) { renderer.setPixelRatio(prW); dirty = true; }
+    if (renderer.getPixelRatio() !== prW) { renderer.setPixelRatio(prW); dirty = full = true; }
     if (!area) return;
     // doel volgt het terrein (anders draai je om een punt in de lucht of onder de grond)
     if (!fly && !driveCam) {
@@ -2003,28 +2078,28 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     updateTextures(now);
     loadTick(now);
     if (growing.size) { // panden groeien: elk scherm-beeld tekenen (vloeiender dan de 20/s-tik); klaar → schaduw aan
-      const t = nowS(); GU.uGT.value = t; GU.uGOn.value = 1; dirty = true;
+      const t = nowS(); GU.uGT.value = t; GU.uGOn.value = 1; dirty = full = true;
       for (const c of growing) if (t >= c.growEnd) growDone(c);
-    } else if (GU.uGOn.value) { GU.uGOn.value = 0; dirty = true; }
-    { const e = GU.uEra.value; if (e.z !== eraGoal) { const st = Math.min(0.05, (now - (eraT || now)) / 1000) / ERA_T; e.z = eraGoal ? Math.min(1, e.z + st) : Math.max(0, e.z - st); dirty = true; if (e.z === eraGoal) shadowDirty = true; } eraT = now; }
-    if (treeFadeEnd) { const t = nowS(); TREE_U.uTT.value = Math.min(t, treeFadeEnd); dirty = true; if (t >= treeFadeEnd) treeFadeEnd = 0; }
+    } else if (GU.uGOn.value) { GU.uGOn.value = 0; dirty = full = true; }
+    { const e = GU.uEra.value; if (e.z !== eraGoal) { const st = Math.min(0.05, (now - (eraT || now)) / 1000) / ERA_T; e.z = eraGoal ? Math.min(1, e.z + st) : Math.max(0, e.z - st); dirty = full = true; if (e.z === eraGoal) shadowDirty = true; } eraT = now; }
+    if (treeFadeEnd) { const t = nowS(); TREE_U.uTT.value = Math.min(t, treeFadeEnd); dirty = full = true; if (t >= treeFadeEnd) treeFadeEnd = 0; }
     if (selMesh) { // knipperen: 3 s, daarna rustig
       const t = (now - pulseT0) / 1000;
       const o = t < 3 ? 0.15 + 0.4 * (0.5 + 0.5 * Math.sin(t * 7)) : 0.3;
-      if (Math.abs(o - MAT.sel.opacity) > 0.005) { MAT.sel.opacity = o; dirty = true; }
+      if (Math.abs(o - MAT.sel.opacity) > 0.005) { MAT.sel.opacity = o; dirty = full = true; }
     }
     if (anims.size && !document.hidden && now - inputT < IDLE_MS && now - animT >= animMs() - 4) { // −4: rAF-jitter, anders valt 50 ms soms op 67 // na 2 min zonder invoer: wolken/ballon/verkeer pauzeren
       const adt = Math.min(200, now - (animT || now)); animT = now;
       for (const f of anims) {
         const r = f(now, adt);
-        if (r === false) anims.delete(f); else if (r === 'post') postDirty = true; else if (r !== 'none') { dirty = true; if (M.on) M.af[f.src || f.name || '?'] = (M.af[f.src || f.name || '?'] || 0) + 1; }
+        if (r === false) anims.delete(f); else if (r === 'post') postDirty = true; else if (r !== 'none') { dirty = full = true; if (M.on) M.af[f.src || f.name || '?'] = (M.af[f.src || f.name || '?'] || 0) + 1; }
       }
     }
     if (!dirty) {
       if (postDirty && isoCam() && rtC) { postDirty = false; mBegin(false); runPosts(); mEnd(false); } // ±1 schermvullende pass per stap i.p.v. 2 scène-renders
       return;
     }
-    dirty = false; postDirty = false;
+    const fullDraw = full; dirty = false; postDirty = false; full = false;
     const dist = camera.position.distanceTo(controls.target);
     if (camera === ortho) { // camera ver genoeg achter het doel dat de onderrand + panden binnen near vallen
       const h = isoHalf(), D = isoD(h);
@@ -2072,7 +2147,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     if (iso) { scene.fog.near = 1e7; scene.fog.far = 2e7; }
     else { scene.fog.near = Math.max(4000, dist * 2.5); scene.fog.far = scene.fog.near + 12000; }
     mBegin(true);
-    draw();
+    draw(fullDraw);
     saveView();
     emit('frame');
     mEnd(true);

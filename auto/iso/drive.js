@@ -180,7 +180,7 @@
     start();
   }
   function start() {
-    car ||= makeCar(); cam ||= new THREE.PerspectiveCamera(70, 1, 0.15, 2600);
+    car ||= makeCar(); cam ||= new THREE.PerspectiveCamera(70, 1, 0.15, H.DRV_FAR || 650); // verder = mist (app.js), niet getekend
     fitCam(); car.visible = true; on = true; setDrop(false); keys.clear();
     pose(0); H.setDriveCam(cam);
   }
