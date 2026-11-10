@@ -2275,7 +2275,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
       ndc.set((cx - r.left) / r.width * 2 - 1, -(cy - r.top) / r.height * 2 + 1); ray.setFromCamera(ndc, camera);
       if (ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -T.y), P)) T = P.add(T.sub(P).multiplyScalar(h1 / h0));
     }
-    const [x, y] = toRD(T); H.flyTo(x, y, { half: h1, ms: 520, arc: false, zfx: true }); emit('interact');
+    const [x, y] = toRD(T); H.flyTo(x, y, { half: h1, ms: 900, arc: false, zfx: true }); emit('interact');
   };
   // ---------- Toetsen: pijltjes / WASD = schuiven over de grond (t.o.v. de kijkrichting), Shift = 3× sneller ----------
   // Snelheid naar zoom: ±0,9 beeldhoogte per seconde. Q/E/+/− zitten in ui.js.
