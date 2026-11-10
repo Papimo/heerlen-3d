@@ -97,14 +97,21 @@
 
   // ---------- beweging ----------
   const m4 = new THREE.Matrix4(), UP = new THREE.Vector3(0, 1, 0), side = new THREE.Vector3(), HID = new THREE.Matrix4().makeScale(0, 0, 0);
-  function place(mesh, i, R, s, L, lift, off) { // voertuig met midden op s, lengte L; off = zijwaarts (rechts +)
-    if (s - L / 2 < 0 || s + L / 2 > R.len) { mesh.setMatrixAt(i, HID); return; }
+  function place(mesh, i, R, s, L, lift, off) { // voertuig met midden op s, lengte L; off = zijwaarts (rechts +); true = staat in beeld (FR, per tik gezet)
+    if (s - L / 2 < 0 || s + L / 2 > R.len) { mesh.setMatrixAt(i, HID); return false; }
     at(R, s + L / 2, _a); at(R, s - L / 2, _b);
     m4.lookAt(_a, _b, UP); // z-as = voor − achter = rijrichting
     if (off) { side.set(-(_a.z - _b.z), 0, _a.x - _b.x).normalize().multiplyScalar(off); _a.add(side); _b.add(side); }
     m4.setPosition((_a.x + _b.x) / 2, (_a.y + _b.y) / 2 + lift, (_a.z + _b.z) / 2);
     mesh.setMatrixAt(i, m4);
+    return FR.intersectsSphere(VS.set(_c.setFromMatrixPosition(m4), L));
   }
+  // in beeld? camera-frustum één keer per tik; geen voertuig in beeld (nu én vorige tik) = geen nabewerking
+  const FR = new THREE.Frustum(), FM = new THREE.Matrix4(), VS = new THREE.Sphere(), _c = new THREE.Vector3();
+  function frustum() { const c = H.camera(); c.updateMatrixWorld(); FR.setFromProjectionMatrix(FM.multiplyMatrices(c.projectionMatrix, c.matrixWorldInverse)); }
+  // ver uitgezoomd bewegen voertuigen < 1 px per tik → minder vaak bijwerken (halve hoogte > 600 m: om de 2 tikken, > 1500 m: om de 3)
+  let tk = 0, seenT = true;
+  const skip = () => ++tk % (half() > 1500 ? 3 : half() > 600 ? 2 : 1) !== 0;
   const half = () => { const c = H.camera(); return c && c.isOrthographicCamera ? (c.top - c.bottom) / (2 * c.zoom) : H.driving?.() ? 50 : Infinity; }; // rijden: als dichtbij ingezoomd
   let last = 0, shown = false;
   function show(on) { if (on === shown) return false; shown = on; if (busMesh) busMesh.visible = on; if (carMesh) carMesh.visible = on; return true; }
@@ -112,7 +119,7 @@
     const vis = half() < HIDE_HALF && H.fxOn('verkeer');
     if (!vis) return show(false) ? 'post' : 'none';
     const dt = last ? Math.min(0.2, (now - last) / 1000) : 0;
-    last = now; show(true);
+    last = now; show(true); frustum();
     buses.forEach((b, i) => {
       if (b.wait > 0) b.wait -= dt; else b.s += BUS.speed * dt;
       if (b.s > b.R.len + BUS.len) { b.s = -BUS.len / 2; b.wait = rnd(5, 25); }
@@ -206,23 +213,26 @@
   function tickTransit() {
     const vis = half() < HIDE_HALF && H.fxOn('verkeer');
     if (!vis) { if (!shownT) return 'none'; shownT = false; busMesh.visible = carMesh.visible = stopMesh.visible = false; return 'post'; }
-    if (!shownT) { shownT = true; busMesh.visible = carMesh.visible = stopMesh.visible = true; }
+    if (!shownT) { shownT = true; seenT = true; busMesh.visible = carMesh.visible = stopMesh.visible = true; }
+    else if (skip()) return 'none';
     const now = H.now(), real = performance.now();
     if (real - activeAt > 500) { activeAt = real; refreshActive(now); }
     const t = secOf(now);
-    let nb = 0, nc = 0; const step = TRAIN.car + TRAIN.gap;
+    let nb = 0, nc = 0, seen = false; const step = TRAIN.car + TRAIN.gap;
+    frustum();
     for (const [tr, off] of active) {
       const tt = t + off; if (tt < tr.a || tt > tr.b) continue;
       const L = tr.r.k === 'train' ? step * tr.r.cars : BUS.len, s = Math.max(L, Math.min(tr.R.len, posOf(tr, tt))); // s = voorkant; heel voertuig op de lijn
       if (tr.r.k === 'train') {
         if (nc + tr.r.cars > CAP.train * 4) continue;
-        for (let c = 0; c < tr.r.cars; c++) place(carMesh, nc++, tr.R, s - step * (c + 0.5), TRAIN.car, TRAIN.lift, 0);
-      } else if (nb < CAP.bus) { place(busMesh, nb, tr.R, s - BUS.len / 2 - 0.01, BUS.len, BUS.lift, BUS.side); busMesh.setColorAt(nb++, tr.r.c); }
+        for (let c = 0; c < tr.r.cars; c++) if (place(carMesh, nc++, tr.R, s - step * (c + 0.5), TRAIN.car, TRAIN.lift, 0)) seen = true;
+      } else if (nb < CAP.bus) { if (place(busMesh, nb, tr.R, s - BUS.len / 2 - 0.01, BUS.len, BUS.lift, BUS.side)) seen = true; busMesh.setColorAt(nb++, tr.r.c); }
     }
     busMesh.count = nb; carMesh.count = nc;
     busMesh.instanceMatrix.needsUpdate = true; carMesh.instanceMatrix.needsUpdate = true;
     if (busMesh.instanceColor) busMesh.instanceColor.needsUpdate = true;
-    return 'post';
+    const was = seenT; seenT = seen;
+    return seen || was ? 'post' : 'none'; // laatste keer nog wel: voertuig dat net uit beeld reed weghalen
   }
 
   // ---------- haltes aanklikken + vertrekbord ----------

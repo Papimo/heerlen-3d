@@ -114,7 +114,9 @@
     const fresh = idxData[k + 2] !== 255; // opnieuw bakken (rebake): niet nog eens infaden
     idxData[k] = sx; idxData[k + 1] = sy; idxData[k + 2] = 255; if (fresh) { idxData[k + 3] = 0; fadeIn(k); } idx.needsUpdate = true;
     H.U.uBk.value = atlas.texture;
+    return fresh;
   }
+  let rbN = 0;
 
   // schaduw van een vers gebakken vak zacht laten opkomen (idx a: 0 → 255, gelezen in BAKE_GLSL bkTexel/bkFade)
   const FADE = 1.2, fading = new Map(); let fadeStop = null;
@@ -141,9 +143,10 @@
     const t = H.controls?.target;
     if (t) queue.sort((a, b) => H.chunkDist(a, t) - H.chunkDist(b, t));
     const c = queue.shift();
-    bakeChunk(c); baked.add(c);
+    const fresh = bakeChunk(c); baked.add(c);
     if (!queue.length) { H.bakeReady = true; freeTargets(); }
-    H.redraw();
+    // nieuw vak: meteen tekenen (infaden); herbakken: niet na elk vak een vol beeld (108 × ±50 ms GPU), wel om de 8 en aan het eind
+    if (fresh || !queue.length || ++rbN % 8 === 0) H.redraw();
     if (queue.length) timer = setTimeout(tick, 40);
   }
   function schedule() { if (!timer && queue.length) timer = setTimeout(tick, 200); }

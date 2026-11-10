@@ -3,7 +3,7 @@
 // Wereld: x = RD-x − origin, z = −(RD-y − origin); auto kijkt langs −z in eigen assen (yaw = rotatie om y).
 // Toetsen (e.code, dus ook op AZERTY): W/↑ gas · S/↓ rem/achteruit · A/D/←/→ sturen · spatie handrem · Shift harder · Esc uitstappen. Slepen = rondkijken.
 (() => {
-  const H = window.H3D; if (!H || !window.THREE) return;
+  const H = typeof H3D !== 'undefined' ? H3D : null; if (!H || !window.THREE) return; // H3D = const in app.js (geen window-eigenschap)
   const SW = { primary: 10, secondary: 8.5, tertiary: 7, unclassified: 5.5, residential: 5.5, living_street: 4.5, pedestrian: 4.5, track: 3 }; // = app.js STREET_W + track
   const CAR = {
     len: 4.2, wid: 1.8, wb: 2.6,          // m; wielbasis voor de draaicirkel

@@ -269,8 +269,15 @@
     H.shadowDirty?.(); H.rebake?.(); H.redraw?.();
   }
   const half = () => { const c = H.camera(); return c && c.isOrthographicCamera ? (c.top - c.bottom) / (2 * c.zoom) : H.driving?.() ? 50 : Infinity; }; // rijden: als dichtbij ingezoomd
+  const FR = new THREE.Frustum(), FM = new THREE.Matrix4(), WS = new THREE.Sphere(), WP = new THREE.Vector3(); let wTk = 0;
+  function inView() { // schachtwielen (straal ±60 m rond de bok) in het camerabeeld?
+    const c = H.camera(); if (!c || !wheels.length) return false;
+    c.updateMatrixWorld(); FR.setFromProjectionMatrix(FM.multiplyMatrices(c.projectionMatrix, c.matrixWorldInverse));
+    return FR.intersectsSphere(WS.set(wheels[0].getWorldPosition(WP), 60));
+  }
   function tick(now) { // ±15/s draaien, alleen ingezoomd in iso
-    if (H.U.uIso.value < 0.5 || half() > WHEEL_HALF) { last = 0; return 'none'; }
+    if (H.U.uIso.value < 0.5 || half() > WHEEL_HALF || !inView()) { last = 0; return 'none'; } // niet in beeld: geen nabewerking (was 15–20/s bij stilstand)
+    if (++wTk & 1) return 'none'; // langzaam wiel: 10/s is genoeg (elke nabewerking ±6 ms GPU)
     const dt = last ? Math.min(0.2, (now - last) / 1000) : 0; last = now;
     wAng += dt * WHEEL_SPEED;
     wheels.forEach((w, k) => { w.rotation.z = (k % 2 ? -1 : 1) * wAng; });

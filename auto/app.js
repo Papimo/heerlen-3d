@@ -1161,7 +1161,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
   H.speed = () => CLOCK.speed;
   H.setSpeed = (s, reset) => { // reset = terug naar de echte tijd
     CLOCK.base = reset ? Date.now() : H.now().getTime(); CLOCK.t0 = performance.now(); CLOCK.speed = s;
-    if (s > 1 && lightMode !== 'nu') H.setLight('nu'); else if (lightMode === 'nu') { nightGoal = goalFor('nu'); redraw(); }
+    // licht volgt de versnelde klok níet (gebruiker): alleen verkeer/dienstregeling lopen sneller
     emit('clock', s);
   };
   function sunElev(d = new Date()) { // zonshoogte in graden boven Heerlen (benadering, ±1°)
@@ -1171,7 +1171,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     return Math.asin(Math.sin(lat) * Math.sin(decl) + Math.cos(lat) * Math.cos(decl) * Math.cos(ha)) / rad;
   }
   // dag 0 · schemer 0,5 · nacht 1 ('avond' = nacht, oude sleutel); nu = naar de zon: 4° boven → 6° onder de horizon
-  const goalFor = m => m === 'dag' ? 0 : m === 'schemer' ? 0.5 : m === 'avond' ? 1 : Math.round(10 * Math.min(1, Math.max(0, (4 - sunElev(H.now())) / 10))) / 10; // 'nu': stappen van 0,1 (elke stap = zon opnieuw bakken)
+  const goalFor = m => m === 'dag' ? 0 : m === 'schemer' ? 0.5 : m === 'avond' ? 1 : Math.round(10 * Math.min(1, Math.max(0, (4 - sunElev(new Date())) / 10))) / 10; // 'nu': stappen van 0,1 (elke stap = zon opnieuw bakken)
   // iso-licht (design/17_licht.html): B Materiaal-middag standaard, E Filmisch = schakelaar Sfeer › Filmisch licht (fxOn.film). sun = zonshoogte°
   // zon van opzij: 82° naast de kijkrichting van de standaard-kwartslag, vast in de wereld (draait niet mee, isoSun)
   const ISO_L = {
@@ -1194,8 +1194,11 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
       if (k !== sunKey) SUN_DIR.set(Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az));
     } else { k = 'oud'; if (k !== sunKey) SUN_DIR.copy(SUN_OLD); }
     if (k === sunKey) return;
-    sunKey = k; U.uL.value.copy(SUN_DIR).normalize(); shadowDirty = true; H.rebake?.(); redraw();
+    // herbakken = alle vakken × 2 scène-renders + een vol beeld per vak (±20 s hakkelen) → 1,5 s wachten (snel achter elkaar wisselen = één keer)
+    const first = !sunKey; sunKey = k; U.uL.value.copy(SUN_DIR).normalize(); shadowDirty = true; redraw();
+    clearTimeout(rebakeT); if (first) H.rebake?.(); else rebakeT = setTimeout(() => H.rebake?.(), 1500);
   }
+  let rebakeT = 0;
   function applyNight() {
     if (!scene) return;
     const n = night, w = THREE.MathUtils.smoothstep(n, 0.35, 0.9);
@@ -1249,7 +1252,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
   H.overlayObjs = () => [outline, selMesh].filter(Boolean); // lijntjes/selectie: niet meebakken
   H.wallRuns = (c, b) => wallRuns(c, b); // muurreeksen van pand b [f0, f1) t.o.v. muurbegin (na A1 per richting gesorteerd)
   H.facesOf = (c, b) => facesOf(c, b, []); // hoekpunt-indices in c.mesh.geometry (dak + muur)
-  setInterval(() => { if (lightMode === 'nu') { const g = goalFor('nu'); if (g !== nightGoal) { nightGoal = g; redraw(); } } }, 1000); // klok kan versneld lopen
+  setInterval(() => { if (lightMode === 'nu') { const g = goalFor('nu'); if (g !== nightGoal) { nightGoal = g; redraw(); } } }, 60000); // 'nu' = echte tijd (niet de versnelde klok)
 
   // ---------- Plekken ↔ panden: het pand licht op in de kleur van de categorie ----------
   // Koppelen gebeurt hier (niet bij het bouwen): punt in dakvlak, anders dichtstbijzijnde pand ≤ LINK_MAX m.
