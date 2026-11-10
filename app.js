@@ -104,7 +104,7 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
   const redraw = () => { dirty = true; full = true; };
   const BUILD = 'anime-1 licht randje, daken op bouwjaar, middag zacht, bolle bomen (2026-11-09)', DBG_U = { value: new THREE.Vector2(1, 1) }; // ?gpu: versie zichtbaar + schakelaars omlijning (x = vlaklijnen, y = dieptelijnen)
   H.redraw = redraw;
-  H.VERSION = '0.9-test2'; // getoond onderaan (ui.js #attr); bij release ophogen
+  H.VERSION = '0.9-test3'; // getoond onderaan (ui.js #attr); bij release ophogen
   // na de upload naar de GPU de kopie in het werkgeheugen weggooien (canvas → 1×1, DataTexture-data → null). Opnieuw tekenen = nieuw canvas/nieuwe textuur
   H.freeAfterUpload = tex => { tex.onUpdate = () => { tex.onUpdate = null; const im = tex.image; if (im && im.getContext) im.width = im.height = 1; else if (im && im.data) im.data = null; }; return tex; };
 
@@ -271,6 +271,17 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
   H.loadState = () => LS; // iso/laden.js: welke vakken er zijn (voortgangsraster)
   function lsRequest(e) {
     e.s = 1; lsBusy++;
+    if (TILEBIN) { // online: ruwe binary (tools/pack-site.cjs) i.p.v. base64-script; bij elke fout val terug op het script
+      fetch(`data/tiles/c_${e.i}_${e.j}.bin`).then(r => { if (!r.ok) throw 0; return r.arrayBuffer(); }).then(ab => {
+        const n = new DataView(ab).getUint32(0, true), h = JSON.parse(new TextDecoder().decode(new Uint8Array(ab, 4, n)));
+        H.chunk(h, new Uint8Array(ab, 4 + n));
+      }).catch(() => lsScript(e));
+      return;
+    }
+    lsScript(e);
+  }
+  const TILEBIN = /^https?:$/.test(location.protocol) && !/[?&]nobin\b/.test(location.search);
+  function lsScript(e) {
     const s = document.createElement('script');
     s.src = `data/tiles/c_${e.i}_${e.j}.js`;
     s.onerror = () => { lsBusy--; e.s = 3; if (++lsDone === LS.size) allLoaded(); s.remove(); };
@@ -408,7 +419,8 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
     onmessage = async e => {
       const { id, h, b64, ax, az, lo } = e.data;
       try {
-        const bin = atob(b64), u = new Uint8Array(bin.length); for (let k = 0; k < bin.length; k++) u[k] = bin.charCodeAt(k);
+        let u = b64; // online: al ruwe gzip-bytes (data/tiles/*.bin); file://: base64-tekst
+        if (typeof b64 === 'string') { const bin = atob(b64); u = new Uint8Array(bin.length); for (let k = 0; k < bin.length; k++) u[k] = bin.charCodeAt(k); }
         const buf = await new Response(new Blob([u]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
         const g = { v: geo(h, buf, 'v', 'roof', 'wall', h.nv, h.nr, h.nw, ax, az) };
         if (lo && h.nv1) g.v1 = geo(h, buf, 'v1', 'roof1', 'wall1', h.nv1, h.nr1, h.nw1, ax, az);
@@ -433,7 +445,7 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
       const ax = h.ox - O[0], az = h.oy - O[1];
       let buf, G = null;
       try { const r = await DECW(h, b64, ax, az, mode !== 'iso'); if (r) { buf = r.buf; G = r.g; } } catch {}
-      if (!buf) buf = await new Response(new Blob([b64bytes(b64)]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
+      if (!buf) buf = await new Response(new Blob([typeof b64 === 'string' ? b64bytes(b64) : b64]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer();
       const A = (T, k) => new T(buf, h.lay[k][0], h.lay[k][1]), S = (T, k) => A(T, k).slice(); // S = eigen kopie: anders houdt een view de hele uitgepakte buffer (±1 MB/vak) vast
       const c = {
         i: h.i, j: h.j, x0: h.i * area.km, y0: h.j * area.km, nr: h.nr, nw: h.nw, demN: h.demN, demStep: h.demStep,
@@ -1470,7 +1482,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     glide = { vx, vz, t: now, stop: px * 8 };
   }
   // iso: dist = afstand bij de gewone lens (→ zichtbare halve hoogte), of `half` direct; kijkhoek vast, richting op een kwartslag
-  H.flyTo = (x, y, { dist = 320, polar, azim, ms = 1100, half, arc = true } = {}) => { // arc false = zonder boog (zoomstap)
+  H.flyTo = (x, y, { dist = 320, polar, azim, ms = 1100, half, arc = true, zfx = false } = {}) => { // arc false = zonder boog (zoomstap)
     const t1 = toWorld(x, y), off = camera.position.clone().sub(controls.target);
     const sph = new THREE.Spherical().setFromVector3(off);
     sph.radius = dist; if (polar !== undefined) sph.phi = polar; if (azim !== undefined) sph.theta = azim;
@@ -1478,9 +1490,10 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     if (camera === ortho) { sph.phi = ISO_POLAR; sph.theta = snapAz(sph.theta); }
     fly = { t0: performance.now(), ms, a: controls.target.clone(), b: t1, sa: new THREE.Spherical().setFromVector3(off), sb: sph };
     if (camera === ortho) { fly.ha = isoHalf(); fly.hb = snapHalf(half ?? dist * TAN21); }
-    fly.arc = arc;
+    fly.arc = arc; fly.zfxWant = zfx && !arc && camera === ortho;
     // kortste draairichting
     let d = fly.sb.theta - fly.sa.theta; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; fly.sb.theta = fly.sa.theta + d;
+    fly.zfx = fly.zfxWant && Math.abs(d) < 1e-6 && Math.abs(fly.sb.phi - fly.sa.phi) < 1e-6; // 1a: zoomstap zonder draaien = beeld schalen (zoomDraw)
     redraw();
   };
   // ---------- Eerste beeld (design/11_laden.html "Eerste beeld" 1+2): hoog boven een wolkendek, recht van boven; daalt (halve hoogte ×7 → 1)
@@ -1745,7 +1758,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     pq.material = post; post.uniforms.tGlow.value = rtG1.texture; glowHave = true;
   }
   function draw(fullDraw = true) {
-    if (isoCam() && preScene.length) { mq('voor-scène'); for (const fn of preScene) fn(camera); mq(renderer.shadowMap.needsUpdate ? 'kleur+schaduw' : 'kleur'); } // meter: grond-pass e.d. apart
+    if (isoCam() && preScene.length && !zoomOn()) { mq('voor-scène'); for (const fn of preScene) fn(camera); mq(renderer.shadowMap.needsUpdate ? 'kleur+schaduw' : 'kleur'); } // meter: grond-pass e.d. apart
     if (!isoCam() || !canPost() || !useMRT) SC.ok = false;
     if (isoCam() && !canPost()) { camera.layers.enable(1); renderMsaa(); camera.layers.set(0); return; } // bewegende laag (verkeer) direct mee
     if (!isoCam()) { renderMsaa(); return; }
@@ -1808,12 +1821,9 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     if (rtC.width !== rtS.x || rtC.height !== rtS.y) { rtC.setSize(rtS.x, rtS.y); rtN.setSize(rtS.x, rtS.y); }
     post.uniforms.tC.value = useMRT ? rtC.texture[0] : rtC.texture; post.uniforms.tN.value = rtN.texture;
     if (useMRT) { // één render: kleur (uitvoer 0, zonder lucht, leeg = alfa 0) + normaal/diepte (uitvoer 1)
+      if (zoomDraw(fullDraw)) return;
       if (!fullDraw && scrollDraw()) { runPosts(); return; }
-      const bg = scene.background; scene.background = null;
-      renderer.getClearColor(clr); const ca = renderer.getClearAlpha(); renderer.setClearColor(0x000000, 0);
-      renderer.setRenderTarget(rtC); if (H.hideAll) camera.layers.set(7); renderer.render(scene, camera); if (H.hideAll) camera.layers.set(0); // H.hideAll = meten 'alles verborgen' (detail zet visible elke 400 ms terug)
-      renderer.setClearColor(clr, ca); scene.background = bg; renderer.setRenderTarget(null);
-      scAnchor();
+      renderMRT();
       runPosts(); return;
     }
     renderer.setRenderTarget(rtC); renderer.render(scene, camera);
@@ -1827,6 +1837,68 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     for (const o of hid) o.visible = true;
     renderer.setRenderTarget(null);
     runPosts();
+  }
+  function renderMRT() { // scène → rtC (kleur + normaal/diepte); daarna is rtC het anker voor scrollDraw
+    const bg = scene.background; scene.background = null;
+    renderer.getClearColor(clr); const ca = renderer.getClearAlpha(); renderer.setClearColor(0x000000, 0);
+    renderer.setRenderTarget(rtC); if (H.hideAll) camera.layers.set(7); renderer.render(scene, camera); if (H.hideAll) camera.layers.set(0); // H.hideAll = meten 'alles verborgen' (detail zet visible elke 400 ms terug)
+    renderer.setClearColor(clr, ca); scene.background = bg; renderer.setRenderTarget(null);
+    scAnchor();
+  }
+  // ---------- perf fase 2, 1a: zoomen als beeld-schaal (?nozoomfx = uit) ----------
+  // Iso-zoomstap (H.isoZoom, zelfde draaiing) = het beeld schaalt + schuift. Eén referentiebeeld (ná nabewerking, Z.rt) per stap, elk beeld alleen
+  // een geschaalde kopie naar het scherm (1 pass i.p.v. scène + posts). Inzoomen: referentie = laatste beeld (rtC opnieuw door de posts), aan het eind
+  // één scherpe render. Uitzoomen: eerst het eindbeeld tekenen (camera tijdelijk op de eindstand), vergroot tonen → eindigt scherp zonder extra render.
+  // Verzoeken om een hele render tijdens de stap (laden, groeien …) blijven staan tot het eind. Verkeer/wolken staan die 0,4 s stil.
+  const ZOOMFX = !QS.has('nozoomfx');
+  const Z = { fly: null, rt: null, mat: null, pos: new THREE.Vector3(), h: 0 };
+  const zP = new THREE.Vector3(), zE = new THREE.Vector3(), zT = new THREE.Vector3(), zR = new THREE.Vector3(), zU = new THREE.Vector3();
+  const zoomOn = () => ZOOMFX && !!fly && fly.zfx && camera === ortho && !driveCam && useMRT && !!rtC;
+  const bakedFor = h => iso && !driveCam && H.bakeReady === true && h > 400 && !QS.has('nobaked') ? 1 : 0; // A2: stand 700/2200 = gebakken zonschaduw
+  function zoomRef(f, atEnd) { // referentiebeeld vers tekenen: op de eindstand van de vlucht (uitzoomen) of op de huidige stand
+    const z0 = ortho.zoom, n0 = camera.near, f0 = camera.far, bk0 = U.uBaked.value; zP.copy(camera.position); zE.copy(U.uEye.value);
+    if (atEnd) { // zelfde formules als de vlucht bij t = 1 en de lus → het laatste beeld van de vlucht valt exact op dit anker (scrollDraw, geen render)
+      zT.lerpVectors(f.a, f.b, 1);
+      ortho.zoom = ISO_H0 / (f.ha + (f.hb - f.ha)); const h = isoHalf(), D = isoD(h);
+      camera.position.sub(controls.target).setLength(D).add(zT);
+      camera.near = Math.max(1, D - 2.5 * h - 800); camera.far = D + 6 * h + 8000; camera.updateProjectionMatrix();
+      U.uEye.value.copy(camera.position).sub(zT).setLength(h / TAN21).add(zT); U.uBaked.value = bakedFor(h);
+    }
+    if (preScene.length) { mq('voor-scène'); for (const fn of preScene) fn(camera); mq('kleur'); }
+    renderMRT(); runPosts(Z.rt);
+    Z.pos.copy(camera.position); Z.h = isoHalf();
+    if (atEnd) {
+      camera.position.copy(zP); ortho.zoom = z0; camera.near = n0; camera.far = f0; camera.updateProjectionMatrix(); camera.updateMatrixWorld();
+      U.uEye.value.copy(zE); U.uBaked.value = bk0;
+    }
+  }
+  function zoomDraw(fullDraw) { // true = dit beeld is een geschaalde kopie van het referentiebeeld
+    const f = fly;
+    if (!zoomOn()) { Z.fly = null; return false; }
+    const W = rtC.width, Hh = rtC.height; let fresh = false;
+    if (!Z.rt) {
+      Z.rt = new THREE.WebGLRenderTarget(W, Hh, Object.assign({ depthBuffer: false }, COL));
+      Z.mat = new THREE.ShaderMaterial({ uniforms: { tZ: { value: Z.rt.texture }, uS: { value: 1 }, uOff: { value: new THREE.Vector2() } }, depthTest: false, depthWrite: false,
+        vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+        fragmentShader: 'varying vec2 vUv; uniform sampler2D tZ; uniform float uS; uniform vec2 uOff;\nvoid main() {\n gl_FragColor = vec4(texture2D(tZ, 0.5 + (vUv - 0.5) * uS + uOff).rgb, 1.0);\n#include <colorspace_fragment>\n}' });
+    }
+    if (Z.rt.width !== W || Z.rt.height !== Hh) { Z.rt.setSize(W, Hh); Z.fly = null; }
+    if (Z.fly !== f) { // nieuwe zoomstap: referentie kiezen
+      const hEnd = f.ha + (f.hb - f.ha), out = hEnd > isoHalf();
+      if (out) { zoomRef(f, true); fresh = true; }
+      else if (Z.fly && Z.h / hEnd <= 3.6) { /* stap achter stap: zelfde referentie (bevat het nieuwe beeld), tot ±3,6× vergroot */ }
+      else if (!Z.fly && SC.ok && SC.w === W && SC.h === Hh && camera.quaternion.angleTo(SC.q) < 1e-7) { // laatste beeld staat nog in rtC (anker SC): alleen de posts opnieuw
+        runPosts(Z.rt); Z.pos.copy(SC.pos); Z.h = ISO_H0 / SC.zoom;
+      } else { zoomRef(f, false); fresh = true; }
+      Z.fly = f;
+    }
+    if (fullDraw && !fresh) full = true; // hele render uitgesteld tot na de stap
+    camera.updateMatrixWorld(); zR.setFromMatrixColumn(camera.matrixWorld, 0).normalize(); zU.setFromMatrixColumn(camera.matrixWorld, 1).normalize();
+    zT.subVectors(camera.position, Z.pos);
+    const u = Z.mat.uniforms, asp = W / Hh;
+    u.uS.value = isoHalf() / Z.h; u.uOff.value.set(0.5 * zT.dot(zR) / (Z.h * asp), 0.5 * zT.dot(zU) / Z.h);
+    mq('zoom'); pq.material = Z.mat; renderer.setRenderTarget(null); renderer.render(postScene, postCam); pq.material = post;
+    return true;
   }
   // ---------- perf-08 stap 1: scrollend tekenen bij iso-pannen ----------
   // Ortho + zelfde draaiing/zoom: pannen = het beeld schuift. Vorig beeld (MRT: kleur + normaal/diepte) op hele pixels verschoven kopiëren
@@ -1898,7 +1970,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     return true;
   }
   // nabewerking los: ook zonder nieuwe scène-render (rtC/rtN hergebruiken) als alleen een post-animatie (wolken) verandert
-  function runPosts() {
+  function runPosts(out = null) { // out = eindresultaat in een doel i.p.v. op het scherm (zoomDraw)
     const fresh = postFresh; postFresh = false; // true = net een scène-render/scroll (draw); false = losse tik (wolken e.d.) → gecachte stappen + gloed hergebruiken
     // bewegende laag (laag 1): klein, dus goedkoop; alleen als er iets zichtbaar is
     let dynOn = false; for (const o of dyn) if (o.visible) { dynOn = true; break; }
@@ -1947,7 +2019,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
       if (fresh || key !== kKey) { let s = null, d = rtA; for (let i = 0; i < k; i++) { const to = i === k - 1 ? rtK : d; run(i, to, s); s = to; d = d === rtA ? rtB : rtA; } kKey = key; }
       src = rtK;
     }
-    for (let i = k; i < steps.length; i++) { run(i, i === steps.length - 1 ? null : dst, src); src = dst; dst = dst === rtA ? rtB : rtA; }
+    for (let i = k; i < steps.length; i++) { run(i, i === steps.length - 1 ? out : dst, src); src = dst; dst = dst === rtA ? rtB : rtA; }
     pq.material = post; renderer.setRenderTarget(null);
   }
 
@@ -2024,6 +2096,63 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
   // perf (?noshskip = uit): lag het hele beeld (4 hoeken op de grond) al in het vorige schaduwkader? Dan valt er niets in te faden
   // → geen 0,7 s lang elk beeld de hele scène opnieuw tekenen na elke stop (kader = ±1,1× beeld + 25% vooruit, dus bij korte stukjes pannen/inzoomen)
   const shCv = new THREE.Vector3(), shCd = new THREE.Vector3(), SH_SKIP = !QS.has('noshskip');
+  // ---------- perf fase 2, 1c: shaders vooraf compileren (?noprecomp = uit) ----------
+  // Een materiaal dat voor het eerst in beeld komt (straatmeubilair bij inzoomen, verkeer, een nabewerking die aangaat) compileert anders midden in dat
+  // beeld (hapering). Bij stilstand/klaar met laden: per nog niet gezien materiaal (× instanced/kleur-attribuut) één voorbeeld-object aan
+  // renderer.compileAsync geven (ook verborgen objecten; KHR_parallel_shader_compile → op de achtergrond). Nabewerkingen: variant 'naar doel' + 'naar scherm'.
+  // Filmisch/nacht/dagdeel zijn uniforms (geen nieuwe shader). Niet gedekt: schaduw-dieptevarianten en zon-schaduw aan/uit (andere lichten-sleutel).
+  const PRECOMP = !QS.has('noprecomp'), pcSeen = new Set(), pcHold = new THREE.Object3D(); let pcBusy = false;
+  function precompile() {
+    if (!PRECOMP || pcBusy || moveNow || !rtC || !isoCam() || typeof renderer.compileAsync !== 'function') return;
+    const pick = [], pp = [];
+    scene.traverse(o => {
+      const m = o.material; if (!m || !(o.isMesh || o.isLine || o.isPoints) || !o.geometry) return;
+      const k = (Array.isArray(m) ? m.map(x => x.id).join('.') : m.id) + (o.isInstancedMesh ? 'i' : '') + (o.instanceColor ? 'c' : '') + (o.geometry.attributes.color ? 'v' : '') + (o.receiveShadow ? 's' : '');
+      if (!pcSeen.has(k)) { pcSeen.add(k); pick.push(o); }
+    });
+    for (const q of posts) { const m = q.material; if (m && !pcSeen.has('p' + m.id)) { pcSeen.add('p' + m.id); pp.push(new THREE.Mesh(pq.geometry, m)); } }
+    if (!pick.length && !pp.length) return;
+    const rt = renderer.getRenderTarget(), jobs = []; pcBusy = true;
+    try {
+      if (pick.length) { pcHold.children = pick; renderer.setRenderTarget(rtC); jobs.push(renderer.compileAsync(pcHold, camera, scene)); }
+      if (pp.length) { pcHold.children = pp; if (rtA) { renderer.setRenderTarget(rtA); jobs.push(renderer.compileAsync(pcHold, postCam, postScene)); }
+        renderer.setRenderTarget(null); jobs.push(renderer.compileAsync(pcHold, postCam, postScene)); }
+    } catch (e) { console.warn('precompile', e); }
+    pcHold.children = []; renderer.setRenderTarget(rt);
+    Promise.all(jobs).catch(() => {}).then(() => { pcBusy = false; });
+  }
+  on('still', () => setTimeout(precompile, 300)); on('loaded', () => setTimeout(precompile, 300)); on('grown', () => setTimeout(precompile, 300));
+  // ---------- perf fase 2, 1b: schaduwkaart gespreid opbouwen (?noshspread = uit) ----------
+  // Na stilstand tekende three alle werpers in het kader (tot ±16 km² panden + bomen) in één beeld, samen met de scène → de piek bij stoppen.
+  // Nu: werpers in ≤ 8 groepen (±0,5 mln driehoeken), één groep per beeld in een tweede schaduw-object (three's eigen schaduwpass via een hulpscène
+  // waarvan `children` de groep is; kaart niet wissen tussen de stappen). Klaar → wisselen + bestaande infade. Eerste kaart, rijden, 3D ver weg: oude pad.
+  const SHSPREAD = !QS.has('noshspread'); let SP = null, shSpare = null, shScene = null, shCam = null, shRT = null;
+  function shStep() { // één groep tekenen; true = kaart compleet
+    const sp = SP, live = sun.shadow;
+    if (!shScene) {
+      shScene = new THREE.Scene(); shCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1); shCam.position.set(0, 1e7, 0); shCam.updateMatrixWorld(); // ziet niets: alleen de schaduwpass telt
+      shRT = new THREE.WebGLRenderTarget(1, 1, { depthBuffer: false });
+    }
+    sun.updateMatrixWorld(); sun.target.updateMatrixWorld();
+    if (!sp.groups) { // werpers binnen het nieuwe kader verzamelen en op gewicht (indices × instanties) verdelen
+      sp.sh.updateMatrices(sun); const fr = sp.sh.getFrustum(), L = [], Wt = []; let tot = 0; sp.lights = [];
+      scene.traverseVisible(o => {
+        if (o.isLight) { sp.lights.push(o); return; }
+        if (!o.castShadow || !(o.isMesh || o.isLine || o.isPoints) || !o.layers.test(camera.layers)) return;
+        if (o.frustumCulled && !fr.intersectsObject(o)) return;
+        const g = o.geometry, n = g.index ? g.index.count : g.attributes.position ? g.attributes.position.count : 0, w = Math.max(1, n * (o.isInstancedMesh ? o.count : 1));
+        L.push(o); Wt.push(w); tot += w;
+      });
+      const n = Math.min(8, Math.max(1, Math.ceil(tot / 1.5e6))), per = tot / n; sp.groups = [[]]; let acc = 0;
+      for (let k = 0; k < L.length; k++) { if (acc >= per && sp.groups.length < n) { sp.groups.push([]); acc = 0; } sp.groups[sp.groups.length - 1].push(L[k]); acc += Wt[k]; }
+    }
+    shScene.children = sp.lights.concat(sp.groups[sp.i]); shScene.fog = scene.fog; shScene.environment = scene.environment; // zelfde lichten/mist → zelfde shaders
+    const rt = renderer.getRenderTarget(), cl = renderer.clear;
+    if (sp.i) renderer.clear = () => {}; // vanaf deel 2 de kaart (kleur + diepte) laten staan
+    sun.shadow = sp.sh; renderer.shadowMap.needsUpdate = true; renderer.setRenderTarget(shRT);
+    try { renderer.render(shScene, shCam); } finally { renderer.clear = cl; sun.shadow = live; renderer.shadowMap.needsUpdate = false; renderer.setRenderTarget(rt); shScene.children = []; }
+    return ++sp.i >= sp.groups.length;
+  }
   function shCovers(m) {
     if (!SH_SKIP || camera !== ortho) return false;
     camera.updateMatrixWorld(); camera.getWorldDirection(shCd); if (Math.abs(shCd.y) < 1e-3) return false;
@@ -2082,7 +2211,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
       ndc.set((cx - r.left) / r.width * 2 - 1, -(cy - r.top) / r.height * 2 + 1); ray.setFromCamera(ndc, camera);
       if (ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -T.y), P)) T = P.add(T.sub(P).multiplyScalar(h1 / h0));
     }
-    const [x, y] = toRD(T); H.flyTo(x, y, { half: h1, ms: 380, arc: false }); emit('interact');
+    const [x, y] = toRD(T); H.flyTo(x, y, { half: h1, ms: 380, arc: false, zfx: true }); emit('interact');
   };
   // ---------- Toetsen: pijltjes / WASD = schuiven over de grond (t.o.v. de kijkrichting), Shift = 3× sneller ----------
   // Snelheid naar zoom: ±0,9 beeldhoogte per seconde. Q/E/+/− zitten in ui.js.
@@ -2184,6 +2313,13 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
         if (r === false) anims.delete(f); else if (r === 'post') postDirty = true; else if (r !== 'none') { dirty = full = true; if (M.on) M.af[f.src || f.name || '?'] = (M.af[f.src || f.name || '?'] || 0) + 1; }
       }
     }
+    if (SP) { // 1b: schaduwkaart in delen; bewegen = afbreken (bij de volgende stilstand opnieuw)
+      if (moving || !sun.castShadow || driveCam) { SP = null; shadowDirty = true; }
+      else if (shStep()) {
+        const old = sun.shadow; sun.shadow = SP.sh; shSpare = old; U.uPerM.value = SP.perM; U.uDR.value = SP.dr; SP = null;
+        shFadeOld = old.matrix.clone(); shFadeGo = true; dirty = full = true;
+      }
+    }
     if (!dirty) {
       if (postDirty && isoCam() && rtC) { postDirty = false; mBegin(false); runPosts(); mEnd(false); } // ±1 schermvullende pass per stap i.p.v. 2 scène-renders
       return;
@@ -2203,9 +2339,9 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     }
     // zon + schaduwkader rond het doel, grootte naar zoom
     isoSun();
-    const S = shadowExt(), sc = sun.shadow.camera;
+    const S = shadowExt();
     // A2: iso op stand 700/2200 = gebakken zonschaduw (schaduwkaart niet bijwerken); dichterbij scherpe live schaduw. Contactschaduw in iso altijd (zodra gebakken)
-    const bk = iso && !driveCam && H.bakeReady === true && isoHalf() > 400 && !QS.has('nobaked') ? 1 : 0; // ?nobaked = A/B live schaduw; // rijden: altijd scherpe live schaduw
+    const bk = bakedFor(isoHalf()); // ?nobaked = A/B live schaduw; // rijden: altijd scherpe live schaduw
     if (bk !== U.uBaked.value) { U.uBaked.value = bk; if (!bk) shadowDirty = true; }
     U.uBkAO.value = iso && U.uBk.value && fxOn.ao && !zuinigNow() ? 1 : 0; // Zuinig: geen contactschaduw (±6,5 ms GPU per beeld)
     // rijden: kader ligt vóór de auto; schaduwkaart (= hele stad nog eens tekenen) pas opnieuw als het zichtbare stuk (auto + DRV_SH m vooruit) er bijna uit valt
@@ -2219,8 +2355,12 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
       if (!ok) shadowDirty = true;
     }
     if (!moving && !bk && (shadowDirty || key !== shadowKey)) { // tijdens bewegen blijft de schaduwkaart staan
-      shadowDirty = false; shadowKey = key; renderer.shadowMap.needsUpdate = true;
-      shFadeOld = shHad ? sun.shadow.matrix.clone() : null; shFadeGo = true; // matrix van de vorige kaart (verse kaart overschrijft hem in draw)
+      shadowDirty = false; shadowKey = key;
+      // 1b: gespreid (zie shStep): de nieuwe kaart komt in delen in een tweede schaduw-object; de vorige blijft zichtbaar tot hij klaar is
+      const spread = SHSPREAD && shHad && sun.castShadow && sun.visible && !driveCam && !!sun.shadow.map, live = sun.shadow;
+      if (spread) { if (!shSpare) { shSpare = live.clone(); shSpare.blurSamples = live.blurSamples; } sun.shadow = shSpare; }
+      else { SP = null; renderer.shadowMap.needsUpdate = true;
+        shFadeOld = shHad ? sun.shadow.matrix.clone() : null; shFadeGo = true; } // matrix van de vorige kaart (verse kaart overschrijft hem in draw)
       const dx = controls.target.x - shLast.x, dz = controls.target.z - shLast.z; // schuifrichting sinds vorige stilstand (klein = vorige houden)
       if (shKeep && dx * dx + dz * dz > 400) shDir.set(dx, 0, dz).normalize();
       shKeep = true; shLast.copy(controls.target);
@@ -2230,9 +2370,12 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
       // dieptebereik krap om het kader: bias in meters i.p.v. vast 0,0004 × 5900 m (= 2,4 m → schaduw 'zweefde' los naast het pand)
       const R = S * 1.5 + 600, tx = 2 * S / sun.shadow.mapSize.x;
       sun.position.copy(shC).add(SUN_DIR.clone().normalize().multiplyScalar(R + 100));
-      sc.left = -S; sc.right = S; sc.top = S; sc.bottom = -S; sc.near = 100; sc.far = 2 * R + 100; sc.updateProjectionMatrix();
+      { const sc = sun.shadow.camera; sc.left = -S; sc.right = S; sc.top = S; sc.bottom = -S; sc.near = 100; sc.far = 2 * R + 100; sc.updateProjectionMatrix(); }
       sun.shadow.bias = -(0.12 + tx * 0.5) / (2 * R); sun.shadow.normalBias = Math.min(1.5, 0.15 + tx * 0.4);
-      U.uPerM.value = 1 / (2 * S); U.uDR.value = 2 * R;
+      if (spread) { // werpers meteen rond het nieuwe kader (anders 400 ms later nóg een kaart), daarna stap voor stap tekenen
+        SP = { sh: shSpare, perM: 1 / (2 * S), dr: 2 * R, groups: null, lights: null, i: 0 }; sun.shadow = live;
+        updateDetail(); lastLod = now; shadowDirty = false;
+      } else { U.uPerM.value = 1 / (2 * S); U.uDR.value = 2 * R; }
     } else if (moving) dirty = true; // blijven tekenen tot stilstand, dan één keer met verse schaduw
     if (iso) { scene.fog.near = 1e7; scene.fog.far = 2e7; }
     else { scene.fog.near = Math.max(4000, dist * 2.5); scene.fog.far = scene.fog.near + 12000; }

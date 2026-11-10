@@ -74,14 +74,28 @@
 // 96: grote data + de modules die ze lezen laden ná het eerste beeld (dynamische <script>, in volgorde, werkt via file://). ?nodefer = oude gedrag (alles synchroon).
 (() => {
   const nodefer = /[?&]nodefer\b/.test(location.search), Q = [];
+  // online (http/https) pakt tools/pack-site.cjs de grote data in als data/X.json (fetch + JSON.parse i.p.v. script-literal); file:// of ?nobin = de .js-bestanden zoals altijd
+  const bin = !nodefer && /^https?:$/.test(location.protocol) && !/[?&]nobin\b/.test(location.search), PACK = { bgt: 1, props: 1, traffic: 1, transit: 1, spires: 1 }, P = {};
+  const nm = src => src.replace(/^data\/|\.js$/g, '');
   window.H3D_WAIT = new Set(); // namen van data die nog onderweg is (iso/ground.js wacht op 'bgt')
   window.H3Dw = (src, wait) => {
     if (nodefer) { document.write('<script src="' + src + '"' + (src.startsWith('data/') ? ' onerror="this.remove()"' : '') + '><\/script>'); return; }
     Q.push(src); if (wait) window.H3D_WAIT.add(wait);
+    if (bin) { // online: download start nu (parallel aan het eerste beeld); uitvoeren blijft in volgorde (H3Dgo)
+      const n = nm(src);
+      if (PACK[n] && src.startsWith('data/')) P[src] = fetch('data/' + n + '.json').then(r => { if (!r.ok) throw 0; return r.json(); }).catch(() => null); // null = terugval op het .js-script
+      else { const l = document.createElement('link'); l.rel = 'preload'; l.as = 'script'; l.href = src; document.head.appendChild(l); }
+    }
   };
   window.H3Dgo = () => {
     if (!Q.length) return;
-    const run = () => Q.forEach(src => {
+    const runBin = () => Q.reduce((chain, src) => chain.then(() => new Promise(res => { // één voor één, in volgorde (iso/*.js leest H3D_DATA bij uitvoeren)
+      const n = nm(src), fin = () => { if (window.H3D_WAIT.delete(n)) window.dispatchEvent(new Event('h3d-' + n)); res(); };
+      const script = () => { const el = document.createElement('script'); el.src = src; el.onload = fin; el.onerror = () => { el.remove(); fin(); }; document.head.appendChild(el); };
+      if (!P[src]) return script();
+      P[src].then(d => { if (d === null) return script(); (window.H3D_DATA ||= {})[n] = d; fin(); });
+    })), Promise.resolve());
+    const run = bin ? runBin : () => Q.forEach(src => {
       const el = document.createElement('script'); el.src = src; el.async = false; // async=false: uitvoeren in toevoegvolgorde
       const done = () => { const n = src.replace(/^data\/|\.js$/g, ''); if (window.H3D_WAIT.delete(n)) window.dispatchEvent(new Event('h3d-' + n)); };
       el.onload = done; el.onerror = () => { el.remove(); done(); }; document.head.appendChild(el);
