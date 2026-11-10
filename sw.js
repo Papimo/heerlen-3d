@@ -10,6 +10,7 @@ self.addEventListener('activate', e => e.waitUntil((async () => {
 self.addEventListener('fetch', e => {
   const r = e.request;
   if (r.method !== 'GET' || new URL(r.url).origin !== self.location.origin) return;
+  if (new URL(r.url).pathname.includes('/auto/')) return; // testpagina rijden (tools/publish-auto.sh): eigen versie, niet in deze cache
   e.respondWith((async () => {
     const c = await caches.open(CACHE), hit = await c.match(r, { ignoreSearch: true });
     if (hit) return hit;
