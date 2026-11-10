@@ -226,7 +226,7 @@
       const im = inst(G[k], L[k], y0 - 0.05); if (im) { im.userData.kind = kind; im.userData.sOK = sOK(kind, season); v.small.push(im); }
     }
     if (!v.trees.length && !v.small.length) return;
-    H.scene.add(group); VAK.push(v);
+    H.scene.add(H.freeze ? H.freeze(group) : group); VAK.push(v);
     detail(v); H.shadowDirty();
   }
 

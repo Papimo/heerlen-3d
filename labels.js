@@ -132,7 +132,15 @@
   H3D.on('frame', () => { need = true; });
   H3D.on('layer', () => { need = true; H3D.redraw(); });
   // los van het tekenen bijwerken (hooguit 1× per beeld, na de pins)
-  (function tick() { requestAnimationFrame(tick); if (need) { need = false; place(); } })();
+  // iso-pannen: 3 van de 4 beelden alleen de laag verschuiven (H3D.panShift); stilstand = altijd volledig (randen vullen)
+  let ref = null, skip = 0;
+  H3D.on('still', () => { ref = null; need = true; });
+  (function tick() {
+    requestAnimationFrame(tick); if (!need) return; need = false;
+    const s = H3D.panShift?.(ref);
+    if (s && ++skip < 4) { box.style.transform = `translate(${s[0].toFixed(1)}px,${s[1].toFixed(1)}px)`; return; }
+    skip = 0; box.style.transform = ''; place(); ref = H3D.panRef?.();
+  })();
   document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('pins').before(box);
     if (H3D.layerData) prepare(H3D.layerData);

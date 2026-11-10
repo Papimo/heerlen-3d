@@ -118,7 +118,7 @@
   const TRUNK = '#6b5444', GLASS = '#f4efe2';
   let ST = null; // pas bij het eerste vak bouwen (THREE + H3D zijn er dan zeker)
   const style = () => ST ||= {
-    tree: [merge([part(cyl(0.05, 0.035, 0.3, 5), TRUNK), part(H.blobCrown ? H.blobCrown(1, 11) : ico(1, 0), '#fff', H.blobCrown ? { tint: 1 } : { p: [0, 0.58, 0], s: [0.32, 0.4, 0.32], tint: 1 })]), // bolle klont (dichtbij: fijnere bollen)
+    tree: [merge([part(cyl(0.05, 0.035, 0.5, 5), TRUNK), part(H.blobCrown ? H.blobCrown(1, 11) : ico(1, 0), '#fff', H.blobCrown ? { tint: 1 } : { p: [0, 0.58, 0], s: [0.32, 0.4, 0.32], tint: 1 })]), // bolle klont (dichtbij: fijnere bollen)
            merge([part(cyl(0.05, 0.035, 0.3, 5), TRUNK), part(cone(0.22, 0.85, 7), '#fff', { p: [0, 0.13, 0], tint: 1 })])],
     treeLo: [merge([part(new THREE.OctahedronGeometry(1, 0), '#fff', { p: [0, 0.62, 0], s: [0.4, 0.4, 0.4], tint: 1 })]), // ver weg: alleen kroon (zoals bossen)
              merge([part(cone(0.22, 0.85, 5), '#fff', { p: [0, 0.13, 0], tint: 1 })])],
@@ -154,9 +154,9 @@
   const CARC = ['#e8e6e1', '#2e3036', '#8d9299', '#b8bcc2', '#a53a2e', '#2f4f78', '#55606b', '#d8cfb8', '#6b4a3a', '#c9a23a']; // geen groen: seizoen-shader zou dat als blad verkleuren
   // ---------- begraafplaats: kerkhof 2 Verwilderd · mist A Vlakke sluier (design/12_begraafplaats.html) ----------
   // kerkhofringen nu al vastpakken: iso/ground.js prep() leegt GD.land later
-  const KHRAW = (window.H3D_DATA?.ground?.land || []).filter(l => l[0] === 'kerkhof').map(l => l[1]);
+  const KHRAW = (window.H3D_DATA?.ground?.landKeep || window.H3D_DATA?.ground?.land || []).filter(l => l[0] === 'kerkhof').map(l => l[1]);
   // verzonnen randbomen (Bekkerveld e.d., keuze b): grote gras-/parkvlakken krijgen een bomenrij langs de rand
-  const EDGERAW = (window.H3D_DATA?.ground?.land || []).filter(l => l[0] === 'park' || l[0] === 'gras');
+  const EDGERAW = (window.H3D_DATA?.ground?.landKeep || window.H3D_DATA?.ground?.land || []).filter(l => l[0] === 'park' || l[0] === 'gras');
   const EDGE = { park: [5000, Infinity], gras: [15000, 150000], step: 16, inset: 2.5, gap: 0.35 }; // m²: kleine bermen en grote weilanden niet (±13k bomen)
   const KV = {
     kinds: [['slab', 3], ['round', 2], ['cross', 2], ['broken', 1]], dens: 2, rows: 1, scale: 1.2, lean: 0.22, drop: 0.18, fall: 0.06,
@@ -522,28 +522,28 @@
       pm.onAfterRender = (r, s, cam, geo) => geo.setDrawRange(0, Infinity);
       group.add(pm); v.pool = pm;
     }
-    H.scene.add(group); VAK.push(v);
+    H.scene.add(H.freeze ? H.freeze(group) : group); VAK.push(v);
     detail(v); H.shadowDirty();
   }
 
   // ---------- uitdunnen naar afstand (gelijkwaardige afstand = chunkDist × lens, zoals bossen) ----------
   function detail(v) {
-    const d = H.chunkDist(v.c) * H.lens();
-    const f = d < 1800 ? 1 : d < 4000 ? 1 / 3 : 0, cast = d < 1800, lo = !!H.treeLo?.(d); let ch = false;
+    const d = H.chunkDist(v.c) * H.lens(), drv = !!H.driving?.(), far = drv && H.chunkDist(v.c) > (H.DRV_FAR || 650) + 100;
+    const f = far ? 0 : drv ? 1 : d < 1800 ? 1 : d < 4000 ? 1 / 3 : 0, cast = !drv && d < 1800, lo = !!H.treeLo?.(d); let ch = false;
     for (const im of v.trees) {
       const g = lo ? im.geoLo : im.geoHi; if (im.geometry !== g) { im.geometry = g; ch = true; }
       const n = Math.round(im.full * f);
       if (im.count !== n) { im.count = n; ch = true; }
       if (im.castShadow !== cast) { im.castShadow = cast; ch = true; }
     }
-    const near = d < 2200; // lantaarns, banken, toestellen: klein → ver weg weg
+    const near = drv ? !far : d < 2200; // lantaarns, banken, toestellen: klein → ver weg weg
     for (const im of v.small) {
       if (im.geoLo) { const g = lo ? im.geoLo : im.geoHi; if (im.geometry !== g) { im.geometry = g; ch = true; } }
       if (im.visible !== near) { im.visible = near; ch = true; }
       const cs = cast && !im.userData.noShadow;
       if (im.castShadow !== cs) { im.castShadow = cs; ch = true; }
     }
-    v.group.visible = d < 6000 && H.fxOn('props'); // poelen blijven langer staan: straten als kralensnoeren
+    v.group.visible = !far && d < 6000 && H.fxOn('props'); // rijden: alleen binnen de kijkafstand // poelen blijven langer staan: straten als kralensnoeren
     return ch;
   }
   H.on('detail', () => { let ch = false; for (const v of VAK) ch = detail(v) || ch; if (ch) H.shadowDirty(); });

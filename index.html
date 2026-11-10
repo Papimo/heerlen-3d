@@ -32,7 +32,9 @@
     <section id="g-stad"><h3>🏙 Stad <small></small></h3><div></div></section>
   </div></details>
   <button id="tour" class="seg" title="Rondleiding: vlieg een voor een langs je pins (of de plekken in beeld)">▶ Rondleiding</button>
+  <div id="clock" title="Klok: dienstregeling en zon lopen hierop"><button id="clockt" title="Terug naar de echte tijd">--:--</button><button data-speed="1">×1</button><button data-speed="10">×10</button><button data-speed="60">×60</button></div>
   <button class="round" data-view="thuis" title="Terug naar het centrum">⌂</button>
+  <button id="drivebtn" class="round" title="Rijden: zet de auto op een weg en stuur zelf (Esc = uitstappen)" aria-label="Rijden"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 16V11l2-5h10l2 5v5"/><path d="M3 16h18v3H3z"/><circle cx="7.5" cy="19" r="1.6"/><circle cx="16.5" cy="19" r="1.6"/><path d="M5 11h14"/></svg></button>
   <div id="compass">
     <button data-rot="-1" title="Kwartslag linksom (Q)">⟲</button>
     <button class="round" data-view="noord" title="Noord boven"><i id="needle"><b>N</b></i></button>
@@ -68,23 +70,48 @@
 <script src="ui.js"></script>
 <script src="labels.js"></script>
 <!-- iso-uitbreidingen (plan_iso.md): elk bestand haakt in via H3D.on / patchTerrain / addPost / animate; data eerst, dan code -->
+<script>
+// 96: grote data + de modules die ze lezen laden ná het eerste beeld (dynamische <script>, in volgorde, werkt via file://). ?nodefer = oude gedrag (alles synchroon).
+(() => {
+  const nodefer = /[?&]nodefer\b/.test(location.search), Q = [];
+  window.H3D_WAIT = new Set(); // namen van data die nog onderweg is (iso/ground.js wacht op 'bgt')
+  window.H3Dw = (src, wait) => {
+    if (nodefer) { document.write('<script src="' + src + '"' + (src.startsWith('data/') ? ' onerror="this.remove()"' : '') + '><\/script>'); return; }
+    Q.push(src); if (wait) window.H3D_WAIT.add(wait);
+  };
+  window.H3Dgo = () => {
+    if (!Q.length) return;
+    const run = () => Q.forEach(src => {
+      const el = document.createElement('script'); el.src = src; el.async = false; // async=false: uitvoeren in toevoegvolgorde
+      const done = () => { const n = src.replace(/^data\/|\.js$/g, ''); if (window.H3D_WAIT.delete(n)) window.dispatchEvent(new Event('h3d-' + n)); };
+      el.onload = done; el.onerror = () => { el.remove(); done(); }; document.head.appendChild(el);
+    });
+    requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(run, 0))); // eerste beeld eerst
+  };
+  if (typeof H3D !== 'undefined') H3D.on('loaded', () => { window.H3D_LOADED = 1; }); // voor late modules (iso/traffic.js): 'loaded' komt maar één keer
+})();
+</script>
 <script src="data/ground.js" onerror="this.remove()"></script>
-<script src="data/bgt.js" onerror="this.remove()"></script>
-<script src="data/props.js" onerror="this.remove()"></script>
-<script src="data/traffic.js" onerror="this.remove()"></script>
-<script src="data/spires.js" onerror="this.remove()"></script>
+<script>H3Dw("data/bgt.js", "bgt")</script>
+<script>H3Dw("data/props.js")</script>
+<script>H3Dw("data/traffic.js")</script>
+<script>H3Dw("data/transit.js")</script>
+<script>H3Dw("data/spires.js")</script>
 <script src="iso/bridges.js"></script>
 <script src="iso/ground.js"></script>
 <script src="iso/diorama.js"></script>
 <script src="iso/sky.js"></script>
-<script src="iso/props.js"></script>
+<script>H3Dw("iso/props.js")</script>
 <script src="iso/farm.js"></script>
-<script src="iso/traffic.js"></script>
+<script>H3Dw("iso/traffic.js")</script>
 <script src="iso/models.js"></script>
-<script src="iso/spires.js"></script>
+<script>H3Dw("iso/spires.js")</script>
 <script src="iso/daken.js"></script>
 <script src="iso/bake.js"></script>
 <script src="iso/laden.js"></script>
+<script src="iso/drive.js"></script>
+<script src="iso/bench.js"></script>
+<script>H3Dgo()</script>
 <script>if (/^https?:$/.test(location.protocol) && "serviceWorker" in navigator) { const had = !!navigator.serviceWorker.controller; navigator.serviceWorker.register("sw.js").catch(() => {}); navigator.serviceWorker.addEventListener("controllerchange", () => { if (had && !window.h3dSwR) { window.h3dSwR = 1; location.reload(); } }); } // tweede bezoek uit cache (alleen online); nieuwe versie gepubliceerd → één keer herladen, anders zag je eerst de oude</script>
 </body>
 </html>

@@ -100,17 +100,18 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
   let growFloor = 0; const growing = new Set(); // growFloor: intro houdt groeien tegen tot de wolken openbreken
   let dirty = true;
   const QS = new URLSearchParams(location.search); // testschakelaars: ?nopost ?noshadow
-  const redraw = () => { dirty = true; };
+  let full = true; // perf-08: dirty zonder full = alleen de camera schoof (iso: scrollend tekenen, zie scrollDraw)
+  const redraw = () => { dirty = true; full = true; };
   const BUILD = 'anime-1 licht randje, daken op bouwjaar, middag zacht, bolle bomen (2026-11-09)', DBG_U = { value: new THREE.Vector2(1, 1) }; // ?gpu: versie zichtbaar + schakelaars omlijning (x = vlaklijnen, y = dieptelijnen)
   H.redraw = redraw;
-  H.VERSION = '0.8.0'; // getoond onderaan (ui.js #attr); bij release ophogen
+  H.VERSION = '0.9-test'; // getoond onderaan (ui.js #attr); bij release ophogen
   // na de upload naar de GPU de kopie in het werkgeheugen weggooien (canvas → 1×1, DataTexture-data → null). Opnieuw tekenen = nieuw canvas/nieuwe textuur
   H.freeAfterUpload = tex => { tex.onUpdate = () => { tex.onUpdate = null; const im = tex.image; if (im && im.getContext) im.width = im.height = 1; else if (im && im.data) im.data = null; }; return tex; };
 
   function init() {
     const el = document.getElementById('view');
     try {
-      renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+      renderer = new THREE.WebGLRenderer({ antialias: QS.has('noaa'), powerPreference: 'high-performance' });
     } catch (e) { document.body.classList.add('no-webgl'); return; }
     H.renderer = renderer; renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     renderer.setSize(el.clientWidth, el.clientHeight);
@@ -140,6 +141,8 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
     }, 0);
 
     scene = H.scene = new THREE.Scene();
+    // stilstaand spul: matrix één keer uitrekenen i.p.v. elk beeld (updateMatrixWorld kostte ±4 ms CPU/beeld). Later toegevoegde kinderen rekenen gewoon mee
+    H.freeze = o => { o.traverse(x => { x.updateMatrix(); x.matrixAutoUpdate = false; }); return o; };
     scene.background = SKY;
     scene.fog = new THREE.Fog(SKY, 7000, 18000);
     camera = persp = new THREE.PerspectiveCamera(42, el.clientWidth / el.clientHeight, 2, 40000);
@@ -494,7 +497,7 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
         g.computeBoundingSphere(); g.computeBoundingBox();
         const m = new THREE.Mesh(g, [MAT.roof, MAT.wall]);
         m.castShadow = m.receiveShadow = true; m.userData.chunk = c;
-        scene.add(m);
+        scene.add(H.freeze(m));
         return m;
       };
       // terrein
@@ -511,7 +514,7 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
       c.terrain = new THREE.Mesh(tg, terrMat(new THREE.MeshLambertMaterial({ color: STYLES[style].bg })));
       c.terrain.receiveShadow = true; c.terrain.renderOrder = 1; // terrein als laatste (dure shader): wat panden/linten/bomen bedekken valt weg in de dieptetest
       c.terrain.userData.chunk = c;
-      scene.add(c.terrain);
+      scene.add(H.freeze(c.terrain));
       if (H.baseH === undefined || minH - 3 < H.baseH) { H.baseH = minH - 3; if (ground) ground.position.y = H.baseH; }
       H.chunks.set(h.i + '_' + h.j, c); // vanaf hier telt het vak mee (hoogte, grond); c.mesh komt pas in stap 2 → overal `if (c.mesh)`
       c.level = 0;
@@ -566,7 +569,7 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
   const shadowExt = () => camera === ortho ? Math.max(350, Math.min(3000, Math.max(isoHalf() * ortho.right / ISO_H0, isoHalf() * 2.2) * 1.1))
     : Math.max(350, Math.min(2600, viewDist() * 1.1));
   // schaduwkader schuift vooruit in de laatste schuifrichting (zelfde kosten, schaduw ligt al klaar waar je heen gaat); render-lus zet shC
-  const shC = new THREE.Vector3(), shLast = new THREE.Vector3(), shDir = new THREE.Vector3(), SH_AHEAD = 0.25; // meer = achterkant van het beeld valt buiten het kader
+  const shC = new THREE.Vector3(), shLast = new THREE.Vector3(), shDir = new THREE.Vector3(), SH_AHEAD = 0.25, shFw = new THREE.Vector3(), DRV_SH = 280; // DRV_SH: zover vooruit moet de schaduw kloppen tijdens rijden (m) // meer = achterkant van het beeld valt buiten het kader
   let shKeep = false;
   H.lens = lens;
   function wantLevel(c) {
@@ -609,10 +612,10 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
       const cast = shadows && !far && chunkDist(c, shC, 0) < S;
       if (c.mesh && !c.growing && c.mesh.castShadow !== cast && !mv) { c.mesh.castShadow = cast; ch = true; }
       if (c.trees) { // bomen: dichtbij alles, verder weg uitgedund, heel ver weg geen
-        const f = d < 1800 ? 1 : d < 4000 ? 1 / 3 : d < 8000 ? 1 / 8 : 0, lo = dbs.y / (2 * d * TAN21) < TREE_LO_PPM; // d × lens → px/m zoals in iso
+        const f = driveCam ? (chunkDist(c, camera.position) < DRV_FAR + 100 ? 1 : 0) : d < 1800 ? 1 : d < 4000 ? 1 / 3 : d < 8000 ? 1 / 8 : 0, lo = dbs.y / (2 * d * TAN21) < TREE_LO_PPM; // d × lens → px/m zoals in iso
         for (const im of c.trees) {
           const g = lo ? im.geoLo : im.geoHi; if (im.geometry !== g && (lo || !mv)) { im.geometry = g; ch = true; }
-          const n = Math.round(im.full * f), cs = cast && f === 1;
+          const n = Math.round(im.full * f), cs = cast && f === 1 && !driveCam; // rijden: bomen werpen geen schaduw (scheelt schaduwpass)
           if (n > im.count) { const t = nowS(); TREE_U.uTT.value = t; const A = im.aTA.array; for (let k = im.count; k < n; k++) A[k] = t + Math.random() * TREE_SPREAD; im.aTA.needsUpdate = true; treeFadeEnd = t + TREE_SPREAD + TREE_FADE; im.count = n; ch = true; }
           else if (n < im.count) { im.count = n; ch = true; }
           if (im.castShadow !== cs && !mv) { im.castShadow = cs; ch = true; }
@@ -724,7 +727,7 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
     if (now - lastLod < 400) return;
     lastLod = now;
     updateDetail();
-    if (camera === ortho || moveNow) return; // iso: eigen grond (iso/ground.js) i.p.v. PDOK-tegels → niets laden; terug naar Oud laadt vanzelf bij. Bewegen: pas bij stilstand
+    if (camera === ortho || driveCam || moveNow) return; // iso: eigen grond (iso/ground.js) i.p.v. PDOK-tegels → niets laden; terug naar Oud laadt vanzelf bij. Bewegen: pas bij stilstand
     for (const c of H.chunks.values()) {
       const z = wantLevel(c); c.wantZ = z;
       if (z !== c.level && z !== c.pendingZ) { c.pendingZ = z; texture(c, z); }
@@ -747,6 +750,7 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
     dom.addEventListener('pointerdown', e => { down = [e.clientX, e.clientY, performance.now()]; });
     dom.addEventListener('pointerup', e => {
       if (!e.isTrusted || !down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5 || performance.now() - down[2] > 600) return;
+      if (H.clickStop?.(e.clientX, e.clientY)) return; // halte/station aangeklikt (iso/traffic.js → ui.js vertrekbord)
       if (H.clickLabel?.(e.clientX, e.clientY)) return; // wijknaam aangeklikt (labels.js → ui.js wijk-filter)
       const r = dom.getBoundingClientRect();
       ndc.set((e.clientX - r.left) / r.width * 2 - 1, -(e.clientY - r.top) / r.height * 2 + 1);
@@ -804,7 +808,9 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
   // licht iso (design/17_licht.html B Materiaal-middag / E Filmisch): zon uL (wereld), kleuren lineair, glans/glas/baksteen; applyNight + isoSun vullen ze
   Object.assign(U, { uL: { value: new THREE.Vector3(0, 1, 0) }, uSunC: { value: new THREE.Color() }, uSkyC: { value: new THREE.Color() }, uGndC: { value: new THREE.Color() },
     uHor: { value: new THREE.Color() }, uZen: { value: new THREE.Color() }, uSoft: { value: 0.02 }, uGloss: { value: 1.5 }, uGlass: { value: 1.3 }, uMat: { value: 1 },
-    uPerM: { value: 1 / 1400 }, uDR: { value: 3000 }, uFilm: { value: 0 } });
+    uPerM: { value: 1 / 1400 }, uDR: { value: 3000 }, uFilm: { value: 0 },
+    // nieuwe schaduw zacht laten opkomen (geen flits na pannen): uShX = nieuwe → vorige schaduwkaart-coördinaten, uShT = 0→1; binnen het vorige kader meteen vol
+    uShX: { value: new THREE.Matrix4().makeTranslation(9, 9, 0) }, uShT: { value: 1 } });
   // A2 gebakken licht (iso/bake.js vult de atlas): uBk = atlas (R zon zichtbaar · G contactschaduw · BA hoogte), uBkI = vak → atlasplek
   Object.assign(U, { uBk: { value: null }, uBkI: { value: null }, uBkR: { value: new THREE.Vector4(0, 0, 512, 0) }, uBkN: { value: new THREE.Vector2(0, 0) }, uBaked: { value: 0 }, uBkAO: { value: 0 } });
   // seizoenen (knop in Sfeer): één uniform, geen animatie; 0 zomer · 1 herfst · 2 winter · 3 lente. H.seasonize(shader, 'leaf'|'roof'|'') in elk materiaal dat meedoet.
@@ -848,18 +854,6 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
     if (c.x < 0 || c.y < 0 || c.x >= int(uBkN.x) || c.y >= int(uBkN.y)) return vec4(0.0);
     return texelFetch(uBkI, c, 0);
   }
-  vec4 bkAt(vec4 s, ivec2 c, ivec2 g) { // texel g uit vak c met index-texel s
-    if (s.b < 0.5) return vec4(0.0);
-    int P = int(uBkR.z);
-    vec4 t = texelFetch(uBk, ivec2(s.rg * 255.0 + 0.5) * P + (g - c * P), 0);
-    t.rg = mix(vec2(1.0), t.rg, s.a); // a = infaden (iso/bake.js): schaduw van een vers vak komt zacht op
-    return t;
-  }
-  vec4 bkTexel(ivec2 g) { // g = texel over het hele vakkenraster (x oost, y noord)
-    if (g.x < 0 || g.y < 0) return vec4(0.0);
-    ivec2 c = g / int(uBkR.z);
-    return bkAt(bkIdx(c), c, g);
-  }
   // infaden live schaduwkaart voor het vak onder p (zelfde a); geen atlas (geen WebGL2 / niet iso) = 1
   float bkFade(vec3 p) {
     if (uBkN.x < 0.5) return 1.0;
@@ -867,42 +861,23 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
     if (c.x < 0 || c.y < 0 || c.x >= int(uBkN.x) || c.y >= int(uBkN.y)) return 1.0;
     return texelFetch(uBkI, c, 0).a;
   }
-  // x = zon zichtbaar, y = contactschaduw (1 = open), z = laagste oppervlak rondom onder dit punt, w = gewicht (0 = niets bruikbaars)
-  // tol: texels waarvan het oppervlak > tol boven het punt ligt tellen niet (dak naast de straat, kruin boven de stam)
-  vec4 bake(vec3 p, float tol) {
-    vec2 g = vec2(p.x - uBkR.x, -p.z - uBkR.y) * (uBkR.z / 1000.0) - 0.5;
-    ivec2 i = ivec2(floor(g)); vec2 f = fract(g);
-    // snel: blok (ook de ring −1…+2) meestal binnen één vak → index één keer lezen i.p.v. per texel (scheelde ±helft van de lookups)
-    int P = int(uBkR.z); ivec2 c0 = i / P;
-    bool one = i.x >= 0 && i.y >= 0 && (i.x + 1) / P == c0.x && (i.y + 1) / P == c0.y;
-    vec4 s0 = one ? bkIdx(c0) : vec4(0.0);
-    vec2 acc = vec2(0.0); float ws = 0.0, mn = -1e5;
-    for (int k = 0; k < 4; k++) {
-      ivec2 o = ivec2(k & 1, k >> 1);
-      vec4 t = one ? bkAt(s0, c0, i + o) : bkTexel(i + o);
-      if (t == vec4(0.0)) continue;
-      float h = (t.b * 65280.0 + t.a * 255.0) / 65535.0 * 1000.0 - 100.0;
-      if (h < p.y + 0.5) mn = mn < -9e4 ? h : min(mn, h);
-      float w = (o.x == 1 ? f.x : 1.0 - f.x) * (o.y == 1 ? f.y : 1.0 - f.y) * (1.0 - smoothstep(tol, tol + 1.5, h - p.y));
-      acc += t.rg * w; ws += w;
-    }
-    // vlak naast een muur zijn alle 4 texels dak (2 m) → anders 'zon' (lichte strook = doorkijk); dan ring eromheen (12 texels) gebruiken
-    if (ws < 0.05 && tol > 0.0) {
-      vec2 a2 = vec2(0.0); float w2 = 0.0;
-      bool oneR = one && i.x >= 1 && i.y >= 1 && (i.x - 1) / P == c0.x && (i.y - 1) / P == c0.y && (i.x + 2) / P == c0.x && (i.y + 2) / P == c0.y;
-      for (int y = -1; y <= 2; y++) for (int x = -1; x <= 2; x++) {
-        if (x >= 0 && x <= 1 && y >= 0 && y <= 1) continue;
-        vec4 t = oneR ? bkAt(s0, c0, i + ivec2(x, y)) : bkTexel(i + ivec2(x, y));
-        if (t == vec4(0.0)) continue;
-        float h = (t.b * 65280.0 + t.a * 255.0) / 65535.0 * 1000.0 - 100.0;
-        float w = 1.0 - smoothstep(tol, tol + 1.5, h - p.y);
-        a2 += t.rg * w; w2 += w;
-      }
-      if (w2 > 0.05) return vec4(a2 / w2, mn, w2);
-    }
-    return vec4(ws > 0.001 ? acc / ws : vec2(1.0), mn, ws);
+  // gebakken licht op p → x = zon zichtbaar, y = contactschaduw (1 = open), w = 1 als het vak gebakken is.
+  // Atlas (iso/bake.js) per texel: r = AO onder · g = AO boven · b = zon onder · a = zon boven, al opgelost voor 'bovenste' oppervlak
+  // (daken, kronen, bruggen: hi) en 'onderste' (grond, straatmeubilair; ook naast een muur). Eén lineair gefilterde lezing, binnen de
+  // vakplek geklemd (geen bloeden naar het buurvak in de atlas). Vroeger 4 texels + hoogtes vergelijken + ring = ±8 ms GPU per beeld.
+  vec4 bake(vec3 p, bool hi) {
+    float P = uBkR.z;
+    vec2 g = vec2(p.x - uBkR.x, -p.z - uBkR.y) * (P / 1000.0);
+    ivec2 c = ivec2(floor(g / P));
+    vec4 s = bkIdx(c);
+    if (s.b < 0.5) return vec4(1.0, 1.0, 0.0, 0.0);
+    vec2 l = clamp(g - vec2(c) * P, 0.5, P - 0.5);
+    vec4 t = texture2D(uBk, (floor(s.rg * 255.0 + 0.5) * P + l) / vec2(textureSize(uBk, 0)));
+    vec2 v = mix(vec2(1.0), hi ? t.ag : t.br, s.a); // s.a = infaden (vers gebakken vak komt zacht op)
+    return vec4(v, 0.0, 1.0);
   }`;
-  // kind: 'wall' (alleen contactschaduw onderaan, uit de hoogte rondom), 'surf' (zon + contactschaduw), 'terr' (idem, terrein)
+  // kind: 'wall' (alleen contactschaduw onderaan, uit de eigen voet BK_FOOT; zonder voet niets), 'surf' (zon + contactschaduw, bovenste oppervlak),
+  // 'low' (idem, onderste: straatmeubilair, verkeer, boerderij), 'terr' (idem, terrein)
   function addBake(s, kind) {
     Object.assign(s.uniforms, { uBk: U.uBk, uBkI: U.uBkI, uBkR: U.uBkR, uBkN: U.uBkN, uBaked: U.uBaked, uBkAO: U.uBkAO, uIso: U.uIso });
     s.vertexShader = s.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vBkW;')
@@ -921,11 +896,17 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
     L = L.replace('directLight.color *= ( directLight.visible && receiveShadow ) ? getShadow( directionalShadowMap[ i ]', 'directLight.color *= ( uBaked < 0.5 && uIso < 0.5 && directLight.visible && receiveShadow ) ? getShadow( directionalShadowMap[ i ]');
     const wall = kind === 'wall';
     s.fragmentShader = s.fragmentShader.replace('#include <common>', '#include <common>' + BAKE_GLSL) // uIso declareren addCel/terrMat zelf
-      .replace('#include <lights_fragment_begin>', `vec4 bkV = (uIso > 0.5 && (uBaked > 0.5 || uBkAO > 0.5)) ? bake(vBkW, ${wall ? '0.0' : '1.5'}) : vec4(1.0, 1.0, -1e5, 0.0);
-      float bkSun = uBaked > 0.5 && ${wall ? 'false' : 'true'} ? bkV.x : 1.0;
+      .replace('#include <lights_fragment_begin>', `vec4 bkV = (uIso > 0.5 && (uBaked > 0.5 || uBkAO > 0.5) && ${wall ? 'false' : 'true'}) ? bake(vBkW, ${kind === 'surf' ? 'true' : 'false'}) : vec4(1.0, 1.0, 0.0, 0.0);
+      float bkSun = uBaked > 0.5 ? bkV.x : 1.0;
       float bkLF = uIso > 0.5 && uBaked < 0.5 ? bkFade(vBkW) : 1.0; vec3 bkC0;
       ` + L)
-      .replace('#include <opaque_fragment>', `if (uBkAO > 0.5 && uIso > 0.5) outgoingLight *= ${wall ? 'mix(0.86, 1.0, smoothstep(0.0, 1.4, vBkW.y - bkV.z))' : 'mix(1.0, bkV.y, step(0.001, bkV.w))'};
+      .replace('#include <opaque_fragment>', `if (uBkAO > 0.5 && uIso > 0.5) outgoingLight *= ${wall ? `
+      #ifdef BK_FOOT
+      mix(0.86, 1.0, smoothstep(0.0, 1.4, vBkW.y - BK_FOOT))
+      #else
+      1.0
+      #endif
+      ` : 'bkV.y'};
       #include <opaque_fragment>`);
   }
   // ---------- Andere gebouwen dimmen (vager, platter) ----------
@@ -947,7 +928,7 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
   // iso-licht (design/17_licht.html): vloeiend zonlicht + hemel/grond-omgevingslicht, eigen zachte schaduw (PCSS: scherp aan de voet, zacht verder weg),
   // glans (gGloss: zink, hallen, bitumen, plassen) en glas (gGlass: ramen/zonnepanelen spiegelen de lucht). Materialen zetten de g-tags in hun kleurcode.
   const LIT_PARS = `
-  uniform float uIso, uLvl, uSoft, uGloss, uGlass, uMat, uPerM, uDR; uniform vec3 uShC, uL, uSunC, uSkyC, uGndC, uHor, uZen;
+  uniform float uIso, uLvl, uSoft, uGloss, uGlass, uMat, uPerM, uDR, uShT; uniform mat4 uShX; uniform vec3 uShC, uL, uSunC, uSkyC, uGndC, uHor, uZen;
   float gGlass = 0.0, gGloss = 0.0, gWinR = 0.5;
   vec3 skyR(vec3 r) { return r.y >= 0.0 ? mix(uHor, uZen, smoothstep(0.0, 0.7, r.y)) : mix(uHor * 0.8, uGndC * 1.4, smoothstep(0.0, -0.35, r.y)); }
   float softSh() {
@@ -964,7 +945,9 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
     float pr = clamp((c.z - bs / bn) * uDR * uSoft, 0.3, 6.0) * uPerM, s = 0.0;
     for (int i = 0; i < 12; i++) { float a = float(i) * 2.39996 + rot, r = sqrt((float(i) + 0.5) / 12.0);
       s += step(c.z, unpackRGBAToDepth(texture2D(directionalShadowMap[0], c.xy + vec2(cos(a), sin(a)) * r * pr))); }
-    return s / 12.0;
+    vec4 o = uShX * vec4(sc.xyz / sc.w, 1.0); // lag dit punt al in het vorige schaduwkader? dan vol, anders infaden
+    float was = step(0.0, o.x) * step(o.x, 1.0) * step(0.0, o.y) * step(o.y, 1.0);
+    return mix(1.0, s / 12.0, max(was, uShT));
   #else
     return 1.0;
   #endif
@@ -972,7 +955,7 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
   // sh = GLSL-uitdrukking voor zon zichtbaar (0–1)
   const LIT_MAIN = sh => `if (uIso > 0.5) {
         vec3 N = normalize((vec4(normal, 0.0) * viewMatrix).xyz), V = normalize((vec4(0.0, 0.0, 1.0, 0.0) * viewMatrix).xyz);
-        vec3 alb = diffuseColor.rgb; float sh = ${sh};
+        vec3 alb = diffuseColor.rgb; ${sh.startsWith('float sh') ? sh : 'float sh = ' + sh + ';'}
         float D = pow(max(dot(N, uL), 0.0), 0.85) * sh;
         vec3 amb = mix(uGndC, uSkyC, N.y * 0.5 + 0.5), col = alb * (amb + uSunC * D);
         float fr = 0.04 + 0.96 * pow(1.0 - clamp(dot(N, V), 0.0, 1.0), 5.0), gl = clamp(gGlass * uGlass, 0.0, 1.0);
@@ -986,8 +969,10 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
         outgoingLight = col + totalEmissiveRadiance;
       }
       #include <opaque_fragment>`;
+  // gebakken ↔ live als echte tak (?: kan door de driver platgeslagen worden → softSh' 20 lezingen ook bij gebakken zon)
+  const BK_SH = b => `float sh; if (uBaked > 0.5) sh = ${b}; else sh = mix(1.0, softSh(), bkLF);`;
   function addLit(s, sh) {
-    for (const k of ['uIso', 'uLvl', 'uShC', 'uL', 'uSunC', 'uSkyC', 'uGndC', 'uHor', 'uZen', 'uSoft', 'uGloss', 'uGlass', 'uMat', 'uPerM', 'uDR']) s.uniforms[k] = U[k];
+    for (const k of ['uIso', 'uLvl', 'uShC', 'uL', 'uSunC', 'uSkyC', 'uGndC', 'uHor', 'uZen', 'uSoft', 'uGloss', 'uGlass', 'uMat', 'uPerM', 'uDR', 'uShX', 'uShT']) s.uniforms[k] = U[k];
     const i = LIT_PARS.indexOf('float softSh');
     s.fragmentShader = s.fragmentShader.replace('#include <common>', '#include <common>\n' + LIT_PARS.slice(0, i))
       .replace('#include <shadowmap_pars_fragment>', '#include <shadowmap_pars_fragment>\n' + LIT_PARS.slice(i))
@@ -996,8 +981,8 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
   function addCel(s, key = '') {
     const sky = key.startsWith('sky-'), wall = /wall/.test(key);
     // live schaduw infaden per vak (bkLF); ver uitgezoomd gebakken zon (bkSun, niet op muren); ballon/vogels: geen grondschaduw/bake
-    addLit(s, sky ? 'softSh()' : `(uBaked > 0.5 ? ${wall ? '1.0' : 'bkSun'} : mix(1.0, softSh(), bkLF))`);
-    if (!sky) addBake(s, wall ? 'wall' : 'surf');
+    addLit(s, sky ? 'softSh()' : BK_SH(wall ? '1.0' : 'bkSun'));
+    if (!sky) addBake(s, wall ? 'wall' : /^(prop|traffic|farm)/.test(key) ? 'low' : 'surf');
   }
   const celify = (m, key) => { const prev = m.onBeforeCompile; m.onBeforeCompile = (s, r) => { prev.call(m, s, r); addCel(s, key || ''); }; if (key) m.customProgramCacheKey = () => key + (PATCH[key] ? pkey(key) : ''); return m; };
   H.celify = celify; // eigen materialen in iso/*.js dezelfde cel-look geven (key = unieke naam)
@@ -1089,7 +1074,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     // vI = (bouwjaar, dakoppervlak, voet, lange as), vHt = hoogte in m; aGBase komt uit GROW_GLSL (addGrow, ook op deze materialen)
     s.vertexShader = s.vertexShader.replace('#include <common>', `#include <common>\nattribute float aSeed; attribute vec4 aInfo; attribute vec2 aBiz; varying float vS, vHt; varying vec3 vRW; varying vec4 vI; varying vec2 vBz;`)
       .replace('#include <project_vertex>', `#include <project_vertex>\nvS = aSeed; vRW = (modelMatrix * vec4(transformed, 1.0)).xyz; vI = vec4(aInfo.x, aInfo.y, aGBase, aInfo.w); vHt = aInfo.z * 0.1; vBz = vec2((aBiz.x - 0.5) * 3.14159265, aBiz.y);`);
-    s.fragmentShader = s.fragmentShader.replace('#include <common>', `#include <common>\nvarying float vS, vHt; varying vec3 vRW; varying vec4 vI; uniform vec3 uPalR[8]; uniform vec3 uPalW[8]; uniform float uDim, uAnime;\n${BIZ_COMMON}`)
+    s.fragmentShader = s.fragmentShader.replace('#include <common>', `#include <common>\nvarying float vS, vHt; varying vec3 vRW; varying vec4 vI; uniform vec3 uPalR[8]; uniform vec3 uPalW[8]; uniform float uDim, uAnime;\n#define BK_FOOT vI.z\n${BIZ_COMMON}`)
       .replace('#include <color_fragment>', `#include <color_fragment>
       {
         vec3 p = ${roof ? 'uPalR[int(fract(vS * 7.31) * 7.999)]' : 'uPalW[int(vS * 7.999)]'};${roof ? ROOF_MIJN + ANIME_ROOF : ANIME_WALL}
@@ -1109,7 +1094,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
           diffuseColor.rgb = pow(clamp(c, 0.0, 1.0), vec3(2.2));
         }`);
       runPatch('terrain', s, m);
-      addLit(s, '(uBaked > 0.5 ? bkSun : mix(1.0, softSh(), bkLF))');
+      addLit(s, BK_SH('bkSun'));
       addBake(s, 'terr');
     };
     return m;
@@ -1154,6 +1139,15 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
   const lerp3 = (a, n, out) => n < 0.5 ? out.lerpColors(a[0], a[1], n * 2) : out.lerpColors(a[1], a[2], n * 2 - 2 + 1);
   let lightMode = 'dag';
   try { lightMode = ['dag', 'schemer', 'avond', 'nu'].includes(localStorage.getItem('h3d.light')) ? localStorage.getItem('h3d.light') : 'dag'; } catch {}
+  // ---------- Klok: echte tijd, versnelbaar (×10/×60); dienstregeling (iso/traffic.js) en licht 'nu' lopen hierop ----------
+  const CLOCK = { base: Date.now(), t0: performance.now(), speed: 1 };
+  H.now = () => new Date(CLOCK.base + (performance.now() - CLOCK.t0) * CLOCK.speed);
+  H.speed = () => CLOCK.speed;
+  H.setSpeed = (s, reset) => { // reset = terug naar de echte tijd
+    CLOCK.base = reset ? Date.now() : H.now().getTime(); CLOCK.t0 = performance.now(); CLOCK.speed = s;
+    // licht volgt de versnelde klok níet (gebruiker): alleen verkeer/dienstregeling lopen sneller
+    emit('clock', s);
+  };
   function sunElev(d = new Date()) { // zonshoogte in graden boven Heerlen (benadering, ±1°)
     const doy = (d - Date.UTC(d.getUTCFullYear(), 0, 0)) / 864e5, rad = Math.PI / 180;
     const decl = -23.44 * rad * Math.cos(2 * Math.PI * (doy + 10) / 365), lat = 50.89 * rad;
@@ -1161,9 +1155,9 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     return Math.asin(Math.sin(lat) * Math.sin(decl) + Math.cos(lat) * Math.cos(decl) * Math.cos(ha)) / rad;
   }
   // dag 0 · schemer 0,5 · nacht 1 ('avond' = nacht, oude sleutel); nu = naar de zon: 4° boven → 6° onder de horizon
-  const goalFor = m => m === 'dag' ? 0 : m === 'schemer' ? 0.5 : m === 'avond' ? 1 : Math.min(1, Math.max(0, (4 - sunElev()) / 10));
+  const goalFor = m => m === 'dag' ? 0 : m === 'schemer' ? 0.5 : m === 'avond' ? 1 : Math.round(10 * Math.min(1, Math.max(0, (4 - sunElev(new Date())) / 10))) / 10; // 'nu': stappen van 0,1 (elke stap = zon opnieuw bakken)
   // iso-licht (design/17_licht.html): B Materiaal-middag standaard, E Filmisch = schakelaar Sfeer › Filmisch licht (fxOn.film). sun = zonshoogte°
-  // zon van opzij: 82° naast de kijkrichting, draait met de kwartslagen mee (isoSun)
+  // zon van opzij: 82° naast de kijkrichting van de standaard-kwartslag, vast in de wereld (draait niet mee, isoSun)
   const ISO_L = {
     B: { sun: 38, sunC: '#fff2dc', sunI: 0.95, sky: '#a5c1e4', gnd: '#b9ad98', ambI: 0.46, hor: '#e3edf3', zen: '#7fb0e6', soft: 0.02, gloss: 1.5, glass: 1.3, mat: 1 },
     E: { sun: 19, sunC: '#ffd3a0', sunI: 1.2, sky: '#86a7d6', gnd: '#9c8a72', ambI: 0.4, hor: '#f2dcc0', zen: '#7aa5dc', soft: 0.075, gloss: 1.0, glass: 1.1, mat: 0 },
@@ -1178,13 +1172,17 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
   function isoSun() { // zonrichting (schaduw, bake, licht) uit doel-dagdeel (niet de overgang: anders steeds opnieuw bakken) + kwartslag
     let k;
     if (iso) {
-      const th = snapAz(controls.getAzimuthalAngle()), az = Math.PI / 2 - th + 82 * Math.PI / 180, el = isoNum(nightGoal, 'sun') * Math.PI / 180;
-      k = [th.toFixed(2), el.toFixed(3)].join();
+      // zon vast in de wereld (gebruiker: schaduw blijft liggen bij draaien); richting = zoals in de standaard-kwartslag (th π/4)
+      const th = Math.PI / 4, az = Math.PI / 2 - th + 82 * Math.PI / 180, el = isoNum(nightGoal, 'sun') * Math.PI / 180;
+      k = el.toFixed(3);
       if (k !== sunKey) SUN_DIR.set(Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az));
     } else { k = 'oud'; if (k !== sunKey) SUN_DIR.copy(SUN_OLD); }
     if (k === sunKey) return;
-    sunKey = k; U.uL.value.copy(SUN_DIR).normalize(); shadowDirty = true; H.rebake?.(); redraw();
+    // herbakken = alle vakken × 2 scène-renders + een vol beeld per vak (±20 s hakkelen) → 1,5 s wachten (snel achter elkaar wisselen = één keer)
+    const first = !sunKey; sunKey = k; U.uL.value.copy(SUN_DIR).normalize(); shadowDirty = true; redraw();
+    clearTimeout(rebakeT); if (first) H.rebake?.(); else rebakeT = setTimeout(() => H.rebake?.(), 1500);
   }
+  let rebakeT = 0;
   function applyNight() {
     if (!scene) return;
     const n = night, w = THREE.MathUtils.smoothstep(n, 0.35, 0.9);
@@ -1238,7 +1236,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
   H.overlayObjs = () => [outline, selMesh].filter(Boolean); // lijntjes/selectie: niet meebakken
   H.wallRuns = (c, b) => wallRuns(c, b); // muurreeksen van pand b [f0, f1) t.o.v. muurbegin (na A1 per richting gesorteerd)
   H.facesOf = (c, b) => facesOf(c, b, []); // hoekpunt-indices in c.mesh.geometry (dak + muur)
-  setInterval(() => { if (lightMode === 'nu') { nightGoal = goalFor('nu'); redraw(); } }, 60000);
+  setInterval(() => { if (lightMode === 'nu') { const g = goalFor('nu'); if (g !== nightGoal) { nightGoal = g; redraw(); } } }, 60000); // 'nu' = echte tijd (niet de versnelde klok)
 
   // ---------- Plekken ↔ panden: het pand licht op in de kleur van de categorie ----------
   // Koppelen gebeurt hier (niet bij het bouwen): punt in dakvlak, anders dichtstbijzijnde pand ≤ LINK_MAX m.
@@ -1267,6 +1265,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
       sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute float aBase; varying float vB; varying vec3 vW2;')
         .replace('#include <project_vertex>', '#include <project_vertex>\nvB = aBase; vW2 = (modelMatrix * vec4(transformed, 1.0)).xyz;');
       sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
+        #define BK_FOOT vB
         varying float vB; varying vec3 vW2; uniform vec3 uCol; uniform vec3 uColS; uniform float uBand, uGlow, uNight; uniform vec3 uEye;
         float h22(vec2 p) { vec3 q = fract(p.xyx * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }`)
         .replace('#include <color_fragment>', `#include <color_fragment>
@@ -1415,7 +1414,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
         if (part === 'wall') geo.setAttribute('aBase', new THREE.Float32BufferAttribute(a.base, 1));
         geo.computeBoundingSphere();
         const me = new THREE.Mesh(geo, part === 'roof' || a.era || a.full ? matFor(col) : matWall(col)); me.receiveShadow = true;
-        scene.add(me); hlMeshes.push(me);
+        scene.add(H.freeze(me)); hlMeshes.push(me);
       }
       if (selKey && !selMesh) H.selectMark(selKey); // vak van de gekozen plek kwam later binnen
       shadowDirty = true; emit('marks'); redraw();
@@ -1525,6 +1524,9 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
   // ---------- Modussen: plat (kaart van boven), 3d (vrij), rond (rustig rond een punt draaien) ----------
   let mode = 'iso', idleT = 0; // iso = hoofdmodus en start altijd zo; plat/3d/rond bevroren (menu "Oud", geen nieuwe functies)
   const FOV = { plat: 12, '3d': 42, rond: 42, iso: 42 };
+  let driveCam = null;
+  const DRV_FAR = 450; H.DRV_FAR = DRV_FAR; // rijden: kijkafstand (m); daarachter niets tekenen, mist vanaf 45%
+  const isoCam = () => camera === ortho || (!!driveCam && camera === driveCam); // iso-pijplijn (grond, omlijning, bewegende laag)
   const visHalf = () => camera === ortho ? isoHalf() : camera.position.distanceTo(controls.target) * Math.tan(persp.fov * Math.PI / 360);
   function useCam(cam) { // wisselen tussen perspectief en ortho met dezelfde zichtbare halve hoogte en kijkrichting
     if (camera === cam) return;
@@ -1581,6 +1583,32 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
   H.target = () => toRD(controls.target);
   H.azimuth = () => controls.getAzimuthalAngle();
   H.camera = () => camera;
+  // pannen in iso = zuivere verschuiving op het scherm → labels/pins schuiven als laag mee i.p.v. elk beeld opnieuw plaatsen (labels.js, ui.js)
+  // panRef() na volledig plaatsen; panShift(ref) → [dx, dy] px, of null als zoom/draaiing/venster veranderde (dan opnieuw plaatsen)
+  const PSV = new THREE.Vector3();
+  H.panRef = () => { if (!camera || camera !== ortho) return null; PSV.set(0, 0, 0).project(camera); return { x: PSV.x, y: PSV.y, z: camera.zoom, q: camera.quaternion.clone(), w: innerWidth, h: innerHeight }; };
+  H.panShift = r => {
+    if (!r || !camera || camera !== ortho || camera.zoom !== r.z || innerWidth !== r.w || innerHeight !== r.h || camera.quaternion.angleTo(r.q) > 1e-6) return null;
+    PSV.set(0, 0, 0).project(camera); const d = [(PSV.x - r.x) / 2 * r.w, (r.y - PSV.y) / 2 * r.h];
+    return Math.abs(d[0]) + Math.abs(d[1]) > 0.05 ? d : null; // niet bewogen (nieuwe pin, laag aan/uit) → gewoon opnieuw plaatsen
+  };
+  // ---------- Rijden (iso/drive.js): eigen perspectief-camera binnen de iso-look ----------
+  const frameFns = new Set();
+  H.addFrame = f => { frameFns.add(f); return () => frameFns.delete(f); }; // f(now, dt) → true = opnieuw tekenen
+  H.poke = () => { inputT = performance.now(); }; // rijtoetsen tellen als invoer (verkeer niet pauzeren)
+  H.driving = () => !!driveCam;
+  H.setDriveCam = cam => {
+    if (cam) {
+      if (driveCam) return;
+      fly = null; driveCam = cam; camera = cam; controls.enabled = false; KEYS.clear();
+      setWallMask(WALL_ALL); ribbonsForMode(); document.body.classList.add('drive');
+    } else {
+      if (!driveCam) return;
+      driveCam = null; camera = ortho; controls.enabled = true;
+      setWallMask(isoWallMask()); ribbonsForMode(); document.body.classList.remove('drive');
+    }
+    shadowDirty = true; lastLod = 0; emit('drive', !!cam); redraw();
+  };
   H.isoTurn = dir => { // iso: kwartslag draaien (dir −1 / +1)
     if (camera !== ortho) return;
     const [x, y] = toRD(fly ? fly.b : controls.target), th = fly ? fly.sb.theta : controls.getAzimuthalAngle();
@@ -1615,6 +1643,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
 
   // ---------- Iso-nabewerking: omlijning uit normaal + diepte (2e render met NRM), dan op het scherm ----------
   let useMRT = false, rtC, rtN, RTS = {}, rtS = new THREE.Vector2(4, 4), NRM, post, postScene, postCam, pq, rtA, rtB, rtD, rtDN;
+  H.useMRT = () => useMRT; H.meterEl = () => M.el; // iso/bench.js
   // H.addDynamic(obj): bewegend object (voertuigen, ballon …) op laag 1. Wordt los getekend (kleur + NRM) en in de omlijning op diepte over het
   // bewaarde scènebeeld gelegd → animatie kan 'post' teruggeven (geen hele scène-render). Alleen iso; werpt geen schaduw, niet aanklikbaar.
   const dyn = new Set();
@@ -1651,10 +1680,30 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     return postOk;
   }
   H.postOk = () => canPost();
-  function draw() {
-    if (camera === ortho && preScene.length) { mq('voor-scène'); for (const fn of preScene) fn(camera); mq('kleur'); } // meter: grond-pass e.d. apart
-    if (camera === ortho && !canPost()) { camera.layers.enable(1); renderer.render(scene, camera); camera.layers.set(0); return; } // bewegende laag (verkeer) direct mee
-    if (camera !== ortho) { renderer.render(scene, camera); return; }
+  // ?noaa = oude weg (canvas met eigen MSAA). Canvas heeft geen MSAA meer (perf 91): niet-iso (plat/3D/rondkijken/rijden) en iso-zonder-nabewerking tekenen
+  // naar een MSAA-doel (4 samples, WebGL2; half-float lineair) en daarna één schermvullende kopie met sRGB-codering (geen tone mapping in de app).
+  let rtM = null, blitQ = null, blitScene, blitCam; const dbsM = new THREE.Vector2();
+  function renderMsaa() {
+    if (QS.has('noaa')) { renderer.render(scene, camera); return; }
+    renderer.getDrawingBufferSize(dbsM);
+    if (!rtM) {
+      const gl = renderer.getContext(), f16 = renderer.capabilities.isWebGL2 && !!(gl.getExtension('EXT_color_buffer_float') || gl.getExtension('EXT_color_buffer_half_float'));
+      rtM = new THREE.WebGLRenderTarget(4, 4, { samples: renderer.capabilities.isWebGL2 ? 4 : 0, type: f16 ? THREE.HalfFloatType : THREE.UnsignedByteType, depthBuffer: true, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter });
+      blitCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1); blitScene = new THREE.Scene();
+      blitQ = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({ uniforms: { tC: { value: rtM.texture } }, depthTest: false, depthWrite: false, toneMapped: false,
+        vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0., 1.); }',
+        fragmentShader: 'uniform sampler2D tC; varying vec2 vUv;\nvoid main(){\n gl_FragColor = vec4(texture2D(tC, vUv).rgb, 1.);\n#include <colorspace_fragment>\n}' }));
+      blitQ.frustumCulled = false; blitScene.add(blitQ);
+    }
+    if (rtM.width !== dbsM.x || rtM.height !== dbsM.y) rtM.setSize(dbsM.x, dbsM.y);
+    renderer.setRenderTarget(rtM); renderer.render(scene, camera);
+    renderer.setRenderTarget(null); renderer.render(blitScene, blitCam);
+  }
+  function draw(fullDraw = true) {
+    if (isoCam() && preScene.length) { mq('voor-scène'); for (const fn of preScene) fn(camera); mq(renderer.shadowMap.needsUpdate ? 'kleur+schaduw' : 'kleur'); } // meter: grond-pass e.d. apart
+    if (!isoCam() || !canPost() || !useMRT) SC.ok = false;
+    if (isoCam() && !canPost()) { camera.layers.enable(1); renderMsaa(); camera.layers.set(0); return; } // bewegende laag (verkeer) direct mee
+    if (!isoCam()) { renderMsaa(); return; }
     if (!rtC) {
       // geen MSAA: omlijning dekt de randen (stap 9). Diepte heeft float32 nodig (half-float gaf streepruis); blenden op float32 vraagt EXT_float_blend
       useMRT = !QS.has('nomrt') && renderer.capabilities.isWebGL2 && !!renderer.getContext().getExtension('EXT_float_blend');
@@ -1670,9 +1719,9 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
       });
       // tN/tDN highp: three r160 zet geen sampler-precisie → standaard lowp → telefoon (Mali e.d.) las de diepte als 16 bit → streeplijnen
       post = new THREE.ShaderMaterial({
-        uniforms: { tC: { value: useMRT ? rtC.texture[0] : rtC.texture }, tN: { value: rtN.texture }, tSky: { value: skyTex }, uMrt: { value: useMRT ? 1 : 0 }, tD: { value: null }, tDN: { value: null }, uDyn: { value: 0 }, uRes: { value: new THREE.Vector2() }, uW: { value: 2 }, uK: { value: 0.85 }, uInk: { value: H.isoColors.ink }, uLine: U.uLine, uFilm: U.uFilm, uDbg: DBG_U },
+        uniforms: { tC: { value: useMRT ? rtC.texture[0] : rtC.texture }, tN: { value: rtN.texture }, tSky: { value: skyTex }, uMrt: { value: useMRT ? 1 : 0 }, uPd: { value: 0 }, uFog: { value: new THREE.Vector2() }, tD: { value: null }, tDN: { value: null }, uDyn: { value: 0 }, uRes: { value: new THREE.Vector2() }, uW: { value: 2 }, uK: { value: 0.85 }, uInk: { value: H.isoColors.ink }, uLine: U.uLine, uFilm: U.uFilm, uDbg: DBG_U },
         vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
-        fragmentShader: `varying vec2 vUv; uniform sampler2D tC, tD, tSky; uniform highp sampler2D tN, tDN; uniform vec2 uRes; uniform float uW, uK, uDyn, uMrt, uLine, uFilm; uniform vec3 uInk; uniform vec2 uDbg;
+        fragmentShader: `varying vec2 vUv; uniform sampler2D tC, tD, tSky; uniform highp sampler2D tN, tDN; uniform vec2 uRes; uniform float uW, uK, uDyn, uMrt, uLine, uFilm, uPd; uniform vec2 uFog; uniform vec3 uInk; uniform vec2 uDbg;
           ${NRM_GLSL}
           ivec2 tq(highp sampler2D t, vec2 o) { return clamp(ivec2(gl_FragCoord.xy + o), ivec2(0), textureSize(t, 0) - 1); } // exacte pixel (vUv+o/uRes rondde op telefoons af → strepen)
           vec4 N(vec2 o) { ivec2 u = tq(tN, o); vec2 s = texelFetch(tN, u, 0).xy; // xyz = normaal, w = diepte
@@ -1685,6 +1734,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
             vec4 n0 = N(vec2(0.0)), a = N(vec2(uW, 0.0)), b = N(vec2(-uW, 0.0)), d = N(vec2(0.0, uW)), e = N(vec2(0.0, -uW));
             float nd = 4.0 - dot(n0.xyz, a.xyz) - dot(n0.xyz, b.xyz) - dot(n0.xyz, d.xyz) - dot(n0.xyz, e.xyz);
             float dd = abs(a.w + b.w - 2.0 * n0.w) + abs(d.w + e.w - 2.0 * n0.w);
+            if (uPd > 0.5) { float zf = 20.0 / max(n0.w, 20.0); dd *= zf * zf; } // rijcamera (perspectief): grond loopt niet-lineair weg
             float k = max(smoothstep(0.42, 0.52, nd) * uDbg.x, smoothstep(1.7, 2.1, dd) * uDbg.y); // smalle overgang = strakke lijn i.p.v. vlekkerige rand
             if (uFilm > 0.5) { // E Filmisch: gloed op linsters (24 tikken), waas bovenin (= ver weg in iso), ACES-curve
               vec3 bl = vec3(0.0); float rot = fract(sin(dot(vUv, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831;
@@ -1695,6 +1745,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
               c.rgb = mix(vec3(dot(t, vec3(0.2126, 0.7152, 0.0722))), t, 1.15); }
             float ed = smoothstep(1.7, 2.1, dd) * uDbg.y;
             c.rgb = uLine > 0.5 ? mix(c.rgb, uInk, ed * 0.45) : mix(c.rgb, uInk, k * uK); // dun (alleen silhouet) of inkt
+            if (uFog.y > 0.0 && n0.w > 0.0) c.rgb = mix(c.rgb, texture2D(tSky, vUv).rgb, smoothstep(uFog.x, uFog.y, n0.w)); // rijden: mist naar de lucht erachter (verbergt de kijkgrens)
             gl_FragColor = c;
             #include <colorspace_fragment>
           }`,
@@ -1711,10 +1762,12 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     if (rtC.width !== rtS.x || rtC.height !== rtS.y) { rtC.setSize(rtS.x, rtS.y); rtN.setSize(rtS.x, rtS.y); }
     post.uniforms.tC.value = useMRT ? rtC.texture[0] : rtC.texture; post.uniforms.tN.value = rtN.texture;
     if (useMRT) { // één render: kleur (uitvoer 0, zonder lucht, leeg = alfa 0) + normaal/diepte (uitvoer 1)
+      if (!fullDraw && scrollDraw()) { runPosts(); return; }
       const bg = scene.background; scene.background = null;
       renderer.getClearColor(clr); const ca = renderer.getClearAlpha(); renderer.setClearColor(0x000000, 0);
-      renderer.setRenderTarget(rtC); renderer.render(scene, camera);
+      renderer.setRenderTarget(rtC); if (H.hideAll) camera.layers.set(7); renderer.render(scene, camera); if (H.hideAll) camera.layers.set(0); // H.hideAll = meten 'alles verborgen' (detail zet visible elke 400 ms terug)
       renderer.setClearColor(clr, ca); scene.background = bg; renderer.setRenderTarget(null);
+      scAnchor();
       runPosts(); return;
     }
     renderer.setRenderTarget(rtC); renderer.render(scene, camera);
@@ -1728,6 +1781,75 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     for (const o of hid) o.visible = true;
     renderer.setRenderTarget(null);
     runPosts();
+  }
+  // ---------- perf-08 stap 1: scrollend tekenen bij iso-pannen ----------
+  // Ortho + zelfde draaiing/zoom: pannen = het beeld schuift. Vorig beeld (MRT: kleur + normaal/diepte) op hele pixels verschoven kopiëren
+  // en alleen de nieuw onthulde strook/stroken tekenen; setViewOffset → culling werkt ook op de strook (minder hoekpunten).
+  // Diepte (G) = afstand tot de camera → bij kopiëren corrigeren met de verschuiving langs de kijkrichting.
+  // Volledig tekenen bij alles wat via redraw() loopt (laden, groeien, licht, schaduwkaart vers …) en bij stilstand. ?noscroll = uit.
+  const SC = { ok: false, pos: new THREE.Vector3(), q: new THREE.Quaternion(), m: new THREE.Matrix4(), zoom: 0, w: 0, h: 0, near: 0, far: 0 };
+  let rtC2 = null, scMat = null, scam = null;
+  const scR = new THREE.Vector3(), scU = new THREE.Vector3(), scF = new THREE.Vector3(), scD = new THREE.Vector3(), scP = new THREE.Vector3();
+  function scAnchor() {
+    SC.ok = camera === ortho && !QS.has('noscroll'); if (!SC.ok) return;
+    camera.updateMatrixWorld();
+    SC.pos.copy(camera.position); SC.q.copy(camera.quaternion); SC.m.copy(camera.matrixWorld);
+    SC.zoom = camera.zoom; SC.w = rtC.width; SC.h = rtC.height; SC.near = camera.near; SC.far = camera.far;
+  }
+  function scrollDraw() { // true = rtC bijgewerkt door schuiven + stroken; false = volledig tekenen
+    if (!SC.ok || camera !== ortho || renderer.shadowMap.needsUpdate) return false;
+    if (camera.zoom !== SC.zoom || rtC.width !== SC.w || rtC.height !== SC.h || camera.near !== SC.near || camera.far !== SC.far || camera.quaternion.angleTo(SC.q) > 1e-7) return false;
+    const W = SC.w, Hh = SC.h, ppx = Hh / ((ortho.top - ortho.bottom) / ortho.zoom);
+    scR.setFromMatrixColumn(SC.m, 0).normalize(); scU.setFromMatrixColumn(SC.m, 1).normalize(); scF.setFromMatrixColumn(SC.m, 2).normalize().negate();
+    scD.subVectors(camera.position, SC.pos);
+    const px = scD.dot(scR) * ppx, py = scD.dot(scU) * ppx, sx = Math.round(px), sy = Math.round(py);
+    if (Math.abs(sx) > W / 3 || Math.abs(sy) > Hh / 3) return false; // grote sprong: volledig is even duur
+    // nieuw anker = echte camera min de restverschuiving (< ½ px) → stroken vallen exact op het pixelraster van de kopie
+    scP.copy(camera.position).addScaledVector(scR, -(px - sx) / ppx).addScaledVector(scU, -(py - sy) / ppx);
+    const dz = scD.subVectors(scP, SC.pos).dot(scF);
+    mq('scroll');
+    if (!scMat) scMat = new THREE.ShaderMaterial({
+      uniforms: { tA: { value: null }, tB: { value: null }, uOff: { value: new THREE.Vector2() }, uDz: { value: 0 } },
+      vertexShader: '#include <common>\nvoid main() { gl_Position = vec4(position.xy, 0.0, 1.0); }',
+      fragmentShader: `#include <common>
+        uniform sampler2D tA; uniform highp sampler2D tB; uniform vec2 uOff; uniform float uDz;
+        void main() {
+          ivec2 p = ivec2(gl_FragCoord.xy) + ivec2(uOff), sz = textureSize(tA, 0);
+          if (any(lessThan(p, ivec2(0))) || any(greaterThanEqual(p, sz))) { gl_FragColor = vec4(0.0); gNrm = vec4(0.0); return; }
+          gl_FragColor = texelFetch(tA, p, 0);
+          vec2 n = texelFetch(tB, p, 0).xy; if (n.y > 0.0) n.y = max(n.y - uDz, 1e-3);
+          gNrm = vec4(n, 0.0, 1.0);
+        }`,
+      depthTest: false, depthWrite: false,
+    });
+    if (!rtC2) rtC2 = makeTargets().c;
+    if (rtC2.width !== W || rtC2.height !== Hh) rtC2.setSize(W, Hh);
+    const u = scMat.uniforms; u.tA.value = rtC.texture[0]; u.tB.value = rtC.texture[1]; u.uOff.value.set(sx, sy); u.uDz.value = dz;
+    pq.material = scMat; renderer.setRenderTarget(rtC2); renderer.render(postScene, postCam); pq.material = post;
+    // onthulde stroken (GL-coördinaten, y omhoog): camera naar rechts (sx > 0) → rechts nieuw; omhoog (sy > 0) → boven nieuw
+    const strips = [];
+    if (sx) strips.push(sx > 0 ? [W - sx, 0, sx, Hh] : [0, 0, -sx, Hh]);
+    if (sy) strips.push(sy > 0 ? [0, Hh - sy, W, sy] : [0, 0, W, -sy]);
+    if (strips.length) {
+      if (!scam) scam = ortho.clone();
+      scam.copy(camera); scam.position.copy(scP); scam.updateMatrixWorld();
+      const bg = scene.background; scene.background = null;
+      renderer.getClearColor(clr); const ca = renderer.getClearAlpha(); renderer.setClearColor(0x000000, 0);
+      for (const [x, y, w, h] of strips) {
+        scam.setViewOffset(W, Hh, x, Hh - y - h, w, h);
+        rtC2.viewport.set(x, y, w, h); rtC2.scissor.set(x, y, w, h); rtC2.scissorTest = true;
+        renderer.setRenderTarget(rtC2); renderer.render(scene, scam);
+      }
+      scam.clearViewOffset();
+      rtC2.viewport.set(0, 0, W, Hh); rtC2.scissor.set(0, 0, W, Hh); rtC2.scissorTest = false;
+      renderer.setClearColor(clr, ca); scene.background = bg;
+    }
+    renderer.setRenderTarget(null);
+    const t = rtC; rtC = rtC2; rtC2 = t;
+    RTS.f = { c: rtC, n: rtN = { texture: rtC.texture[1], setSize() {} } };
+    post.uniforms.tC.value = rtC.texture[0]; post.uniforms.tN.value = rtN.texture;
+    SC.pos.copy(scP);
+    return true;
   }
   // nabewerking los: ook zonder nieuwe scène-render (rtC/rtN hergebruiken) als alleen een post-animatie (wolken) verandert
   function runPosts() {
@@ -1753,8 +1875,8 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     const ppm = dbs.y / (2 * isoHalf());
     // uW altijd 1: symmetrisch bemonsterd → lijn ±2 px; uW 2 gaf ±4 px (te dik bij startzoom)
     post.uniforms.uRes.value.copy(rtS); post.uniforms.uW.value = 1; // uRes = maat van rtN (kleiner tijdens bewegen)
-    post.uniforms.uK.value = 0.85 * Math.min(1, 0.4 + ppm * 0.3);
-    const on = posts.filter(p => p.enabled !== false); for (const p of on) p.before?.();
+    post.uniforms.uK.value = driveCam ? 0.75 : 0.85 * Math.min(1, 0.4 + ppm * 0.3); post.uniforms.uPd.value = driveCam ? 1 : 0; post.uniforms.uFog.value.set(driveCam ? DRV_FAR * 0.45 : 0, driveCam ? DRV_FAR * 0.95 : 0);
+    const on = posts.filter(p => p.enabled !== false && (!driveCam || p.drive)); for (const p of on) p.before?.(); // rijden: wolken/tilt/papier gaan uit van de iso-camera
     const steps = [post, ...on.map(p => p.material)];
     if (steps.length > 1) {
       if (!rtA) { rtA = new THREE.WebGLRenderTarget(4, 4, Object.assign({ depthBuffer: false }, COL)); rtB = rtA.clone(); }
@@ -1829,6 +1951,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
       `draw calls ${M.calls} · driehoeken ${(M.tris / 1e6).toFixed(2)} M · schaduwkaart ${M.shadow}× ververst`,
       `modus ${camera === ortho ? 'iso (' + (sz.y / (2 * isoHalf())).toFixed(2) + ' px/m)' : 'persp'} · ${sz.x}×${sz.y} px (pr ${renderer.getPixelRatio()}) · posts ${posts.filter(p => p.enabled !== false).length} · bewegend ${dn} · animaties ${anims.size}${Object.keys(M.af).length ? ' (hele beelden/s: ' + Object.entries(M.af).map(([k, v]) => k + ' ' + f(v / sec)).join(', ') + ')' : ''}`,
       `shaders ${ri.programs.length} · geometrieën ${ri.memory.geometries} · texturen ${ri.memory.textures}`,
+      H.benchInfo ? H.benchInfo() : '', // iso/bench.js: Hz · MRT · float_blend · browser
       'P = sluiten · Shift+P = continu tekenen aan/uit',
     ].join('\n');
     Object.assign(M, { af: {}, last: now, raf: 0, full: 0, post: 0, shadow: 0, cpu: 0, cpuMax: 0, tick: 0, gpu: {} }); M.gpuF.clear();
@@ -1838,6 +1961,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
   // ---------- Renderlus (alleen tekenen als er iets veranderde) ----------
   const ease = t => t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
   let slowT = 0, slowN = 0, slowSaid = false;
+  let shFadeOld = null, shFadeGo = false, shHad = false, shFadeT = 0; const shInv = new THREE.Matrix4();
   let lastT = 0, moveT = 0, shadowDirty = true, shadowKey = '', moveNow = false, lastZ = 0;
   const lastCP = new THREE.Vector3(), lastCT = new THREE.Vector3();
   H.moving = () => moveNow; // slepen/zoomen/vliegen bezig (tot 250 ms erna); bij stilstand emit('still')
@@ -1848,7 +1972,14 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
   // Geeft een stop-functie terug. Bewegende dingen werpen geen schaduw (schaduwkaart staat stil); H.shadowDirty() = schaduw één keer verversen.
   const anims = new Set(); let animT = 0, postDirty = false;
   H.animate = (fn, src) => { if (src) fn.src = src; anims.add(fn); redraw(); return () => anims.delete(fn); }; // src = naam in de meter (wie vraagt hele beelden)
-  const animMs = () => fxOn.zuinig ? 100 : 50; H.animMs = animMs;
+  // perf 95 (?noidle = uit): 10 s zonder invoer → tik 10/s; venster zonder focus/verborgen → tik gepauzeerd; op accu → automatisch Zuinig (autoZ, niet opgeslagen)
+  const IDLE = !QS.has('noidle'); let autoZ = false, awake = true;
+  const zuinigNow = () => !!fxOn.zuinig || autoZ;
+  const animMs = () => zuinigNow() || (IDLE && performance.now() - inputT > 10000) ? 100 : 50; H.animMs = animMs;
+  if (IDLE) {
+    const wake = () => { const a = !document.hidden && document.hasFocus(); if (a && !awake) { animT = 0; redraw(); } awake = a; };
+    addEventListener('blur', wake); addEventListener('focus', wake); document.addEventListener('visibilitychange', wake); wake();
+  }
   H.shadowDirty = () => { shadowDirty = true; redraw(); };
   const IDLE_MS = 120000; let inputT = performance.now();
   for (const ev of ['pointerdown', 'pointermove', 'wheel', 'keydown', 'touchstart']) addEventListener(ev, () => { const was = performance.now() - inputT > IDLE_MS; inputT = performance.now(); if (was) redraw(); }, { passive: true });
@@ -1910,13 +2041,20 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     controls.target.add(d); camera.position.add(d);
     controls.autoRotate = false;
   }
+  // perf 85 (?nocap = uit): 120 Hz-scherm (gemeten uit rAF-afstand ≥ ±95 Hz) tijdens bewegen/groeien/intro max ±60 beelden/s; Retina iso PR 1,25 i.p.v. 1,5
+  const CAP = !QS.has('nocap'); let rafDt = 16.7, rafLast = 0, capLast = 0;
   function loop(now) {
     requestAnimationFrame(loop);
-    if (M.on) { M.raf++; M.tick0 = performance.now(); meterShow(now); if (M.stress) dirty = true; }
+    if (CAP) {
+      const d = now - rafLast; rafLast = now; if (d > 2 && d < 40) rafDt += (d - rafDt) * 0.05;
+      if (rafDt < 10.5 && (moveNow || growing.size || intro) && now - capLast < 15) return;
+      capLast = now;
+    }
+    if (M.on) { M.raf++; M.tick0 = performance.now(); meterShow(now); if (M.stress) dirty = full = true; }
     const dt = Math.min(100, now - (lastT || now)); lastT = now;
     if (night !== nightGoal) { // licht rustig laten overgaan (±2 s)
       night += Math.sign(nightGoal - night) * Math.min(Math.abs(nightGoal - night), dt / 2000);
-      applyNight(); dirty = true;
+      applyNight(); dirty = full = true;
     }
     if (fly) {
       const t = Math.min(1, (now - fly.t0) / fly.ms), e = ease(t);
@@ -1933,58 +2071,61 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
       if (t >= 1) fly = null;
       dirty = true;
     }
-    if (intro && area) { introStep(now); dirty = true; }
+    if (intro && area) { introStep(now); dirty = full = true; }
+    for (const f of frameFns) if (f(now, dt)) dirty = full = true; // iso/drive.js e.d.: elk scherm-beeld
     keyPan(now); glideStep(now);
     const ctl = controls.update();
     // OrbitControls meldt bij ortho (iso) élke update als veranderd (zoomChanged) → zelf vergelijken, anders tekent iso eindeloos en is nooit 'stil'
     const moved = ctl && (camera.position.distanceToSquared(lastCP) > 1e-8 || controls.target.distanceToSquared(lastCT) > 1e-8 || camera.zoom !== lastZ);
     lastCP.copy(camera.position); lastCT.copy(controls.target); lastZ = camera.zoom;
     if (moved) dirty = true;
-    if ((moved && !controls.autoRotate) || fly || intro) moveT = now; // slepen/zoomen/vliegen (rustig ronddraaien telt niet)
+    if ((moved && !controls.autoRotate && !driveCam) || fly || intro) moveT = now; // rijden telt niet als 'bewegen' (anders bevriest de schaduw onderweg) // slepen/zoomen/vliegen (rustig ronddraaien telt niet)
     const moving = now - moveT < 250;
-    if (moving !== moveNow) { moveNow = moving; dirty = true; if (!moving) { lastLod = 0; emit('still'); } } // stilstand: scherp + detail/tegels/grond bijwerken
+    if (moving !== moveNow) { moveNow = moving; dirty = full = true; if (!moving) { lastLod = 0; emit('still'); } } // stilstand: scherp + detail/tegels/grond bijwerken
     // iso: canvas blijft op max 1,5 (omlijning + nabewerking zijn per pixel); kleiner tekenen tijdens bewegen gebeurt in draw() → geen canvas-herallocatie
-    const prW = fxOn.zuinig ? 1 : camera === ortho ? Math.min(PR, 1.5) : moving ? PR_MOVE : PR; // Zuinig: altijd 1 (scherp scherm = tot 4× minder pixels)
+    const prW = zuinigNow() ? 1 : isoCam() ? Math.min(PR, CAP && devicePixelRatio >= 2 ? 1.25 : 1.5) : moving ? PR_MOVE : PR; // Zuinig: altijd 1 (scherp scherm = tot 4× minder pixels)
     // traag? tijdens slepen/zoomen (niet de intro) beelden per seconde tellen; 4 s gemiddeld < 20/s → één keer 'slow' (ui.js stelt Zuinig voor)
-    if (moving && moveNow && !intro && !fxOn.zuinig && !slowSaid && !document.hidden) { slowT += dt; slowN++; if (slowT > 4000) { if (slowN * 1000 / slowT < 20) { slowSaid = true; emit('slow', Math.round(slowN * 1000 / slowT)); } slowT = slowN = 0; } }
-    if (renderer.getPixelRatio() !== prW) { renderer.setPixelRatio(prW); dirty = true; }
+    if (moving && moveNow && !intro && !zuinigNow() && !slowSaid && !document.hidden) { slowT += dt; slowN++; if (slowT > 4000) { if (slowN * 1000 / slowT < 20) { slowSaid = true; emit('slow', Math.round(slowN * 1000 / slowT)); } slowT = slowN = 0; } }
+    if (renderer.getPixelRatio() !== prW) { renderer.setPixelRatio(prW); dirty = full = true; }
     if (!area) return;
     // doel volgt het terrein (anders draai je om een punt in de lucht of onder de grond)
-    if (!fly) {
+    if (!fly && !driveCam) {
       const [x, y] = toRD(controls.target), gh = heightAt(x, y), d = gh - controls.target.y;
       if (Math.abs(d) > 0.3) { controls.target.y += d * 0.25; camera.position.y += d * 0.25; dirty = true; }
     }
     updateTextures(now);
     loadTick(now);
     if (growing.size) { // panden groeien: elk scherm-beeld tekenen (vloeiender dan de 20/s-tik); klaar → schaduw aan
-      const t = nowS(); GU.uGT.value = t; GU.uGOn.value = 1; dirty = true;
+      const t = nowS(); GU.uGT.value = t; GU.uGOn.value = 1; dirty = full = true;
       for (const c of growing) if (t >= c.growEnd) growDone(c);
-    } else if (GU.uGOn.value) { GU.uGOn.value = 0; dirty = true; }
-    { const e = GU.uEra.value; if (e.z !== eraGoal) { const st = Math.min(0.05, (now - (eraT || now)) / 1000) / ERA_T; e.z = eraGoal ? Math.min(1, e.z + st) : Math.max(0, e.z - st); dirty = true; if (e.z === eraGoal) shadowDirty = true; } eraT = now; }
-    if (treeFadeEnd) { const t = nowS(); TREE_U.uTT.value = Math.min(t, treeFadeEnd); dirty = true; if (t >= treeFadeEnd) treeFadeEnd = 0; }
+    } else if (GU.uGOn.value) { GU.uGOn.value = 0; dirty = full = true; }
+    { const e = GU.uEra.value; if (e.z !== eraGoal) { const st = Math.min(0.05, (now - (eraT || now)) / 1000) / ERA_T; e.z = eraGoal ? Math.min(1, e.z + st) : Math.max(0, e.z - st); dirty = full = true; if (e.z === eraGoal) shadowDirty = true; } eraT = now; }
+    if (treeFadeEnd) { const t = nowS(); TREE_U.uTT.value = Math.min(t, treeFadeEnd); dirty = full = true; if (t >= treeFadeEnd) treeFadeEnd = 0; }
     if (selMesh) { // knipperen: 3 s, daarna rustig
       const t = (now - pulseT0) / 1000;
       const o = t < 3 ? 0.15 + 0.4 * (0.5 + 0.5 * Math.sin(t * 7)) : 0.3;
-      if (Math.abs(o - MAT.sel.opacity) > 0.005) { MAT.sel.opacity = o; dirty = true; }
+      if (Math.abs(o - MAT.sel.opacity) > 0.005) { MAT.sel.opacity = o; dirty = full = true; }
     }
-    if (anims.size && !document.hidden && now - inputT < IDLE_MS && now - animT >= animMs() - 4) { // −4: rAF-jitter, anders valt 50 ms soms op 67 // na 2 min zonder invoer: wolken/ballon/verkeer pauzeren
+    if (anims.size && !document.hidden && awake && now - inputT < IDLE_MS && now - animT >= animMs() - 4) { // −4: rAF-jitter, anders valt 50 ms soms op 67 // na 2 min zonder invoer: wolken/ballon/verkeer pauzeren
       const adt = Math.min(200, now - (animT || now)); animT = now;
       for (const f of anims) {
         const r = f(now, adt);
-        if (r === false) anims.delete(f); else if (r === 'post') postDirty = true; else if (r !== 'none') { dirty = true; if (M.on) M.af[f.src || f.name || '?'] = (M.af[f.src || f.name || '?'] || 0) + 1; }
+        if (r === false) anims.delete(f); else if (r === 'post') postDirty = true; else if (r !== 'none') { dirty = full = true; if (M.on) M.af[f.src || f.name || '?'] = (M.af[f.src || f.name || '?'] || 0) + 1; }
       }
     }
     if (!dirty) {
-      if (postDirty && camera === ortho && rtC) { postDirty = false; mBegin(false); runPosts(); mEnd(false); } // ±1 schermvullende pass per stap i.p.v. 2 scène-renders
+      if (postDirty && isoCam() && rtC) { postDirty = false; mBegin(false); runPosts(); mEnd(false); } // ±1 schermvullende pass per stap i.p.v. 2 scène-renders
       return;
     }
-    dirty = false; postDirty = false;
+    const fullDraw = full; dirty = false; postDirty = false; full = false;
     const dist = camera.position.distanceTo(controls.target);
     if (camera === ortho) { // camera ver genoeg achter het doel dat de onderrand + panden binnen near vallen
       const h = isoHalf(), D = isoD(h);
       if (Math.abs(dist - D) > 1) camera.position.sub(controls.target).setLength(D).add(controls.target);
       camera.near = Math.max(1, D - 2.5 * h - 800); camera.far = D + 6 * h + 8000; camera.updateProjectionMatrix();
       U.uEye.value.copy(camera.position).sub(controls.target).setLength(h / TAN21).add(controls.target);
+    } else if (camera === driveCam) {
+      U.uEye.value.copy(camera.position);
     } else {
       camera.near = Math.max(1, Math.min(40, dist / 150)); camera.updateProjectionMatrix();
       U.uEye.value.copy(camera.position);
@@ -1993,16 +2134,27 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     isoSun();
     const S = shadowExt(), sc = sun.shadow.camera;
     // A2: iso op stand 700/2200 = gebakken zonschaduw (schaduwkaart niet bijwerken); dichterbij scherpe live schaduw. Contactschaduw in iso altijd (zodra gebakken)
-    const bk = iso && H.bakeReady === true && isoHalf() > 400 ? 1 : 0;
+    const bk = iso && !driveCam && H.bakeReady === true && isoHalf() > 400 && !QS.has('nobaked') ? 1 : 0; // ?nobaked = A/B live schaduw; // rijden: altijd scherpe live schaduw
     if (bk !== U.uBaked.value) { U.uBaked.value = bk; if (!bk) shadowDirty = true; }
-    U.uBkAO.value = iso && U.uBk.value && fxOn.ao && !fxOn.zuinig ? 1 : 0; // Zuinig: geen contactschaduw (±6,5 ms GPU per beeld)
-    const key = Math.round(controls.target.x / 20) + ',' + Math.round(controls.target.z / 20) + ',' + Math.round(S / 50);
+    U.uBkAO.value = iso && U.uBk.value && fxOn.ao && !zuinigNow() ? 1 : 0; // Zuinig: geen contactschaduw (±6,5 ms GPU per beeld)
+    // rijden: kader ligt vóór de auto; schaduwkaart (= hele stad nog eens tekenen) pas opnieuw als het zichtbare stuk (auto + DRV_SH m vooruit) er bijna uit valt
+    // → rechtdoor rijden ±1× per 250–300 m, bocht van ±90° = 1×. Iso: per 20 m van het doel (zoals altijd)
+    let key = Math.round(controls.target.x / 20) + ',' + Math.round(controls.target.z / 20) + ',' + Math.round(S / 50);
+    if (driveCam) {
+      camera.getWorldDirection(shFw); shFw.y = 0; if (shFw.lengthSq() < 1e-6) shFw.set(0, 0, -1); shFw.normalize();
+      const p = camera.position, r = S - 20, ax = p.x + shFw.x * DRV_SH - shC.x, az = p.z + shFw.z * DRV_SH - shC.z, bx = p.x - shC.x, bz = p.z - shC.z;
+      const ok = ax * ax + az * az < r * r && bx * bx + bz * bz < (r - 30) * (r - 30);
+      key = 'drv' + Math.round(S / 50); // zelfde sleutel = niet bijwerken; net ingestapt of kader te klein → andere sleutel
+      if (!ok) shadowDirty = true;
+    }
     if (!moving && !bk && (shadowDirty || key !== shadowKey)) { // tijdens bewegen blijft de schaduwkaart staan
       shadowDirty = false; shadowKey = key; renderer.shadowMap.needsUpdate = true;
+      shFadeOld = shHad ? sun.shadow.matrix.clone() : null; shFadeGo = true; // matrix van de vorige kaart (verse kaart overschrijft hem in draw)
       const dx = controls.target.x - shLast.x, dz = controls.target.z - shLast.z; // schuifrichting sinds vorige stilstand (klein = vorige houden)
       if (shKeep && dx * dx + dz * dz > 400) shDir.set(dx, 0, dz).normalize();
       shKeep = true; shLast.copy(controls.target);
-      shC.copy(controls.target).addScaledVector(shDir, S * SH_AHEAD);
+      if (driveCam) { shC.copy(camera.position).addScaledVector(shFw, S - 100); shC.y = controls.target.y; } // auto ±100 m van de achterrand, rest vooruit
+      else shC.copy(controls.target).addScaledVector(shDir, S * SH_AHEAD);
       sun.target.position.copy(shC);
       // dieptebereik krap om het kader: bias in meters i.p.v. vast 0,0004 × 5900 m (= 2,4 m → schaduw 'zweefde' los naast het pand)
       const R = S * 1.5 + 600, tx = 2 * S / sun.shadow.mapSize.x;
@@ -2014,7 +2166,13 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     if (iso) { scene.fog.near = 1e7; scene.fog.far = 2e7; }
     else { scene.fog.near = Math.max(4000, dist * 2.5); scene.fog.far = scene.fog.near + 12000; }
     mBegin(true);
-    draw();
+    draw(fullDraw);
+    if (shFadeGo) { // schaduwkaart is net ververst: nieuw gebied (buiten vorig kader) ±0,7 s laten opkomen, zoals de panden groeien
+      shFadeGo = false; shHad = true;
+      if (shFadeOld) U.uShX.value.copy(shFadeOld).multiply(shInv.copy(sun.shadow.matrix).invert()); else U.uShX.value.makeTranslation(9, 9, 0);
+      U.uShT.value = 0; shFadeT = now;
+    }
+    if (U.uShT.value < 1) { U.uShT.value = Math.min(1, (now - shFadeT) / 700); full = dirty = true; }
     saveView();
     emit('frame');
     mEnd(true);
@@ -2035,7 +2193,11 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     if (isoFilm !== fxOn.film) { isoFilm = U.uFilm.value = fxOn.film; sunKey = ''; applyNight(); } };
   applyLook();
   H.FXK = FXK;
-  H.fxOn = k => !!fxOn[k];
+  H.fxOn = k => k === 'zuinig' ? zuinigNow() : !!fxOn[k];
+  if (IDLE && navigator.getBattery) navigator.getBattery().then(b => { // op accu → Zuinig automatisch (zonder fxOn/localStorage aan te raken); gebruikerskeuze blijft staan
+    const upd = () => { const a = !b.charging; if (a !== autoZ) { autoZ = a; shadowDirty = true; if (!fxOn.zuinig) emit('fx', 'zuinig', a); redraw(); } };
+    b.addEventListener('chargingchange', upd); upd();
+  }).catch(() => {});
   H.setFx = (k, on) => { fxOn[k] = on ? 1 : 0; try { localStorage.setItem('h3d.fx', JSON.stringify(fxOn)); if (k === 'wolken') localStorage.setItem('h3d.wolken', on ? '1' : '0'); } catch {} applyLook(); shadowDirty = true; emit('fx', k, !!on); redraw(); };
   const layerObjs = {}; // laag → [meshes]
   let layersBuilt = false, allIn = false;
@@ -2046,7 +2208,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     shadowDirty = true; emit('layer', k, !!on); redraw();
   };
   // linten (wegen/spoor/water als 3D-strook) niet in iso: daar schildert iso/ground.js ze in dezelfde stijl op de grond (±6,5 ms GPU)
-  function layerVis(k, o) { return !!layerOn[k] && !(o.userData.ribbon && camera === ortho); }
+  function layerVis(k, o) { return !!layerOn[k] && !(o.userData.ribbon && isoCam()); }
   function ribbonsForMode() { for (const k in layerObjs) for (const o of layerObjs[k]) if (o.userData.ribbon) o.visible = layerVis(k, o); }
   H.layers = d => { H.layerData = d; emit('layers', d); for (const c of H.chunks.values()) treesFor(c); buildLayers(); };
   // hoogte alleen waar een vak geladen is (anders null → lint daar onderbreken)
@@ -2130,7 +2292,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     const d = H.layerData;
     if (layersBuilt || !d || !allIn || !scene) return;
     layersBuilt = true;
-    const add = (k, mesh, ribbon) => { mesh.receiveShadow = true; mesh.userData.ribbon = !!ribbon; mesh.visible = layerVis(k, mesh); scene.add(mesh); (layerObjs[k] ||= []).push(mesh); };
+    const add = (k, mesh, ribbon) => { mesh.receiveShadow = true; mesh.userData.ribbon = !!ribbon; mesh.visible = layerVis(k, mesh); scene.add(H.freeze(mesh)); (layerObjs[k] ||= []).push(mesh); };
     const addR = (k, geos, mat) => { for (const g of geos) add(k, new THREE.Mesh(g, mat), true); };
     // water: beken als lint (4–8 m), vijvers plat op de laagste oeverhoogte
     const waterMat = ribbonMat({ color: '#7eaed3' }, -2);
@@ -2185,6 +2347,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
 
   // ---------- Bossen: bomen per vak als InstancedMesh; ver weg minder bomen (willekeurige volgorde → eerste n = gelijkmatige uitdunning) ----------
   const TREE_SP = 10; // m tussen bomen (raster met verspringing)
+  const TREE_BLK = 3; // bomen per vak in 3×3 blokken (eigen InstancedMesh → culling per blok)
   // lo = ver weg / klein in beeld (< TREE_LO_PPM px per m): alleen kroon, octaëder/5-kant (8 of 5 driehoeken i.p.v. 30/17). Onderkanten open (nooit zichtbaar).
   const TREE_LO_PPM = 1.5;
   H.treeLo = d => dbs.y / (2 * d * TAN21) < TREE_LO_PPM; // iso/props.js: zelfde grens voor straatbomen
@@ -2210,7 +2373,8 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
   function treeGeo(conifer, lo) { // boom van 1 m hoog: stam (donker) + kroon (wit, gekleurd per boom via instanceColor)
     const crown = conifer ? new THREE.ConeGeometry(0.22, 0.85, lo ? 5 : 7, 1, true).translate(0, 0.55, 0)
       : lo ? new THREE.OctahedronGeometry(1, 0).scale(0.4, 0.4, 0.4).translate(0, 0.62, 0) : blobCrown(0); // bos: grove bollen (±130k bomen)
-    const trunk = new THREE.CylinderGeometry(0.035, 0.05, 0.3, 5, 1, true).translate(0, 0.15, 0);
+    const th = conifer ? 0.3 : 0.5; // bolle kroon begint pas op ±0,42 → stam tot 0,5 (anders zweeft de kroon, zichtbaar bij rijden)
+    const trunk = new THREE.CylinderGeometry(0.035, 0.05, th, 5, 1, true).translate(0, th / 2, 0);
     const flat = g => g.index ? g.toNonIndexed() : g, parts = [...(lo ? [] : [[flat(trunk), [0.42, 0.36, 0.3]]]), [flat(crown), [1, 1, 1]]];
     const n = parts.reduce((t, [g]) => t + g.attributes.position.count, 0), P = new Float32Array(n * 3), C = new Float32Array(n * 3);
     let o = 0;
@@ -2267,18 +2431,27 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
       for (let k = n - 1; k > 0; k--) { const j = Math.floor(rnd() * (k + 1)); [ord[k], ord[j]] = [ord[j], ord[k]]; }
       for (const kind of [0, 1]) {
         const idx = ord.filter(k => L[k * 4 + 3] === kind); if (!idx.length) continue;
-        const aTA = new THREE.InstancedBufferAttribute(new Float32Array(idx.length), 1);
-        const own = g => { const n = new THREE.BufferGeometry(); for (const k in g.attributes) n.setAttribute(k, g.attributes[k]); n.setAttribute('aTA', aTA); n.boundingSphere = g.boundingSphere; return n; }; // zelfde buffers, eigen aTA
-        const gHi = own(geo[kind]), gLo = own(geoLo[kind]);
-        const im = new THREE.InstancedMesh(gHi, mat, idx.length);
-        idx.forEach((k, i) => {
+        // per boom (vaste volgorde → zelfde bos als voorheen) matrix + kleur, dan verdeeld over 3×3 blokken van ±333 m:
+        // één InstancedMesh per blok → buiten beeld valt het hele blok weg (per vak kostte ±9 ms GPU aan bomen die niet in beeld stonden)
+        const ms = [], cs = [], blk = [];
+        for (const k of idx) {
           const h = (kind ? 13 : 11) + rnd() * 9, w = 0.85 + rnd() * 0.35;
           ps.set(L[k * 4] - O[0], L[k * 4 + 2] - 0.4, -(L[k * 4 + 1] - O[1])); q.setFromAxisAngle(up, rnd() * 6.28); sc.set(h * w, h, h * w);
-          im.setMatrixAt(i, m4.compose(ps, q, sc));
-          const t = rnd(); im.setColorAt(i, kind ? col.setHSL(0.36 + rnd() * 0.04, 0.38, 0.22 + rnd() * 0.06) : t < 0.12 ? col.setHSL(0.06 + rnd() * 0.07, 0.6, 0.42 + rnd() * 0.08) : col.setHSL(0.22 + rnd() * 0.08, 0.46 + rnd() * 0.14, 0.3 + rnd() * 0.1)); // ±12% herfst
-        });
-        im.computeBoundingSphere(); im.receiveShadow = true; im.full = idx.length; im.geoHi = gHi; im.geoLo = gLo; im.aTA = aTA; im.count = 0; // updateDetail zet de dichtheid (en laat ze groeien)
-        im.visible = !!layerOn.bomen; scene.add(im); (layerObjs.bomen ||= []).push(im); c.trees.push(im);
+          ms.push(m4.compose(ps, q, sc).clone());
+          const t = rnd(); cs.push((kind ? col.setHSL(0.36 + rnd() * 0.04, 0.38, 0.22 + rnd() * 0.06) : t < 0.12 ? col.setHSL(0.06 + rnd() * 0.07, 0.6, 0.42 + rnd() * 0.08) : col.setHSL(0.22 + rnd() * 0.08, 0.46 + rnd() * 0.14, 0.3 + rnd() * 0.1)).clone()); // ±12% herfst
+          const bi = Math.min(TREE_BLK - 1, Math.max(0, Math.floor((L[k * 4] - c.x0) / area.km * TREE_BLK))), bj = Math.min(TREE_BLK - 1, Math.max(0, Math.floor((L[k * 4 + 1] - c.y0) / area.km * TREE_BLK)));
+          blk.push(bj * TREE_BLK + bi);
+        }
+        for (let b = 0; b < TREE_BLK * TREE_BLK; b++) {
+          const sel = []; blk.forEach((v, i) => { if (v === b) sel.push(i); }); if (!sel.length) continue;
+          const aTA = new THREE.InstancedBufferAttribute(new Float32Array(sel.length), 1);
+          const own = g => { const n = new THREE.BufferGeometry(); for (const k in g.attributes) n.setAttribute(k, g.attributes[k]); n.setAttribute('aTA', aTA); n.boundingSphere = g.boundingSphere; return n; }; // zelfde buffers, eigen aTA
+          const gHi = own(geo[kind]), gLo = own(geoLo[kind]);
+          const im = new THREE.InstancedMesh(gHi, mat, sel.length);
+          sel.forEach((i, n) => { im.setMatrixAt(n, ms[i]); im.setColorAt(n, cs[i]); });
+          im.computeBoundingSphere(); im.receiveShadow = true; im.full = sel.length; im.geoHi = gHi; im.geoLo = gLo; im.aTA = aTA; im.count = 0; // updateDetail zet de dichtheid (en laat ze groeien)
+          im.visible = !!layerOn.bomen; scene.add(H.freeze(im)); (layerObjs.bomen ||= []).push(im); c.trees.push(im);
+        }
       }
     }
     lastLod = 0; // dichtheid meteen naar afstand zetten

@@ -10,27 +10,60 @@
   const TILT = { amt: 0.6, w0: 0.22, w1: 0.5, sat: 1.04, vig: 0.22 };
   let tiltOn = H.fxOn('randen'); // aan/uit via H.setFx('randen') (menu Sfeer, toets T)
 
+  // 102: dither (interleaved gradient noise, Jimenez) ±0,5/255 na de sRGB-omzetting, in de laatste pass voor het scherm (tilt order 20; staat tilt uit → wolkenpass). ?nodither = uit
+  const DITHER = !/[?&]nodither\b/.test(location.search);
+  const DITHER_GLSL = DITHER ? 'gl_FragColor.rgb += (fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) - 0.5) / 255.0 * uDith;' : '';
   const VS = 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }';
   const camW = new THREE.Matrix4(), lrbt = new THREE.Vector4(), bal = new THREE.Vector4(0, -1e5, 0, 0);
 
+  // 82: wolken-ruis uit een getegelde 256²-textuur (R8, eenmalig in JS gebakken) i.p.v. 5-octaaf fbm per pixel: 2 samples (octaaf 0-2 en 3-4). ?nocloudtex = oude fbm
+  const CLOUDTEX = !/[?&]nocloudtex\b/.test(location.search);
+  const cloudNoise = (() => {
+    if (!CLOUDTEX) return null;
+    const N = 256, out = new Uint8Array(N * N), acc = new Float32Array(N * N); let seed = 1234567;
+    const rnd1 = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
+    [[8, 0.5], [16, 0.25], [32, 0.125]].forEach(([P, w]) => { // periodieke value-noise: rooster P×P, smoothstep-interpolatie (zelfde als vn() in de shader)
+      const L = new Float32Array(P * P); for (let i = 0; i < L.length; i++) L[i] = rnd1();
+      for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+        const fx = x / N * P, fy = y / N * P, ix = Math.floor(fx), iy = Math.floor(fy);
+        let tx = fx - ix, ty = fy - iy; tx = tx * tx * (3 - 2 * tx); ty = ty * ty * (3 - 2 * ty);
+        const x0 = ix % P, x1 = (ix + 1) % P, y0 = iy % P, y1 = (iy + 1) % P;
+        const a = L[y0 * P + x0] + (L[y0 * P + x1] - L[y0 * P + x0]) * tx, b = L[y1 * P + x0] + (L[y1 * P + x1] - L[y1 * P + x0]) * tx;
+        acc[y * N + x] += w * (a + (b - a) * ty);
+      }
+    });
+    for (let i = 0; i < out.length; i++) out[i] = Math.round(acc[i] / 0.875 * 255); // 0..1 = som van octaaf 0-2 (max 0,875)
+    const t = new THREE.DataTexture(out, N, N, THREE.RedFormat, THREE.UnsignedByteType);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping; t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter; t.generateMipmaps = true; t.needsUpdate = true;
+    return t;
+  })();
   // ---------- W4: wolkschaduw (wereldpositie per pixel uit de diepte van de ortho-camera) + ballonschaduw ----------
   const cloudM = new THREE.ShaderMaterial({ name: 'wolken',
     uniforms: { tIn: { value: null }, tN: { value: null }, uTime: { value: 0 }, uMove: { value: 0 }, uCamW: { value: camW }, uLRBT: { value: lrbt }, uSun: { value: SUN },
       uWind: { value: WIND.clone().multiplyScalar(CLOUD.speed) }, uScale: { value: CLOUD.scale }, uCov: { value: CLOUD.cov }, uSoft: { value: CLOUD.soft },
-      uDark: { value: CLOUD.dark }, uSunB: { value: CLOUD.sun }, uNight: { value: 0 }, uCloudY: { value: 1000 }, uBal: { value: bal } },
+      uDark: { value: CLOUD.dark }, uSunB: { value: CLOUD.sun }, uNight: { value: 0 }, uCloudY: { value: 1000 }, uBal: { value: bal }, uDith: { value: 0 }, tCN: { value: cloudNoise } },
     vertexShader: VS,
-    fragmentShader: `varying vec2 vUv; uniform sampler2D tIn; uniform highp sampler2D tN; uniform mat4 uCamW; uniform vec4 uLRBT, uBal; uniform vec3 uSun; uniform vec2 uWind;
-      uniform float uTime, uMove, uScale, uCov, uSoft, uDark, uSunB, uNight, uCloudY;
+    fragmentShader: `varying vec2 vUv; uniform sampler2D tIn; uniform highp sampler2D tN; uniform sampler2D tCN; uniform mat4 uCamW; uniform vec4 uLRBT, uBal; uniform vec3 uSun; uniform vec2 uWind;
+      uniform float uTime, uMove, uScale, uCov, uSoft, uDark, uSunB, uNight, uCloudY, uDith;
       float h(vec2 p) { vec3 q = fract(p.xyx * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
       float vn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(h(i), h(i + vec2(1, 0)), f.x), mix(h(i + vec2(0, 1)), h(i + vec2(1, 1)), f.x), f.y); }
       float fbm(vec2 p) { float a = 0.0, w = 0.5; mat2 r = mat2(0.8, -0.6, 0.6, 0.8); for (int i = 0; i < 5; i++) { if (uMove > 0.5 && i >= 3) { a += w * 0.75; break; } a += w * vn(p); p = r * p * 2.03 + 17.0; w *= 0.5; } return a; }
+      ${CLOUDTEX ? `float gPx = 0.0; // wereld-m per pixel / schaal: vaste afleiding (ortho) → mip-keuze ook binnen de if (textureGrad)
+      float cn(vec2 q) { // zelfde bereik als fbm: octaaf 0-2 uit sample 1 (0..0.875), octaaf 3-4 uit sample 2 (±0.047 gemiddeld; tijdens bewegen constant)
+        float g = gPx; vec2 gx = vec2(g, 0.0), gy = vec2(0.0, g);
+        float a = textureGrad(tCN, q / 8.0, gx / 8.0, gy / 8.0).r * 0.875;
+        if (uMove > 0.5) return a + 0.047;
+        mat2 r = mat2(0.8, -0.6, 0.6, 0.8);
+        return a + textureGrad(tCN, (r * r * r * q) * 1.0456 + 0.37, gx * 1.0456, gy * 1.0456).r * 0.875 * 0.107;
+      }` : ''}
       void main() {
+        ${CLOUDTEX ? 'gPx = abs(uLRBT.y - uLRBT.x) * max(abs(dFdx(vUv.x)), abs(dFdy(vUv.x))) / uScale;' : ''}
         vec4 c = texture2D(tIn, vUv), n = texelFetch(tN, clamp(ivec2(gl_FragCoord.xy), ivec2(0), textureSize(tN, 0) - 1), 0);
         if (n.g > 0.0) {
           vec3 wp = (uCamW * vec4(mix(uLRBT.x, uLRBT.y, vUv.x), mix(uLRBT.z, uLRBT.w, vUv.y), -n.g, 1.0)).xyz;
           float k = 1.0 - uNight * 0.75;
           vec2 q = (wp.xz + uSun.xz / uSun.y * (uCloudY - wp.y) - uWind * uTime) / uScale; // langs de zonnestraal omhoog naar de wolk
-          float f = clamp((fbm(q) - 0.48) * 5.0 + 0.5, 0.0, 1.0); // fbm zit dicht rond 0,5 → oprekken
+          float f = clamp((${CLOUDTEX ? 'cn' : 'fbm'}(q) - 0.48) * 5.0 + 0.5, 0.0, 1.0); // fbm zit dicht rond 0,5 → oprekken
           float t = 1.0 - uCov, s = smoothstep(t - uSoft, t + uSoft + 0.002, f);
           c.rgb *= mix(vec3(1.0), vec3(0.86, 0.9, 1.06) * (1.0 - uDark), s * k);
           c.rgb *= mix(vec3(1.0), vec3(1.0 + uSunB, 1.0 + uSunB * 0.7, 1.0 + uSunB * 0.2), (1.0 - s) * k);
@@ -41,6 +74,7 @@
         }
         gl_FragColor = c;
         #include <colorspace_fragment>
+        ${DITHER_GLSL}
       }`,
     depthTest: false, depthWrite: false,
   });
@@ -48,7 +82,7 @@
   const tiltM = new THREE.ShaderMaterial({ name: 'randen',
     uniforms: { tIn: { value: null }, uMove: { value: 0 }, uRes: { value: new THREE.Vector2(1, 1) }, uAmt: { value: TILT.amt }, uW0: { value: TILT.w0 }, uW1: { value: TILT.w1 }, uSat: { value: TILT.sat }, uVig: { value: TILT.vig } },
     vertexShader: VS,
-    fragmentShader: `varying vec2 vUv; uniform sampler2D tIn; uniform vec2 uRes; uniform float uMove, uAmt, uW0, uW1, uSat, uVig;
+    fragmentShader: `varying vec2 vUv; uniform sampler2D tIn; uniform vec2 uRes; uniform float uMove, uAmt, uW0, uW1, uSat, uVig; const float uDith = 1.0;
       void main() {
         vec4 c = texture2D(tIn, vUv);
         float r = smoothstep(uW0, uW1, abs(vUv.y - 0.5)) * uAmt * uRes.y / 100.0; // straal in px
@@ -57,6 +91,7 @@
         vec2 p = vUv - 0.5; c.rgb *= mix(vec3(1.0), vec3(0.72, 0.62, 0.52), smoothstep(0.25, 0.75, length(p * vec2(1.0, 1.25))) * uVig * 2.0);
         gl_FragColor = c;
         #include <colorspace_fragment>
+        ${DITHER_GLSL}
       }`,
     depthTest: false, depthWrite: false,
   });
@@ -201,6 +236,7 @@
       cam.updateMatrixWorld(); camW.copy(cam.matrixWorld);
       const cx = (cam.right + cam.left) / 2, cy = (cam.top + cam.bottom) / 2, dx = (cam.right - cam.left) / (2 * cam.zoom), dy = (cam.top - cam.bottom) / (2 * cam.zoom);
       lrbt.set(cx - dx, cx + dx, cy - dy, cy + dy);
+      cloudM.uniforms.uDith.value = tiltPost?.enabled ? 0 : 1; // dither alleen als wolken de laatste pass zijn
       cloudM.uniforms.uNight.value = H.night(); cloudM.uniforms.uCloudY.value = target().y + CLOUD.height;
     }
   }

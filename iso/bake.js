@@ -1,11 +1,12 @@
 // iso/bake.js — A2 gebakken licht. Per vak (1 km) één keer: zonschaduw + contactschaduw (AO) → atlas (RGBA8, 512 px/km ≈ 2 m).
 // Stap 1: diepte vanuit de zon (vak + rand, 2048²). Stap 2: van bovenaf → per texel zon zichtbaar + hoogte bovenste oppervlak.
-// Stap 3: contactschaduw uit hoogteverschillen rondom → atlasplek. Shaders lezen de atlas via U.uBk/uBkI (app.js BAKE_GLSL).
+// Stap 3: contactschaduw uit hoogteverschillen rondom (tussendoel midRT). Stap 4: oplossen naar 'onder' en 'boven' (3×3 rondom: laagste/hoogste
+// oppervlak) → atlasplek (r AO onder · g AO boven · b zon onder · a zon boven). Shaders lezen dat met één lineaire lezing (app.js BAKE_GLSL).
 // Alleen in iso, alleen bij stilstand, 1 vak per tik (dichtbij eerst). Zon staat vast (H.SUN_DIR); verandert die → H.rebake().
 (() => {
   const H = typeof H3D !== 'undefined' ? H3D : null; if (!H) return;
   const P = 512, M = 8, PM = P + 2 * M, TX = 1000 / P, DS = 2048, LR = 780; // px/vak, rand (texels), diepte-res, halve breedte zoncamera (m)
-  let atlas, idx, idxData, slot = new Map(), grid, depthRT, topRT, lightCam, topCam, depthMat, topMat, aoMat, aoScene, aoCam;
+  let atlas, idx, idxData, slot = new Map(), grid, depthRT, topRT, midRT, lightCam, topCam, depthMat, topMat, aoMat, resMat, aoScene, resScene, aoCam;
   let queue = [], baked = new Set(), timer = 0;
 
   function init() {
@@ -17,7 +18,7 @@
     if (Math.max(sx, sy) * P > r.capabilities.maxTextureSize) return false;
     cs.forEach((c, n) => slot.set(c[0] + '_' + c[1], [n % sx, Math.floor(n / sx)]));
     const nearest = { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, generateMipmaps: false };
-    atlas = new THREE.WebGLRenderTarget(sx * P, sy * P, Object.assign({ depthBuffer: false }, nearest));
+    atlas = new THREE.WebGLRenderTarget(sx * P, sy * P, { depthBuffer: false, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false });
     idxData = new Uint8Array(grid.ni * grid.nj * 4);
     idx = new THREE.DataTexture(idxData, grid.ni, grid.nj, THREE.RGBAFormat, THREE.UnsignedByteType); Object.assign(idx, nearest); idx.needsUpdate = true;
     const O = H.areaInfo.origin, U = H.U;
@@ -47,12 +48,12 @@
       }`,
     });
     aoMat = new THREE.ShaderMaterial({ // contactschaduw: hoe ver steekt de omgeving boven dit punt uit (24 monsters, 2–6 m, zacht)
-      uniforms: { tTop: { value: null }, uOff: { value: new THREE.Vector2() } }, depthTest: false, depthWrite: false,
+      uniforms: { tTop: { value: null } }, depthTest: false, depthWrite: false,
       vertexShader: 'void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }',
-      fragmentShader: `uniform sampler2D tTop; uniform vec2 uOff;
+      fragmentShader: `uniform sampler2D tTop;
       float hOf(vec4 t, float d) { return t == vec4(0.0) ? d : (t.b * 65280.0 + t.a * 255.0) / 65535.0 * 1000.0 - 100.0; }
       void main() {
-        ivec2 g = ivec2(gl_FragCoord.xy - uOff) + ${M};
+        ivec2 g = ivec2(gl_FragCoord.xy); // heel midRT (PM²); randen onnauwkeurig, stap 4 leest alleen ±1 rond het vak
         vec4 t0 = texelFetch(tTop, g, 0); float h0 = hOf(t0, 0.0), occ = 0.0;
         for (int r = 0; r < 3; r++) {
           float rad = r == 0 ? 1.0 : r == 1 ? 2.0 : 3.0; // 2–6 m (was 4–14 m: brede vale vlekken)
@@ -66,18 +67,48 @@
         gl_FragColor = t0 == vec4(0.0) ? vec4(0.0) : vec4(t0.r, 1.0 - 0.45 * occ / 24.0, t0.b, t0.a);
       }`,
     });
-    aoScene = new THREE.Scene(); aoCam = new THREE.Camera();
+    resMat = new THREE.ShaderMaterial({ // onder = waarden van texels rondom met (bijna) de laagste hoogte, boven = idem hoogste; eigen texel als die in de klasse valt
+      uniforms: { tMid: { value: null }, uOff: { value: new THREE.Vector2() } }, depthTest: false, depthWrite: false,
+      vertexShader: 'void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }',
+      fragmentShader: `uniform sampler2D tMid; uniform vec2 uOff;
+      float hOf(vec4 t) { return (t.b * 65280.0 + t.a * 255.0) / 65535.0 * 1000.0 - 100.0; }
+      void main() {
+        ivec2 g = ivec2(gl_FragCoord.xy - uOff) + ${M};
+        float mn = 1e9, mx = -1e9;
+        for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
+          vec4 t = texelFetch(tMid, g + ivec2(x, y), 0); if (t == vec4(0.0)) continue;
+          float h = hOf(t); mn = min(mn, h); mx = max(mx, h);
+        }
+        if (mn > 1e8) { gl_FragColor = vec4(1.0); return; }
+        vec4 t0 = texelFetch(tMid, g, 0); float h0 = t0 == vec4(0.0) ? 1e9 : hOf(t0);
+        vec2 lo = vec2(0.0), hi = vec2(0.0); float nl = 0.0, nh = 0.0;
+        for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) {
+          vec4 t = texelFetch(tMid, g + ivec2(x, y), 0); if (t == vec4(0.0)) continue;
+          float h = hOf(t);
+          if (h < mn + 1.5) { lo += t.gr; nl += 1.0; }
+          if (h > mx - 1.5) { hi += t.gr; nh += 1.0; }
+        }
+        lo /= nl; hi /= nh;
+        if (h0 < mn + 1.5) lo = t0.gr; // eigen texel hoort bij de klasse → niet uitsmeren
+        if (abs(h0) < 1e8 && h0 > mx - 1.5) hi = t0.gr;
+        gl_FragColor = vec4(lo.x, hi.x, lo.y, hi.y);
+      }`,
+    });
+    aoScene = new THREE.Scene(); resScene = new THREE.Scene(); aoCam = new THREE.Camera();
     const q = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), aoMat); q.frustumCulled = false; aoScene.add(q);
+    const q2 = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), resMat); q2.frustumCulled = false; resScene.add(q2);
     return true;
   }
   function targets() {
     if (depthRT) return;
     depthRT = new THREE.WebGLRenderTarget(DS, DS, { depthBuffer: true, generateMipmaps: false });
     depthRT.depthTexture = new THREE.DepthTexture(DS, DS); depthRT.depthTexture.type = THREE.UnsignedIntType;
-    topRT = new THREE.WebGLRenderTarget(PM, PM, { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, generateMipmaps: false });
-    topMat.uniforms.tDep.value = depthRT.depthTexture; aoMat.uniforms.tTop.value = topRT.texture;
+    const nb = { minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, generateMipmaps: false, depthBuffer: false };
+    topRT = new THREE.WebGLRenderTarget(PM, PM, Object.assign({}, nb, { depthBuffer: true }));
+    midRT = new THREE.WebGLRenderTarget(PM, PM, nb);
+    topMat.uniforms.tDep.value = depthRT.depthTexture; aoMat.uniforms.tTop.value = topRT.texture; resMat.uniforms.tMid.value = midRT.texture;
   }
-  function freeTargets() { depthRT?.depthTexture.dispose(); depthRT?.dispose(); topRT?.dispose(); depthRT = topRT = null; }
+  function freeTargets() { depthRT?.depthTexture.dispose(); depthRT?.dispose(); topRT?.dispose(); midRT?.dispose(); depthRT = topRT = midRT = null; }
 
   function bakeChunk(c) {
     const r = H.renderer, scene = H.scene, O = H.areaInfo.origin, sun = H.SUN_DIR.clone().normalize();
@@ -100,11 +131,13 @@
     topCam.position.set(cx, 3000, cz); topCam.lookAt(cx, 0, cz); topCam.updateMatrixWorld();
     scene.overrideMaterial = topMat; r.setRenderTarget(topRT); r.render(scene, topCam);
     scene.overrideMaterial = null;
-    // 3 · contactschaduw → atlasplek (alleen dat stuk, rest van de atlas blijft)
+    // 3 · contactschaduw per texel → midRT
+    r.setRenderTarget(midRT); r.render(aoScene, aoCam);
+    // 4 · onder/boven oplossen → atlasplek (alleen dat stuk, rest van de atlas blijft)
     const [sx, sy] = slot.get(c.i + '_' + c.j);
-    aoMat.uniforms.uOff.value.set(sx * P, sy * P);
+    resMat.uniforms.uOff.value.set(sx * P, sy * P);
     atlas.viewport.set(sx * P, sy * P, P, P); atlas.scissor.set(sx * P, sy * P, P, P); atlas.scissorTest = true;
-    r.autoClear = false; r.setRenderTarget(atlas); r.render(aoScene, aoCam);
+    r.autoClear = false; r.setRenderTarget(atlas); r.render(resScene, aoCam);
     // terugzetten
     r.setRenderTarget(st.rt); r.autoClear = st.ac; r.setClearColor(st.cc, st.ca); r.shadowMap.needsUpdate = st.sm; scene.background = st.bg; scene.fog = st.fog;
     for (const [im, n, g] of trees) { im.count = n; im.geometry = g; }
@@ -114,7 +147,9 @@
     const fresh = idxData[k + 2] !== 255; // opnieuw bakken (rebake): niet nog eens infaden
     idxData[k] = sx; idxData[k + 1] = sy; idxData[k + 2] = 255; if (fresh) { idxData[k + 3] = 0; fadeIn(k); } idx.needsUpdate = true;
     H.U.uBk.value = atlas.texture;
+    return fresh;
   }
+  let rbN = 0;
 
   // schaduw van een vers gebakken vak zacht laten opkomen (idx a: 0 → 255, gelezen in BAKE_GLSL bkTexel/bkFade)
   const FADE = 1.2, fading = new Map(); let fadeStop = null;
@@ -141,9 +176,10 @@
     const t = H.controls?.target;
     if (t) queue.sort((a, b) => H.chunkDist(a, t) - H.chunkDist(b, t));
     const c = queue.shift();
-    bakeChunk(c); baked.add(c);
+    const fresh = bakeChunk(c); baked.add(c);
     if (!queue.length) { H.bakeReady = true; freeTargets(); }
-    H.redraw();
+    // nieuw vak: meteen tekenen (infaden); herbakken: niet na elk vak een vol beeld (108 × ±50 ms GPU), wel om de 8 en aan het eind
+    if (fresh || !queue.length || ++rbN % 8 === 0) H.redraw();
     if (queue.length) timer = setTimeout(tick, 40);
   }
   function schedule() { if (!timer && queue.length) timer = setTimeout(tick, 200); }

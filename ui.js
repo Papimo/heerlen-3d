@@ -266,6 +266,7 @@
   const bagOf = (v, b) => !v || !BAG.dict || v.h !== b.h ? null : v.p[b.b] || {}; // controlegetal anders = vakken nieuwer dan BAG-data → niets tonen
   H3D.on('pick', hit => {
     if (!hit) { if (!$('card').hidden && !document.getElementById('pinform')) closeCard(); return; }
+    if (hit.type === 'halte') { state.sel = null; markSelected(); return openBoard(hit); }
     if (hit.type === 'pand' && hit.marks?.length) { // opgelicht pand: plek(ken) erin tonen
       const items = hit.marks.map(k => pinEls.get(k)?.item).filter(Boolean);
       if (items.length === 1) return openItem(items[0], { fly: false });
@@ -309,6 +310,26 @@
       card(`<div class="kind" style="--c:#6b6b6b">🌍 Plek</div><h2>${hit.h.toFixed(0)} m boven NAP</h2>${nearHtml}<div class="acts">${pinBtn}</div>`);
     }
   });
+  // ---------- Vertrekbord (iso/traffic.js, data/transit.js): ververst zolang het kaartje open is ----------
+  let boardT = 0;
+  const hhmm = s => { s = ((Math.round(s / 60) % 1440) + 1440) % 1440; return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); };
+  function openBoard(hit) {
+    clearInterval(boardT);
+    let tok = 0;
+    const draw = () => {
+      if (!H3D.transit) return;
+      const L = H3D.transit.departures(hit.g, H3D.now(), 10), tr = hit.k === 1;
+      const rows = L.length ? L.map(d => `<div class="dep"><span>${hhmm(d.at)}</span><span class="ln" style="--c:${d.col}">${esc(d.ref || (d.k === 'train' ? 'trein' : 'bus'))}</span><span class="hd">${esc(d.head || d.name)}</span><span class="w${d.w < 60 ? ' nu' : ''}">${d.w < 60 ? 'nu' : Math.round(d.w / 60) + ' min'}</span></div>`).join('')
+        : '<div class="none">Geen vertrekken in de komende 4 uur.</div>';
+      const keep = $('card').scrollTop;
+      card(`<div class="kind" style="--c:${tr ? '#2c5d8f' : '#b88a12'}">${tr ? '🚆 Station' : '🚌 Bushalte'}</div><h2>${esc(hit.name)}</h2><div class="board">${rows}</div>
+        <p class="hint">Volgens de dienstregeling (${esc(H3D.transit.src || 'OVapi')}), zonder live vertraging.</p>`);
+      $('card').scrollTop = keep; tok = bagTok; // card() hoogt bagTok op: ander kaartje geopend → tok klopt niet meer → stoppen
+    };
+    draw();
+    boardT = setInterval(() => { if ($('card').hidden || bagTok !== tok) return clearInterval(boardT); draw(); }, 2000);
+  }
+
   $('card').addEventListener('click', e => {
     const r = e.target.closest('.res[data-k]'); if (r) return openItem(H3D.places[+r.dataset.k], { fly: false });
     const q = e.target.closest('.res[data-key]'); if (q) { const it = allItems().find(p => key(p) === q.dataset.key); if (it) openItem(it, { fly: false }); }
@@ -433,7 +454,7 @@
   const showLight = () => sfeer.querySelectorAll('[data-light]').forEach(b => b.classList.toggle('on', b.dataset.light === H3D.getLight()));
   const showSeason = () => sfeer.querySelectorAll('[data-season]').forEach(b => b.classList.toggle('on', b.dataset.season === H3D.getSeason?.()));
   sfeer.addEventListener('click', e => { const b = e.target.closest('[data-light]'); if (b) { H3D.setLight(b.dataset.light); showLight(); } const z = e.target.closest('[data-season]'); if (z) { H3D.setSeason(z.dataset.season); showSeason(); } });
-  showLight(); showSeason();
+  showLight(); showSeason(); H3D.on('light', showLight); // klok versnellen zet licht op 'nu'
   function showCounts() {
     const n = (keys, on) => keys.filter(on).length + '/' + keys.length;
     $('g-kaart').querySelector('small').textContent = n(Object.keys(LAYERS), H3D.layerOn);
@@ -528,7 +549,7 @@
 
   // ---------- Kaartstijl, weergave, kompas ----------
   function renderStyles() { // kaartstijl-knoppen zijn weg (iso tekent eigen grond); alleen de bronvermelding
-    $('attr').innerHTML = `${H3D.STYLES[H3D.getStyle()].attr} · Gebouwen © <a href="https://3dbag.nl" target="_blank" rel="noopener">3D BAG</a> · Terrein AHN · Plekken © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> · v${H3D.VERSION}`;
+    $('attr').innerHTML = `${H3D.STYLES[H3D.getStyle()].attr} · Gebouwen © <a href="https://3dbag.nl" target="_blank" rel="noopener">3D BAG</a> · Terrein AHN · Plekken © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>${window.H3D_DATA?.transit ? ' · Dienstregeling <a href="https://gtfs.ovapi.nl" target="_blank" rel="noopener">OVapi</a>' : ''} · v${H3D.VERSION}`;
   }
   const showMode = () => {}; // modusknoppen Plat/3D/Rondkijken zijn weg; iso is de enige weergave
   const dimBtn = $('dim'), showDim = () => dimBtn.classList.toggle('on', H3D.getDim());
@@ -566,8 +587,12 @@
   tourBtn.addEventListener('click', () => setTour(!tour.on));
   H3D.on('interact', () => { if (tour.on) setTour(false); }); // zelf slepen/zoomen = rondleiding stopt
   let lastAz = NaN;
+  let pRef = null, pSkip = 0; // iso-pannen: pins-laag verschuiven i.p.v. elk beeld opnieuw plaatsen (zoals labels.js)
+  H3D.on('still', () => { pRef = null; });
   H3D.on('frame', () => {
-    placePins();
+    const s = H3D.panShift?.(pRef), pe = $('pins');
+    if (s && ++pSkip < 4) pe.style.transform = `translate(${s[0].toFixed(1)}px,${s[1].toFixed(1)}px)`;
+    else { pSkip = 0; pe.style.transform = ''; placePins(); pRef = H3D.panRef?.(); }
     const az = H3D.azimuth();
     if (!(Math.abs(az - lastAz) < 1e-3)) { lastAz = az; $('needle').style.transform = `rotate(${(az * 180 / Math.PI).toFixed(1)}deg)`; }
   });
@@ -614,5 +639,15 @@
     });
     document.querySelectorAll('[data-rot]').forEach(b => b.addEventListener('click', () => H3D.isoTurn(+b.dataset.rot)));
     document.querySelectorAll('[data-zoom]').forEach(b => b.addEventListener('click', () => H3D.zoomStep(+b.dataset.zoom)));
+    // klok: echte tijd, ×10/×60 (H3D.now/setSpeed in app.js); klik op de tijd = terug naar nu
+    const clk = $('clock'), DAG = ['zo', 'ma', 'di', 'wo', 'do', 'vr', 'za'];
+    const showClock = () => {
+      const d = H3D.now(), sp = H3D.speed(), today = new Date().toDateString() === d.toDateString();
+      $('clockt').textContent = `${today ? '' : DAG[d.getDay()] + ' '}${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      clk.classList.toggle('fast', sp > 1 || !today || Math.abs(d - Date.now()) > 90e3);
+      clk.querySelectorAll('[data-speed]').forEach(b => b.classList.toggle('on', +b.dataset.speed === sp));
+    };
+    clk.addEventListener('click', e => { const b = e.target.closest('[data-speed]'); if (b) H3D.setSpeed(+b.dataset.speed); else if (e.target.id === 'clockt') H3D.setSpeed(1, true); showClock(); });
+    setInterval(showClock, 250); showClock();
   });
 })();

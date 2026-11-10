@@ -62,6 +62,7 @@
     GD.line.forEach(([c, w, br, d, fl = 0]) => { const f = { c, w: w / 10, br, a: dec(d), sw: fl & 3, ring: !!(fl & 4) }; ALL.line.push(f); if (RANK[c] != null && !br) S.push(f); });
     (GD.cross || []).forEach(([k, bike, d]) => ALL.cross.push({ k, bike, a: dec(d) }));
     ALL.jn = junctions(S); ALL.isl = islands(S);
+    GD.landKeep = GD.land.filter(l => l[0] === 'kerkhof' || l[0] === 'park' || l[0] === 'gras'); // iso/props.js (laadt na het eerste beeld, 96) leest deze nog
     GD.land = GD.bgt = GD.area = GD.pitch = GD.line = GD.cross = []; // ruwe data niet meer nodig
     return ALL;
   }
@@ -581,6 +582,7 @@
   const G = { mesh: null, ready: false, gen: null };
   const tmp = new THREE.Vector3(), dir = new THREE.Vector3(), fw = new THREE.Vector3(), pts = Array.from({ length: 8 }, () => new THREE.Vector3()), clr = new THREE.Color();
   let rtG = null, lastKey = '', gDirty = true;
+  const topN = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 20000); let rtN = null, lastKeyN = ''; // rijden: scherpe grond dichtbij
   const boxOf = c => c.gBox || (c.gBox = new THREE.Box3().setFromObject(c.terrain));
   function foot(cam, h0, h1) { // schermhoeken → grond op hoogte h0 en h1
     let k = 0;
@@ -590,7 +592,9 @@
     }
   }
   function gPass(cam) {
-    if (!iso() || !G.mesh || !cam.isOrthographicCamera) { GU.uGrOn.value = 0; return; }
+    if (!iso() || !G.mesh) { GU.uGrOn.value = 0; return; }
+    GU.uGrNOn.value = 0;
+    if (!cam.isOrthographicCamera) { if (H.driving?.()) drivePass(cam); else GU.uGrOn.value = 0; return; }
     const r = H.renderer, gl = r.getContext(), W = gl.drawingBufferWidth, Hh = gl.drawingBufferHeight;
     cam.updateMatrixWorld();
     const key = cam.matrixWorld.elements.join() + '|' + cam.projectionMatrix.elements.join() + '|' + W + 'x' + Hh;
@@ -622,6 +626,51 @@
     if (!rtG) { rtG = new THREE.WebGLRenderTarget(w, h, { samples: r.capabilities.isWebGL2 && r.getPixelRatio() < 1.5 ? 4 : 0, depthBuffer: false }); GU.tGr.value = rtG.texture; }
     else if (w > rtG.width || h > rtG.height) rtG.setSize(Math.max(w, rtG.width), Math.max(h, rtG.height));
     w = rtG.width; h = rtG.height;
+    paint(L, R, B, T, w, h);
+  }
+  // rijden (iso/drive.js, perspectief): vierkant van 520 m, 40 m achter tot 480 m vóór de camera; opnieuw bij 8 m verplaatsen of ±4° draaien
+  // (één schaal: ±2048 px / 520 m ≈ 25 cm per texel; verder weg zonder grondlaag → basiskleur)
+  const DRV = { back: 40, size: 480, step: 8, ang: 0.07 };
+  // + scherp vak dichtbij: 192 m (24 m achter, 168 m vóór), 2048² ≈ 9 cm per texel; opnieuw bij 16 m of ±4°. Shader kiest per pixel scherp (binnen) of grof
+  const DRN = { back: 24, size: 192, step: 16, ang: 0.07, px: 2048 };
+  function drivePassN(cam) {
+    const qa = Math.round(Math.atan2(fw.x, fw.z) / DRN.ang), qx = Math.round(cam.position.x / DRN.step) * DRN.step, qz = Math.round(cam.position.z / DRN.step) * DRN.step;
+    const key = qx + ',' + qz + ',' + qa;
+    if (key === lastKeyN && !gDirtyN) return;
+    lastKeyN = key; gDirtyN = false;
+    const f = new THREE.Vector3(Math.sin(qa * DRN.ang), 0, Math.cos(qa * DRN.ang)), c = DRN.size / 2 - DRN.back, cx = qx + f.x * c, cz = qz + f.z * c, hs = DRN.size / 2;
+    topN.position.set(cx, 10000, cz); topN.up.copy(f); topN.lookAt(cx, 0, cz);
+    Object.assign(topN, { left: -hs, right: hs, bottom: -hs, top: hs }); topN.updateProjectionMatrix(); topN.updateMatrixWorld();
+    const r = H.renderer, mx = Math.min(DRN.px, r.capabilities.maxTextureSize);
+    if (!rtN) { rtN = new THREE.WebGLRenderTarget(mx, mx, { samples: r.capabilities.isWebGL2 ? 4 : 0, depthBuffer: false }); GU.tGrN.value = rtN.texture; }
+    r.getClearColor(clr); const ca = r.getClearAlpha(), at = r.getRenderTarget();
+    GT.uTpm.value = mx / DRN.size;
+    r.setRenderTarget(rtN); r.setClearColor(0x000000, 0); r.clear(true, false, false); r.render(gScene, topN);
+    r.setClearColor(clr, ca); r.setRenderTarget(at);
+    GU.uGrVPN.value.multiplyMatrices(topN.projectionMatrix, topN.matrixWorldInverse); GU.uGrNOn.value = 1;
+  }
+  let gDirtyN = true;
+  function drivePass(cam) {
+    cam.getWorldDirection(dir); fw.set(dir.x, 0, dir.z); if (fw.lengthSq() < 1e-6) fw.set(0, 0, -1);
+    const qa = Math.round(Math.atan2(fw.x, fw.z) / DRV.ang), qx = Math.round(cam.position.x / DRV.step) * DRV.step, qz = Math.round(cam.position.z / DRV.step) * DRV.step;
+    const key = 'drv' + qx + ',' + qz + ',' + qa;
+    if (gDirty) gDirtyN = true;
+    drivePassN(cam); GT.uTpm.value = (rtG?.width || 2048) / DRV.size; // GT.uTpm terugzetten voor de grove pass
+    if (!gDirty && key === lastKey) return;
+    lastKey = key; gDirty = false;
+    fw.set(Math.sin(qa * DRV.ang), 0, Math.cos(qa * DRV.ang));
+    const c = DRV.size / 2 - DRV.back, cx = qx + fw.x * c, cz = qz + fw.z * c;
+    top.position.set(cx, 10000, cz); top.up.copy(fw); top.lookAt(cx, 0, cz); top.updateMatrixWorld();
+    const hs = DRV.size / 2;
+    Object.assign(top, { left: -hs, right: hs, bottom: -hs, top: hs }); top.updateProjectionMatrix();
+    // doel van de iso-camera hergebruiken als het groot genoeg is; anders 2048² (MSAA ×4 op 4096² zou ±270 MB kosten)
+    const r = H.renderer, mx = Math.min(2048, r.capabilities.maxTextureSize);
+    if (!rtG) { rtG = new THREE.WebGLRenderTarget(mx, mx, { samples: r.capabilities.isWebGL2 && r.getPixelRatio() < 1.5 ? 4 : 0, depthBuffer: false }); GU.tGr.value = rtG.texture; }
+    else if (rtG.width < 1600 || rtG.height < 1600) rtG.setSize(Math.max(mx, rtG.width), Math.max(mx, rtG.height));
+    paint(-hs, hs, -hs, hs, rtG.width, rtG.height);
+  }
+  function paint(L, R, B, T, w, h) {
+    const r = H.renderer;
     const tpm = w / (R - L);
     GT.uTpm.value = tpm;
     r.getClearColor(clr); const ca = r.getClearAlpha(), at = r.getRenderTarget();
@@ -645,11 +694,14 @@
   }
   function startBuild() {
     if (G.gen || G.ready) return;
+    if (window.H3D_WAIT?.has('bgt')) { if (!G.wait) { G.wait = 1; window.addEventListener('h3d-bgt', startBuild, { once: true }); } return; } // index.html laadt data/bgt.js na het eerste beeld (?nodefer = meteen); grond wacht tot hij er is
+    if (window.H3D_DATA.bgt && !GD.bgt?.length) GD.bgt = window.H3D_DATA.bgt.land;
     const t0 = performance.now();
     X0 = H.areaInfo.origin[0]; Y0 = H.areaInfo.origin[1];
     if (H.areaInfo.off) clipGD(); // gemeente uitgezet: vlakken/lijnen buiten de geladen vakken niet tekenen (geheugen)
     G.gen = 'worker';
     buildInWorker().then(o => {
+      GD.landKeep = GD.land.filter(l => l[0] === 'kerkhof' || l[0] === 'park' || l[0] === 'gras');
       GD.land = GD.bgt = GD.area = GD.pitch = GD.line = GD.cross = []; // ruwe data niet meer nodig (park/grave blijven voor iso/props.js)
       finish(o, t0, 'worker');
     }).catch(e => { console.info('heerlen-3d grond: worker lukt niet → hoofddraad', e?.message || e); buildMain(t0); });
@@ -705,14 +757,16 @@
 
   // ---------- shader terrein (alleen iso): kleur uit het grond-doel op wereldpositie ----------
   const GU = { tGr: { value: new THREE.DataTexture(new Uint8Array(4), 1, 1) }, uGrVP: { value: new THREE.Matrix4() }, uGrM: { value: new THREE.Vector2(1, 1) },
-    uGrTpm: { value: 1 }, uGrOn: { value: 0 }, uGrT: { value: 0 } };
+    uGrTpm: { value: 1 }, uGrOn: { value: 0 }, uGrT: { value: 0 },
+    tGrN: { value: new THREE.DataTexture(new Uint8Array(4), 1, 1) }, uGrVPN: { value: new THREE.Matrix4() }, uGrNOn: { value: 0 } };
+  GU.tGrN.value.needsUpdate = true;
   GU.tGr.value.needsUpdate = true;
   H.patchTerrain('ground', s => {
     Object.assign(s.uniforms, GU); H.seasonize?.(s, '');
     s.vertexShader = s.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vGrW;')
       .replace('#include <project_vertex>', '#include <project_vertex>\nvGrW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
     s.fragmentShader = s.fragmentShader.replace('#include <common>', `#include <common>
-      varying vec3 vGrW; uniform sampler2D tGr; uniform mat4 uGrVP; uniform vec2 uGrM; uniform float uGrT, uGrTpm, uGrOn;
+      varying vec3 vGrW; uniform sampler2D tGr, tGrN; uniform mat4 uGrVP, uGrVPN; uniform vec2 uGrM; uniform float uGrT, uGrTpm, uGrOn, uGrNOn;
       const vec3 GR_BASE = vec3(${BASEV});
       float grH(vec2 p) { vec3 q = fract(p.xyx * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
       float grN(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(grH(i), grH(i + vec2(1, 0)), f.x), mix(grH(i + vec2(0, 1)), grH(i + vec2(1, 1)), f.x), f.y); }
@@ -723,7 +777,10 @@
       .replace('#include <alphamap_fragment>', `float grK = 0.0;
       if (uIso > 0.5) {
         vec2 grUv = (uGrVP * vec4(vGrW, 1.0)).xy * 0.5 + 0.5;
-        vec3 grC = uGrOn > 0.5 ? grAt(grUv) : GR_BASE;
+        vec3 grC = uGrOn > 0.5 && grUv.x > 0.0 && grUv.y > 0.0 && grUv.x < 1.0 && grUv.y < 1.0 ? grAt(grUv) : GR_BASE; // buiten het doel (rijden: >560 m) geen uitgerekte randpixels
+        if (uGrNOn > 0.5) { vec2 nUv = (uGrVPN * vec4(vGrW, 1.0)).xy * 0.5 + 0.5; // rijden: scherp vak dichtbij, rand zacht overvloeien
+          vec2 e2 = min(nUv, 1.0 - nUv); float nk = smoothstep(0.0, 0.04, min(e2.x, e2.y));
+          if (nk > 0.0) { vec4 tn = texture2D(tGrN, nUv); grC = mix(grC, tn.rgb + GR_BASE * (1.0 - tn.a), nk); } }
         diffuseColor.rgb = grLin(grC);
         float grW = grWat(grC) * smoothstep(0.8, 1.0, uGrTpm) * uGrOn;
         ${H.seasonize ? 'diffuseColor.rgb = seasonGround(diffuseColor.rgb, grWat(grC));' : ''}
