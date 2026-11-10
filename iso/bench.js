@@ -14,7 +14,7 @@
   };
   const gl = () => H.renderer.getContext();
   const ext = n => { try { return gl().getExtension(n); } catch (e) { return null; } };
-  const browser = () => { const u = navigator.userAgent; return (/Edg\/[\d.]+/.exec(u) || /Firefox\/[\d.]+/.exec(u) || /Chrome\/[\d.]+/.exec(u) || (/Safari\//.test(u) && /Version\/[\d.]+/.exec(u)) || [u.slice(0, 40)])[0]; };
+  const browser = () => { const u = navigator.userAgent; return (navigator.brave ? ['Brave ' + (/Chrome\/[\d.]+/.exec(u) || [''])[0]] : null) || (/Edg\/[\d.]+/.exec(u) || /Firefox\/[\d.]+/.exec(u) || /Chrome\/[\d.]+/.exec(u) || (/Safari\//.test(u) && /Version\/[\d.]+/.exec(u)) || [u.slice(0, 40)])[0]; };
   const yn = v => v ? 'ja' : 'nee';
   H.benchInfo = () => { meetHz(); const w2 = H.renderer.capabilities.isWebGL2;
     return `scherm ${hz ? hz + ' Hz' : 'meet…'} · MRT ${yn(H.useMRT())} · float_blend ${yn(w2 && ext('EXT_float_blend'))} · ${browser()}`; };
@@ -26,7 +26,7 @@
     ['pan oost 2,5 s + terug 2,5 s', async () => { await pan('d', 2500); await pan('a', 2500); }],
     ['pan noord 2,5 s + terug 2,5 s', async () => { await pan('w', 2500); await pan('s', 2500); }],
     ['zoom uit naar 2200', async () => { H.zoomStep(1); await settle(1000); }],
-    ['pan op 2200 (4 s)', async () => { await pan('d', 4000); }],
+    ['pan op 2200 2 s + terug 2 s', async () => { await pan('d', 2000); await pan('a', 2000); }],
     ['kwartslag draaien', async () => { H.isoTurn(1); await settle(1500); }],
     ['zoom in naar 220', async () => { H.zoomStep(-1); await settle(700); H.zoomStep(-1); await settle(1000); }],
     ['pan op 220 (4 s)', async () => { await pan('a', 4000); }],
@@ -45,7 +45,7 @@
       if (tq) { if (cur) { g.endQuery(tq.TIME_ELAPSED_EXT); qs.push(cur); } cur = g.createQuery(); g.beginQuery(tq.TIME_ELAPSED_EXT, cur); poll(); if (seg) seg.gpuN = gpuT.length; }
       if (last && seg) seg.dt.push(t - last); last = t; };
     await meetHz(); if (!hz) hz = 60;
-    const x0 = H.toRD(H.controls.target); // start: stand 700 in huidig midden
+    const x0 = H.areaInfo?.origin || H.toRD(H.controls.target); // start: stand 700 op vast punt (midden gebied), elke run gelijk
     H.flyTo(x0[0], x0[1], { half: 700, ms: 600, arc: false }); await settle(1500);
     const segs = []; requestAnimationFrame(tick);
     for (const [name, fn] of ROUTE) { seg = { name, dt: [], g0: gpuT.length, gpuN: 0 }; segs.push(seg); last = 0; const t0 = performance.now(); await fn(); seg.s = (performance.now() - t0) / 1000; seg.g1 = gpuT.length; }
