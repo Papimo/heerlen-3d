@@ -17,6 +17,7 @@
   let seat = 1; try { seat = Math.min(3, Math.max(0, +localStorage.getItem('h3d-seat') || 1)); } catch (e) {}
   function setSeat(i) {
     seat = i; CAR.eye[1] = SEATS[i][1]; CAR.eye[2] = SEATS[i][2];
+    still = false;
     try { localStorage.setItem('h3d-seat', i); } catch (e) {}
     hud?.querySelectorAll('.dseat button').forEach((b, k) => b.classList.toggle('on', k === i));
   }
@@ -271,9 +272,17 @@
       hud.querySelector('.dstreet').textContent = S.street + (S.off ? ' · buiten de weg' : '');
     }
   }
+  // zuinig: max beelden/s tijdens rijden (standaard 30, ?fps=60 om te vergelijken; Zuinig-stand 24) en niets tekenen als de auto stilstaat
+  const FPS = +new URLSearchParams(location.search).get('fps') || 30;
+  let acc = 0, still = false;
   H.addFrame((now, dtMs) => {
     if (!on) return false;
-    const dt = Math.min(0.05, dtMs / 1000);
+    acc += dtMs;
+    if (acc < 1000 / (H.fxOn?.('zuinig') ? Math.min(24, FPS) : FPS) - 3) return false; // −3: rAF-jitter
+    const dt = Math.min(0.05, acc / 1000); acc = 0;
+    const idle = S.v === 0 && !keys.size && !look && Math.abs(S.steer) < 1e-3 && Math.abs(S.lookY) < 1e-3 && Math.abs(S.lookP) < 1e-3;
+    if (idle && still) return false; // stilstand: laatste beeld laten staan
+    still = idle;
     if (dt > 0) step(dt);
     pose(dt);
     if (keys.size) H.poke?.();
@@ -306,7 +315,7 @@
   }, true);
   for (const ev of ['pointerup', 'pointercancel']) addEventListener(ev, e => { if (look) { look = null; e.stopPropagation(); } else if (drop && onCanvas(e)) e.stopPropagation(); }, true);
   for (const ev of ['click', 'dblclick', 'wheel', 'contextmenu']) addEventListener(ev, e => { if ((on || drop) && onCanvas(e)) { e.stopPropagation(); e.preventDefault(); } }, { capture: true, passive: false });
-  addEventListener('resize', () => { if (cam) fitCam(); });
+  addEventListener('resize', () => { if (cam) { fitCam(); still = false; } });
 
   // ---------- knop ----------
   function init() {

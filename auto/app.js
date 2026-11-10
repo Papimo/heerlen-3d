@@ -2033,7 +2033,8 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     const bk = iso && !driveCam && H.bakeReady === true && isoHalf() > 400 ? 1 : 0; // rijden: altijd scherpe live schaduw
     if (bk !== U.uBaked.value) { U.uBaked.value = bk; if (!bk) shadowDirty = true; }
     U.uBkAO.value = iso && U.uBk.value && fxOn.ao && !fxOn.zuinig ? 1 : 0; // Zuinig: geen contactschaduw (±6,5 ms GPU per beeld)
-    const key = Math.round(controls.target.x / 20) + ',' + Math.round(controls.target.z / 20) + ',' + Math.round(S / 50);
+    const kq = driveCam ? 80 : 20; // rijden: schaduwkaart (= hele stad nog eens tekenen) pas na 80 m opnieuw; kader is ≥ 700 m breed
+    const key = Math.round(controls.target.x / kq) + ',' + Math.round(controls.target.z / kq) + ',' + Math.round(S / 50);
     if (!moving && !bk && (shadowDirty || key !== shadowKey)) { // tijdens bewegen blijft de schaduwkaart staan
       shadowDirty = false; shadowKey = key; renderer.shadowMap.needsUpdate = true;
       const dx = controls.target.x - shLast.x, dz = controls.target.z - shLast.z; // schuifrichting sinds vorige stilstand (klein = vorige houden)
