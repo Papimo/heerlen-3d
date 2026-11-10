@@ -104,7 +104,7 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
   const redraw = () => { dirty = true; full = true; };
   const BUILD = 'anime-1 licht randje, daken op bouwjaar, middag zacht, bolle bomen (2026-11-09)', DBG_U = { value: new THREE.Vector2(1, 1) }; // ?gpu: versie zichtbaar + schakelaars omlijning (x = vlaklijnen, y = dieptelijnen)
   H.redraw = redraw;
-  H.VERSION = '0.9-test3'; // getoond onderaan (ui.js #attr); bij release ophogen
+  H.VERSION = '0.9-test4'; // getoond onderaan (ui.js #attr); bij release ophogen
   // na de upload naar de GPU de kopie in het werkgeheugen weggooien (canvas → 1×1, DataTexture-data → null). Opnieuw tekenen = nieuw canvas/nieuwe textuur
   H.freeAfterUpload = tex => { tex.onUpdate = () => { tex.onUpdate = null; const im = tex.image; if (im && im.getContext) im.width = im.height = 1; else if (im && im.data) im.data = null; }; return tex; };
 
@@ -1515,7 +1515,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     fly = null;
     intro = { t0: performance.now(), go: 0, h, az };
     controls.enabled = false; controls.minPolarAngle = 0; controls.minZoom = ISO_H0 / (intro.h * INTRO.k * 1.05);
-    document.body.classList.add('intro');
+    document.body.classList.add('intro'); if (SETTLE) document.body.classList.add('settle');
     introPose(0);
     const skip = () => { if (intro) { intro.go = performance.now() - INTRO.dur; growFloor = 0; } };
     for (const ev of ['pointerdown', 'wheel', 'keydown', 'touchstart']) addEventListener(ev, skip, { once: true, passive: true });
@@ -1526,6 +1526,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
       let ready = true;
       const ac = aheadO ||= ortho.clone(); ac.copy(ortho); introPose(1, ac); const inV = lsVisFn(ac);
       for (const e of LS.values()) if (e.s < 3 && inV(e)) { ready = false; break; }
+      if (SETTLE && window.H3D_WAIT && window.H3D_WAIT.size) ready = false; // grote data (bgt → grond) nog onderweg: inlezen hapert → onder de wolken laten gebeuren
       if (!ready && now - intro.t0 < INTRO.hold) { introPose(0); return; }
       intro.go = now; growFloor = nowS() + INTRO.dur / 1000 * 0.1; // panden groeien terwijl de wolken opengaan (klaar ±2,5 s, wolken weg 2,85 s)
     }
@@ -1536,8 +1537,13 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
       controls.minPolarAngle = controls.maxPolarAngle = ISO_POLAR; controls.minZoom = ISO_H0 / ISO_LEVELS[ISO_LEVELS.length - 1];
       controls.enabled = true; document.body.classList.remove('intro');
       emit('intro-end');
+      if (SETTLE) { // namen/pins pas tonen als de panden in beeld staan (anders verschijnen ze, verspringen en vallen er weer weg); uiterlijk na 6 s
+        const t0 = performance.now(); let calm = 0;
+        const iv = setInterval(() => { calm = growing.size ? 0 : calm + 1; if (calm >= 3 || performance.now() - t0 > 6000) { clearInterval(iv); document.body.classList.remove('settle'); redraw(); } }, 250);
+      }
     }
   }
+  const SETTLE = !QS.has('nosettle'); // start rustiger: wolken wachten op de grote data, namen/pins wachten op de panden
   H.intro = () => !!intro;
   // wolkendek-dekking 0–1 voor iso/laden.js: dicht tijdens het wachten, breekt open tijdens de daling
   H.introCover = () => !intro ? 0 : !intro.go ? 1 : 1 - THREE.MathUtils.smoothstep((performance.now() - intro.go) / INTRO.dur, 0.3, 0.95);

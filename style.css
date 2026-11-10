@@ -219,7 +219,7 @@ body.no-webgl #nowebgl { display: grid; }
 }
 /* mooi laden: tijdens de intro (door de wolken omlaag) geen namen/pins boven de wolken */
 #labels, #pins { transition: opacity .8s; }
-body.intro #labels, body.intro #pins { opacity: 0; }
+body.intro #labels, body.intro #pins, body.settle #labels, body.settle #pins { opacity: 0; }
 .lb.pl.on { color: #fff; text-shadow: 0 0 4px rgba(40, 30, 20, .9), 0 0 10px rgba(217, 130, 43, .9); }
 
 /* Zuinig voorstellen (ui.js askZuinig) */
