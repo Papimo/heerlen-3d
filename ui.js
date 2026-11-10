@@ -185,8 +185,9 @@
   const fmtD = m => m < 1000 ? `${Math.round(m / 10) * 10} m` : `${(m / 1000).toFixed(1).replace('.', ',')} km`;
 
   // ---------- Infokaartje ----------
-  function card(html) { $('card').innerHTML = `<button class="x" id="cardx" title="Sluiten">×</button>${html}`; $('card').hidden = false; }
-  function closeCard() { if (tour.on) setTour(false); $('card').hidden = true; state.sel = null; markSelected(); H3D.clearSelection(); rebuildPins(); }
+  let bagTok = 0; // elk nieuw kaartje ophogen → laat binnenkomende BAG-data overschrijft niets
+  function card(html) { bagTok++; $('card').innerHTML = `<button class="x" id="cardx" title="Sluiten">×</button>${html}`; $('card').hidden = false; }
+  function closeCard() { bagTok++; if (tour.on) setTour(false); $('card').hidden = true; state.sel = null; markSelected(); H3D.clearSelection(); rebuildPins(); }
   $('card').addEventListener('click', e => {
     const b = e.target.closest('[data-act]'); if (e.target.id === 'cardx') return closeCard();
     if (!b) return;
@@ -253,6 +254,16 @@
       openItem({ ...pin, cat: 'mijn' }, { fly: false });
     });
   }
+  // ---------- BAG (data/bag, tools/build-bag.cjs): pas laden bij eerste klik op een pand ----------
+  const BAG = { dict: null, vak: new Map(), wait: new Map() };
+  const GD_NL = { woon: 'wonen', 'overige gebruiks': 'overig', gezondheidszorg: 'zorg', bijeenkomst: 'bijeenkomst', cel: 'cel (gevangenis)' };
+  const gdName = k => { const s = BAG.dict?.gd[k] ?? '?'; return GD_NL[s] || s; };
+  const bagScript = (src, done) => { const s = document.createElement('script'); s.src = src; s.onload = () => s.remove(); s.onerror = () => { s.remove(); done(); }; document.head.appendChild(s); };
+  H3D.bagDict = d => { BAG.dict = d; BAG.wait.get('dict')?.(); };
+  H3D.bag = (i, j, d) => { BAG.vak.set(i + '_' + j, d); BAG.wait.get(i + '_' + j)?.(); };
+  const bagGet = (k, src) => BAG.wait.has(k + '?') ? BAG.wait.get(k + '?') : (BAG.wait.set(k + '?', new Promise(res => { const ok = () => { BAG.wait.delete(k); res(); }; BAG.wait.set(k, ok); bagScript(src, ok); })), BAG.wait.get(k + '?'));
+  const bagLoad = (i, j) => Promise.all([BAG.dict || bagGet('dict', 'data/bag/bag-dict.js'), bagGet(i + '_' + j, `data/bag/b_${i}_${j}.js`)]).then(() => BAG.vak.get(i + '_' + j) || null);
+  const bagOf = (v, b) => !v || !BAG.dict || v.h !== b.h ? null : v.p[b.b] || {}; // controlegetal anders = vakken nieuwer dan BAG-data → niets tonen
   H3D.on('pick', hit => {
     if (!hit) { if (!$('card').hidden && !document.getElementById('pinform')) closeCard(); return; }
     if (hit.type === 'pand' && hit.marks?.length) { // opgelicht pand: plek(ken) erin tonen
@@ -271,11 +282,29 @@
     const near = H3D.places.filter(p => Math.hypot(p.x - hit.x, p.y - hit.y) < 25).sort((a, b) => Math.hypot(a.x - hit.x, a.y - hit.y) - Math.hypot(b.x - hit.x, b.y - hit.y)).slice(0, 4);
     const nearHtml = near.length ? `<div class="near"><b>Hier zit</b>${near.map(p => `<button class="res" data-k="${p.k}"><span style="--c:${CATS[p.cat].color}">${CATS[p.cat].icon}</span>${esc(p.name)}</button>`).join('')}</div>` : '';
     if (hit.type === 'pand') {
-      const b = hit.info;
-      card(`<div class="kind" style="--c:#6b6b6b">🏠 Pand</div><h2>${b.year ? `Gebouwd in ${b.year}` : 'Gebouw'}</h2>
-        <div class="row"><b>Hoogte</b><span>${b.height.toFixed(1).replace('.', ',')} m${b.floors ? ` · ${b.floors} bouwlagen` : ''}</span></div>
-        <div class="row"><b>Grond</b><span>${hit.h.toFixed(0)} m boven NAP</span></div>${nearHtml}
-        <div class="acts">${pinBtn}<a class="btn" href="https://bagviewer.kadaster.nl/lvbag/bag-viewer/?objectId=${b.id}" target="_blank" rel="noopener">BAG-viewer</a></div>`);
+      const b = hit.info; let tok = ++bagTok;
+      const draw = bag => { // bag: undefined = laden, null = geen/verouderde data, anders info van dit pand ({} = pand zonder adressen)
+        if (tok !== bagTok) return; // intussen ander pand/kaartje
+        const a = bag?.a || [], first = a[0] && `${a[0][0]} ${a[0][2].split(',')[0]}`;
+        const bagRows = bag === undefined ? `<div class="row"><b>Adressen</b><span class="dim">laden…</span></div>`
+          : !bag ? '' : [
+            `<div class="row"><b>Adressen</b><span>${a.length ? a.slice(0, 6).map(([s, pc, nrs]) => `${esc(s)} ${esc(nrs)}<small> ${esc(pc)}</small>`).join('<br>') + (a.length > 6 ? `<br><small>+ ${a.length - 6} straten meer</small>` : '') : '<span class="dim">geen (bijgebouw)</span>'}</span></div>`,
+            bag.n > 1 && `<div class="row"><b>Aantal</b><span>${bag.n} adressen/eenheden</span></div>`,
+            bag.g?.length && `<div class="row"><b>Gebruik</b><span>${bag.g.map(gdName).join(', ')}</span></div>`,
+            bag.m && `<div class="row"><b>Oppervlak</b><span>${bag.m.toLocaleString('nl-NL')} m²</span></div>`,
+            bag.mo && `<div class="row"><b>Monument</b><span>Rijksmonument ${esc(bag.mo[0])}${bag.mo[1] ? ` · ${esc(bag.mo[1])}` : ''}<br><a href="https://monumentenregister.cultureelerfgoed.nl/monumenten/${encodeURIComponent(bag.mo[0])}" target="_blank" rel="noopener">Monumentenregister</a></span></div>`,
+          ].filter(Boolean).join('');
+        const plaats = bag?.pl != null && BAG.dict?.pl[bag.pl];
+        card(`<div class="kind" style="--c:${bag?.mo ? '#a0743a' : '#6b6b6b'}">${bag?.mo ? '🏛 Rijksmonument' : '🏠 Pand'}${plaats ? ` · ${esc(plaats)}` : ''}</div>
+          <h2>${first ? esc(first) : b.year ? `Gebouwd in ${b.year}` : 'Gebouw'}</h2>
+          ${first && b.year ? `<div class="row"><b>Bouwjaar</b><span>${b.year}</span></div>` : ''}${bagRows}
+          <div class="row"><b>Hoogte</b><span>${b.height.toFixed(1).replace('.', ',')} m${b.floors ? ` · ${b.floors} bouwlagen` : ''}</span></div>
+          <div class="row"><b>Grond</b><span>${hit.h.toFixed(0)} m boven NAP</span></div>${nearHtml}
+          <div class="acts">${pinBtn}<a class="btn" href="https://bagviewer.kadaster.nl/lvbag/bag-viewer/?objectId=${b.id}" target="_blank" rel="noopener">BAG-viewer</a></div>`);
+        tok = bagTok; // card() hoogde op; 2e aanroep (data binnen) mag dit kaartje vervangen
+      };
+      const v = BAG.vak.get(b.ci + '_' + b.cj);
+      if (v && BAG.dict) draw(bagOf(v, b)); else { draw(undefined); bagLoad(b.ci, b.cj).then(v => draw(bagOf(v, b))); }
     } else {
       card(`<div class="kind" style="--c:#6b6b6b">🌍 Plek</div><h2>${hit.h.toFixed(0)} m boven NAP</h2>${nearHtml}<div class="acts">${pinBtn}</div>`);
     }
@@ -386,7 +415,7 @@
   // ---------- Effecten: menu's Sfeer (licht + wolken, lucht, randen) en Stad (verkeer, meubilair, schaduw, diorama) ----------
   const FX = { // naam, icoon, kosten 1–3, uitleg
     wolken: ['Wolkschaduw', '☁', 2, '±1,3 ms per beeld'], lucht: ['Ballon en vogels', '🎈', 1, 'af en toe iets in de lucht'], randen: ['Zachte randen', '◎', 3, '±2,1 ms per beeld · toets T'],
-    zuinig: ['Zuinig', '🍃', 0, 'animaties 10/s i.p.v. 20/s, water stil — rustiger voor laptop/accu'],
+    zuinig: ['Zuinig', '🍃', 0, 'animaties 10/s i.p.v. 20/s, water stil, geen contactschaduw, scherpte 1× — rustiger voor laptop/accu'],
     inkt: ['Inktlijnen', '✒', 0, 'iso: volle donkere lijn om panden en vouwen i.p.v. een dunne silhouetlijn'], film: ['Filmisch licht', '🎞', 2, 'iso: lagere zon, filmische kleuren, gloed op glans en glas, waas in de verte (zwaarder voor de GPU)'], bouwjaar: ['Daken op bouwjaar', '🏠', 0, 'oud = rode pannen, jaren 40–70 = oranje, nieuw = antraciet; gevels baksteen of licht (uit = Mijnstreek-palet)'],
     verkeer: ['Bussen en treinen', '🚌', 1, '±0,2 ms per beeld'], props: ['Straatmeubilair', '🌳', 2, 'straatbomen, lantaarns, bankjes'], ao: ['Contactschaduw', '◐', 1, 'één keer gebakken, daarna bijna gratis'], diorama: ['Diorama-rand', '▱', 1, 'aardlagen langs de gemeentegrens'],
   };
@@ -413,6 +442,16 @@
     $('g-view').querySelector('summary small').textContent = all + '/' + (Object.keys(LAYERS).length + FXK_ALL.length);
   }
   document.addEventListener('change', e => { const k = e.target.dataset?.fx; if (k) H3D.setFx(k, e.target.checked); });
+  // Zuinig voorstellen: bij trage beelden (app.js 'slow') of op de accu; één keer, 'nee' = nooit meer (h3d.zuinig.nee)
+  const askZuinig = why => {
+    try { if (localStorage.getItem('h3d.zuinig.nee') || H3D.fxOn('zuinig') || document.getElementById('zask')) return; } catch { return; }
+    const d = document.createElement('div'); d.id = 'zask';
+    d.innerHTML = `<span>🍃 ${why} Zuinig aanzetten? Rustiger beeld, minder stroom.</span><button data-z="1">Ja</button><button data-z="0">Nee</button>`;
+    d.onclick = e => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.z === '1') H3D.setFx('zuinig', 1); else try { localStorage.setItem('h3d.zuinig.nee', '1'); } catch {} d.remove(); };
+    document.body.appendChild(d); setTimeout(() => d.remove(), 20000);
+  };
+  H3D.on('slow', fps => askZuinig(`De kaart loopt wat stroef (±${fps} beelden/s).`));
+  H3D.on('loaded', () => navigator.getBattery?.().then(b => { if (!b.charging) askZuinig('Je laptop draait op de accu.'); }).catch(() => {}));
   H3D.on('fx', (k, on) => { const i = document.querySelector(`[data-fx="${k}"]`); if (i) i.checked = on; showCounts(); });
   showCounts();
   // één groep tegelijk open; klik ernaast sluit

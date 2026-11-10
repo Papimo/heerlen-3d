@@ -25,6 +25,10 @@
     grind: '#d8cdb2', // grindpaden begraafplaats
     graveBlots: ['#8b8a6c', '#b2ae94', '#7e8a72', '#a49a7c'], gravePlot: '#8f957d', // kerkhof Verwilderd (design/12_begraafplaats.html)
     pitch: { gras: '#8cc96a', kunstgras: '#5fae5a', hard: '#6f93a8', gravel: '#c8653f', zand: '#e1c993', beton: '#c9c6c0' },
+    // velden BRP (tools/build-ground.cjs CROPS): [vulkleur (zomer), soort]. Soort 1/2 = gras(+bloemen), 0 = vlak, ≥ 8 = gewas-shader GMAT (rijen + seizoen)
+    crop: [['#a9d585', 1], ['#e3c76b', 8], ['#619d40', 9], ['#6fae4a', 10], ['#7cae55', 11], ['#ccbb6c', 12], ['#9fca78', 13], ['#9ac476', 14], ['#99c273', 15],
+      ['#b4cf86', 2], ['#7fb262', 1], ['#6fae5f', 1], ['#93c27a', 2], ['#5aa9d6', 0]],
+    berm: ['#a9d585', 6.5], // grasberm langs het spoor: kleur, halve breedte (m) vanaf de hartlijn (ballast 3 m ligt erover)
     chalk: '#ffffff', mow: 0.06, rails: '#5c544c', bridge: '#5f574e',
     // oude lint-look (app.js): [wegdek, stoeprand]; erf/voetgangers zachter. extra = lint was iets breder dan de OSM-breedte, kerb = deel binnen de stoeprand (26/32)
     rib: { street: { hoofd: ['#8f9196', '#c4c1bb'], weg: ['#8f9196', '#c4c1bb'], straat: ['#8f9196', '#c4c1bb'], erfweg: ['#b3aea6', '#d6d2ca'], voet: ['#b3aea6', '#d6d2ca'] },
@@ -46,12 +50,13 @@
   function prep() {
     if (ALL) return ALL;
     const A = H.areaInfo, O = A.origin, q = GD.q;
-    ALL = { land: [], bgt: [], area: [], pitch: [], line: [], cross: [], jn: [], isl: [] };
+    ALL = { land: [], bgt: [], area: [], pitch: [], line: [], cross: [], jn: [], isl: [], crop: [] };
     ALL.park = GD.park || []; ALL.grave = GD.grave || []; // vakindeling/begraafplaats-rijen: blijven in GD staan (iso/props.js zet er auto's/stenen op)
     const dec = d => { const a = new Float64Array(d.length); let x = 0, y = 0; for (let k = 0; k < d.length; k += 2) { x += d[k]; y += d[k + 1]; a[k] = O[0] + x * q; a[k + 1] = O[1] + y * q; } return a; };
     GD.land.forEach(([c, rs], n) => ALL.land.push({ c, rs: rs.map(dec), n }));
     (GD.bgt || []).forEach(([c, rs]) => ALL.bgt.push({ c, rs: rs.map(dec) }));
     GD.area.forEach(([c, rs]) => ALL.area.push({ c, rs: rs.map(dec) }));
+    (GD.crop || []).forEach(([c, rs, a]) => ALL.crop.push({ c, rs: rs.map(dec), a: a / 1000 })); // GD.crop blijft (iso/farm.js)
     GD.pitch.forEach(([c, rs, surf, box]) => ALL.pitch.push({ c, rs: rs.map(dec), surf, box }));
     const S = [];
     GD.line.forEach(([c, w, br, d, fl = 0]) => { const f = { c, w: w / 10, br, a: dec(d), sw: fl & 3, ring: !!(fl & 4) }; ALL.line.push(f); if (RANK[c] != null && !br) S.push(f); });
@@ -260,6 +265,27 @@
     for (const f of F.land) { x.fillStyle = pick(ST.land[f.c] || ST.base, f.n); x.kind = !B && GRASSY[f.c] ? (FLOWERS[f.c] ? 2 : 1) : 0; path(x, f.rs); x.fill('evenodd'); if (Y()) yield; }
     for (const f of F.bgt) { x.fillStyle = ST.bgt[f.c] || ST.base; x.kind = GRASSY[f.c] ? (FLOWERS[f.c] ? 2 : 1) : 0; path(x, f.rs); x.fill('evenodd'); if (Y()) yield; }
     if (B) for (const f of F.land) if (f.c === 'kerkhof') { x.fillStyle = ST.land.kerkhof; x.kind = 1; path(x, f.rs); x.fill('evenodd'); }
+    // velden (BRP): gewas per perceel; grote eerst, smalle landschapselementen (heg, houtwal, graft, sloot) erbovenop
+    for (const f of F.crop) { const [col, k] = ST.crop[f.c] || ST.crop[5]; x.fillStyle = col; x.kind = k; x.dir = [Math.cos(f.a), Math.sin(f.a)]; path(x, f.rs); x.fill('evenodd'); if (Y()) yield; }
+    // grasbermen langs het spoor (geen brug, niet op spoorterrein/station): strook ±ST.berm[1] m, ballast komt er later overheen
+    {
+      const off = (a, d) => { const o = [], n = a.length / 2; for (let k = 0; k < n; k++) { const p = Math.max(0, k - 1), q = Math.min(n - 1, k + 1); let dx = a[q * 2] - a[p * 2], dy = a[q * 2 + 1] - a[p * 2 + 1]; const L = Math.hypot(dx, dy) || 1; o.push(a[k * 2] - dy / L * d, a[k * 2 + 1] + dx / L * d); } return o; };
+      const ST8 = F.land.filter(f => f.c === 'spoorterrein').map(f => ({ r: f.rs[0], b: bbR(f.rs[0]) }));
+      const inSt = (px, py) => ST8.some(o => px >= o.b[0] && px <= o.b[2] && py >= o.b[1] && py <= o.b[3] && pip(px, py, o.r));
+      x.fillStyle = ST.berm[0]; x.kind = 2;
+      for (const f of F.line) {
+        if (f.c !== 'spoor' || f.br) continue;
+        const a = f.a, runs = []; let cur = [];
+        for (let k = 0; k < a.length; k += 2) { if (inSt(a[k], a[k + 1])) { if (cur.length >= 4) runs.push(cur); cur = []; } else cur.push(a[k], a[k + 1]); }
+        if (cur.length >= 4) runs.push(cur);
+        for (const r of runs) {
+          const L = off(r, ST.berm[1]), R = off(r, -ST.berm[1]), ring = L.slice();
+          for (let k = R.length - 2; k >= 0; k -= 2) ring.push(R[k], R[k + 1]);
+          path(x, [ring]); x.fill('nonzero');
+        }
+        if (Y()) yield;
+      }
+    }
     x.kind = 0;
     for (const f of F.area) {
       if (isWat(f)) continue;
@@ -387,7 +413,7 @@
     const sc = () => Math.sqrt(Math.abs(T[0] * T[3] - T[1] * T[2]));
     function fillRings(R) {
       if (!R.length) return;
-      const s = { c: rgba(x.fillStyle, x.globalAlpha), k: x.kind, f: x.fine ? 1 : 0, hw: 0, mp: 0 }, [dx, dy] = x.kind === 3 ? x.dir : [0, 0];
+      const s = { c: rgba(x.fillStyle, x.globalAlpha), k: x.kind, f: x.fine ? 1 : 0, hw: 0, mp: 0 }, [dx, dy] = x.kind === 3 || x.kind >= 8 ? x.dir : [0, 0];
       for (const [outer, holes] of evenOdd(R)) {
         const cont = V2(outer), hv = holes.map(V2);
         let tri; try { tri = THREE.ShapeUtils.triangulateShape(cont, hv); } catch (e) { continue; } // haalt dubbele eindpunten weg (in place)
@@ -456,25 +482,75 @@
   // ---------- grond-pass: mesh van bovenaf in één schermgroot doel (alleen iso) ----------
   const hex3 = h => { const n = parseInt(h.slice(1), 16); return [(n >> 16) / 255, (n >> 8 & 255) / 255, (n & 255) / 255].map(v => v.toFixed(4)).join(', '); };
   const W1 = hex3(ST.area.water), W2 = hex3(ST.area.zwembad), BASEV = hex3(ST.base);
-  const GT = { uTpm: { value: 1 } };
+  const SEAS = ['zomer', 'herfst', 'winter', 'lente'];
+  const GT = { uTpm: { value: 1 }, uSeason: { get value() { return Math.max(0, SEAS.indexOf(H.getSeason?.())); } } }; // velden kleuren mee (app.js SEASONS)
   const GMAT = new THREE.ShaderMaterial({
     uniforms: GT, transparent: true, depthTest: false, depthWrite: false,
     vertexShader: `attribute vec4 aC, aK; attribute vec2 aO; attribute float aU; uniform float uTpm;
       varying vec4 vC; varying vec2 vP, vD; varying float vU, vKind, vFine;
       void main() {
         vec2 p = position.xy;
-        if (aK.x < 2.5 || aK.x > 3.5) p += aO * max(0.0, 0.025 * aK.w / uTpm - 0.1 * aK.z); // minPx: ver weg niet dunner dan zoveel texels
+        if (aK.x < 2.5 || (aK.x > 3.5 && aK.x < 7.5)) p += aO * max(0.0, 0.025 * aK.w / uTpm - 0.1 * aK.z); // minPx: ver weg niet dunner dan zoveel texels
         vP = p; vD = aO; vU = aU / 100.0; vC = aC; vKind = aK.x; vFine = aK.y;
         gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 0.0, 1.0);
       }`,
-    fragmentShader: `uniform float uTpm; varying vec4 vC; varying vec2 vP, vD; varying float vU, vKind, vFine;
+    fragmentShader: `uniform float uTpm, uSeason; varying vec4 vC; varying vec2 vP, vD; varying float vU, vKind, vFine;
       float h12(vec2 p) { vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
       float vn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(h12(i), h12(i + vec2(1, 0)), f.x), mix(h12(i + vec2(0, 1)), h12(i + vec2(1, 1)), f.x), f.y); }
       float seg(vec2 p, vec2 a, vec2 b) { vec2 pa = p - a, ba = b - a; return length(pa - ba * clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0)); }
+      // rij-masker: 1 op een rij (breedte w, periode P m); te klein in texels → gemiddelde dekking (geen flikkering ver weg)
+      float rowM(float s, float P, float w, float aa) { float d = abs(fract(s / P) - 0.5) * P; return mix(w / P, smoothstep(w * 0.5 + aa, w * 0.5 - aa, d), smoothstep(1.5, 4.0, P * uTpm)); }
+      // velden (BRP): ci = gewas (ST.crop soort − 8), s = afstand dwars op de rijen, n = ruis; sRGB. Seizoen 0 zomer · 1 herfst · 2 winter (kaal + ploegvoren) · 3 lente
+      vec3 crop(int ci, float s, float n, float aa) {
+        float S = uSeason, vr = 0.93 + 0.14 * n;
+        vec3 soil = vec3(0.62, 0.49, 0.36) * vr, wet = soil * 0.84;
+        vec3 plough = mix(soil, wet * 0.82, rowM(s, 0.9, 0.42, aa));
+        float tw = max(0.55, 1.1 / uTpm), tram = max(rowM(s + 0.9, 24.0, tw, aa), rowM(s - 0.9, 24.0, tw, aa)); // spuitsporen graan (ver weg ≥ 1 texel)
+        if (ci == 0) { // graan
+          if (S < 0.5) { // rijp: diep goud, windgolven dwars op de rijen (licht/donker banden), vlekken, spuitsporen donker
+            float wv = smoothstep(0.35, 0.65, sin(s / 9.0 + n * 5.0) * 0.5 + 0.5);
+            vec3 g = mix(vec3(0.80, 0.58, 0.17), vec3(0.98, 0.83, 0.38), wv) * (0.9 + 0.2 * n);
+            g = mix(g, vec3(0.70, 0.50, 0.16), 0.35 * rowM(s, 0.25, 0.09, aa));
+            return mix(g, vec3(0.47, 0.40, 0.22), 0.85 * tram); }
+          if (S < 1.5) return mix(vec3(0.86, 0.77, 0.54) * vr, vec3(0.72, 0.62, 0.42), 0.6 * rowM(s, 0.25, 0.1, aa));
+          if (S < 2.5) return mix(mix(wet, vec3(0.47, 0.66, 0.33), 0.3 + 0.45 * rowM(s, 0.25, 0.12, aa)), wet, 0.7 * tram); // wintertarwe komt op
+          return mix(mix(vec3(0.47, 0.72, 0.33) * vr, vec3(0.38, 0.62, 0.27), rowM(s, 0.25, 0.1, aa)), soil, 0.7 * tram);
+        }
+        if (ci == 1) { // mais
+          if (S < 0.5) return mix(vec3(0.22, 0.40, 0.15), vec3(0.38, 0.62, 0.24) * vr, rowM(s, 0.75, 0.55, aa));
+          if (S < 1.5) return mix(soil, vec3(0.80, 0.70, 0.47), 0.8 * rowM(s, 0.75, 0.14, aa)); // stoppels
+          if (S < 2.5) return plough;
+          return mix(soil, vec3(0.45, 0.66, 0.30), 0.7 * rowM(s, 0.75, 0.12, aa));
+        }
+        if (ci == 2) { // bieten (oogst laat → herfst nog loof)
+          if (S < 0.5) return mix(soil * 0.88, vec3(0.36, 0.62, 0.27) * vr, rowM(s, 0.5, 0.4, aa));
+          if (S < 1.5) return mix(soil, vec3(0.44, 0.60, 0.30) * vr, rowM(s, 0.5, 0.3, aa));
+          if (S < 2.5) return plough;
+          return mix(soil, vec3(0.50, 0.68, 0.34), 0.6 * rowM(s, 0.5, 0.1, aa));
+        }
+        if (ci == 3) { // aardappel: ruggen 0,75 m
+          vec3 rug = mix(soil * 0.82, soil * 1.1, rowM(s, 0.75, 0.42, aa));
+          if (S < 0.5) return mix(soil * 0.82, vec3(0.45, 0.64, 0.32) * vr, rowM(s, 0.75, 0.5, aa));
+          if (S < 2.5 && S > 1.5) return plough;
+          return rug;
+        }
+        if (ci == 4) { // overig bouwland
+          if (S < 0.5) return vec3(0.80, 0.73, 0.44) * vr;
+          if (S < 1.5) return mix(soil, soil * 0.9, rowM(s, 0.5, 0.2, aa));
+          if (S < 2.5) return plough;
+          return mix(soil, vec3(0.55, 0.72, 0.38) * vr, 0.6);
+        }
+        vec3 gr = vec3(0.62, 0.79, 0.47) * vr; // fruit/wijn/kerst: gras tussen de rijen (bomen/ranken in iso/farm.js); seizoen via seasonGround
+        if (ci == 5) return mix(gr, gr * 0.9, rowM(s, 6.0, 1.6, aa)); // boomstrook (gemaaid, iets donkerder)
+        if (ci == 6) return mix(gr, soil, rowM(s, 2.5, 0.8, aa));   // wijn: kale strook onder de ranken
+        return mix(gr, vec3(0.42, 0.55, 0.33), rowM(s, 1.6, 0.6, aa)); // kerstbomen
+      }
       void main() {
         vec4 c = vC; float k = floor(vKind + 0.5), fk = smoothstep(0.8, 1.0, uTpm), aa = 0.5 / uTpm;
         if (vFine > 0.5) c.a *= fk;
-        if (k > 3.5) { // streepjes (DASH in ground.js)
+        if (k > 7.5) { // velden (BRP), rijen dwars op vD
+          c.rgb = crop(int(k - 7.5), dot(vP, vec2(-vD.y, vD.x)), vn(vP / 9.0 + 3.7) * 0.6 + vn(vP / 2.7) * 0.4, aa);
+        } else if (k > 3.5) { // streepjes (DASH in ground.js)
           float P = k < 4.5 ? 9.0 : k < 5.5 ? 12.0 : k < 6.5 ? 0.85 : 0.65, on = k < 5.5 ? 3.0 : k < 6.5 ? 0.3 : 0.27;
           if (mod(vU, P) > on) discard;
         } else if (k > 2.5) { // maaistrepen 5 m (2,5 m lichter)
@@ -555,6 +631,7 @@
     GU.uGrM.value.set(1 / (R - L), 1 / (T - B)); GU.uGrTpm.value = tpm; GU.uGrOn.value = 1;
   }
   H.addPreScene?.(gPass);
+  H.on?.('season', () => { gDirty = true; });
   H.groundMB = () => G.mb || 0;
 
   // ---------- opbouw in stukjes (±12 ms per tik) ----------
@@ -562,7 +639,7 @@
   function clipGD() { // houdt een item als het eerste punt (delta-gecodeerd, halve m t.o.v. origin) in een geladen vak ligt
     const A = H.areaInfo, km = A.km, O = A.origin, q = GD.q, have = new Set(A.chunks.map(([i, j]) => i + '_' + j));
     const inD = d => { if (!d?.length) return true; const x = O[0] + d[0] * q, y = O[1] + d[1] * q; return have.has(Math.floor(x / km) + '_' + Math.floor(y / km)); };
-    for (const k of ['land', 'bgt', 'area', 'pitch']) if (GD[k]) GD[k] = GD[k].filter(r => inD(r[1]?.[0]));
+    for (const k of ['land', 'bgt', 'area', 'pitch', 'crop']) if (GD[k]) GD[k] = GD[k].filter(r => inD(r[1]?.[0]));
     if (GD.line) GD.line = GD.line.filter(r => inD(r[3]));
     if (GD.cross) GD.cross = GD.cross.filter(r => inD(r[2]));
   }
@@ -597,8 +674,8 @@
       const to = setTimeout(() => { end(); no('time-out'); }, 90000);
       w.onerror = e => { e.preventDefault?.(); end(); no(e.message || 'worker-fout'); };
       w.onmessage = e => { end(); e.data.err ? no(e.data.err) : ok(e.data); };
-      const { q, land, bgt, area, pitch, line, cross, park, grave } = GD;
-      w.postMessage({ origin: H.areaInfo.origin, gd: { q, land, bgt, area, pitch, line, cross, park, grave } });
+      const { q, land, bgt, area, pitch, line, cross, park, grave, crop } = GD;
+      w.postMessage({ origin: H.areaInfo.origin, gd: { q, land, bgt, area, pitch, line, cross, park, grave, crop } });
     });
   }
   function buildMain(t0) {

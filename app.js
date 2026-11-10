@@ -103,7 +103,7 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
   const redraw = () => { dirty = true; };
   const BUILD = 'anime-1 licht randje, daken op bouwjaar, middag zacht, bolle bomen (2026-11-09)', DBG_U = { value: new THREE.Vector2(1, 1) }; // ?gpu: versie zichtbaar + schakelaars omlijning (x = vlaklijnen, y = dieptelijnen)
   H.redraw = redraw;
-  H.VERSION = '0.7.0'; // getoond onderaan (ui.js #attr); bij release ophogen
+  H.VERSION = '0.8.0'; // getoond onderaan (ui.js #attr); bij release ophogen
   // na de upload naar de GPU de kopie in het werkgeheugen weggooien (canvas → 1×1, DataTexture-data → null). Opnieuw tekenen = nieuw canvas/nieuwe textuur
   H.freeAfterUpload = tex => { tex.onUpdate = () => { tex.onUpdate = null; const im = tex.image; if (im && im.getContext) im.width = im.height = 1; else if (im && im.data) im.data = null; }; return tex; };
 
@@ -769,7 +769,9 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
   const wallOf = (c, f) => { if (!c.wB) return upper(c.bW, f); const k = upper(c.wS, f), nB = c.bW.length; return upper(c.wB.subarray(k * nB, (k + 1) * nB), f); };
   const buildingOf = (c, f) => f < c.nr ? upper(c.bR, f) : wallOf(c, f - c.nr);
   function buildingInfo(c, b) {
-    return { id: String(c.ids[b]).padStart(16, '0'), year: c.year[b] || null, height: c.hgt[b] / 10, floors: c.fl[b] || null };
+    // ci/cj/b + h: sleutel in data/bag/b_<i>_<j>.js (h = controlegetal over ids, zelfde formule als tools/build-bag.cjs → verouderd? niet tonen)
+    if (c._bh == null) c._bh = Array.from(c.ids).reduce((s, x, k) => (s + Number(String(x).padStart(16, '0').slice(-9)) * (k + 1)) % 1e9, 0);
+    return { id: String(c.ids[b]).padStart(16, '0'), year: c.year[b] || null, height: c.hgt[b] / 10, floors: c.fl[b] || null, ci: c.i, cj: c.j, b, h: c._bh };
   }
   function facesOf(c, b, out, wallOut = out) { // driehoeken van pand b: dak → out, muur → wallOut (standaard ook out)
     const I = c.mesh.geometry.index.array;
@@ -842,16 +844,21 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
   const SUN_DIR = new THREE.Vector3(-0.55, 0.62, 0.35); H.SUN_DIR = SUN_DIR; // ±44° (schaduwen weer leesbaar; anime-1 had -0.5, 0.86, 0.32 = ±55°, daarvoor -0.55, 0.75, 0.35) — vaste zonrichting (× 3000 = zonpositie t.o.v. het doel)
   const BAKE_GLSL = `
   uniform sampler2D uBk, uBkI; uniform vec4 uBkR; uniform vec2 uBkN; uniform float uBaked, uBkAO; varying vec3 vBkW;
-  vec4 bkTexel(ivec2 g) { // g = texel over het hele vakkenraster (x oost, y noord)
-    int P = int(uBkR.z);
-    if (g.x < 0 || g.y < 0) return vec4(0.0);
-    ivec2 c = g / P;
-    if (c.x >= int(uBkN.x) || c.y >= int(uBkN.y)) return vec4(0.0);
-    vec4 s = texelFetch(uBkI, c, 0);
+  vec4 bkIdx(ivec2 c) { // index-texel van vak c (rg = plek in de atlas, b = gebakken, a = infaden)
+    if (c.x < 0 || c.y < 0 || c.x >= int(uBkN.x) || c.y >= int(uBkN.y)) return vec4(0.0);
+    return texelFetch(uBkI, c, 0);
+  }
+  vec4 bkAt(vec4 s, ivec2 c, ivec2 g) { // texel g uit vak c met index-texel s
     if (s.b < 0.5) return vec4(0.0);
+    int P = int(uBkR.z);
     vec4 t = texelFetch(uBk, ivec2(s.rg * 255.0 + 0.5) * P + (g - c * P), 0);
     t.rg = mix(vec2(1.0), t.rg, s.a); // a = infaden (iso/bake.js): schaduw van een vers vak komt zacht op
     return t;
+  }
+  vec4 bkTexel(ivec2 g) { // g = texel over het hele vakkenraster (x oost, y noord)
+    if (g.x < 0 || g.y < 0) return vec4(0.0);
+    ivec2 c = g / int(uBkR.z);
+    return bkAt(bkIdx(c), c, g);
   }
   // infaden live schaduwkaart voor het vak onder p (zelfde a); geen atlas (geen WebGL2 / niet iso) = 1
   float bkFade(vec3 p) {
@@ -865,10 +872,14 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
   vec4 bake(vec3 p, float tol) {
     vec2 g = vec2(p.x - uBkR.x, -p.z - uBkR.y) * (uBkR.z / 1000.0) - 0.5;
     ivec2 i = ivec2(floor(g)); vec2 f = fract(g);
+    // snel: blok (ook de ring −1…+2) meestal binnen één vak → index één keer lezen i.p.v. per texel (scheelde ±helft van de lookups)
+    int P = int(uBkR.z); ivec2 c0 = i / P;
+    bool one = i.x >= 0 && i.y >= 0 && (i.x + 1) / P == c0.x && (i.y + 1) / P == c0.y;
+    vec4 s0 = one ? bkIdx(c0) : vec4(0.0);
     vec2 acc = vec2(0.0); float ws = 0.0, mn = -1e5;
     for (int k = 0; k < 4; k++) {
       ivec2 o = ivec2(k & 1, k >> 1);
-      vec4 t = bkTexel(i + o);
+      vec4 t = one ? bkAt(s0, c0, i + o) : bkTexel(i + o);
       if (t == vec4(0.0)) continue;
       float h = (t.b * 65280.0 + t.a * 255.0) / 65535.0 * 1000.0 - 100.0;
       if (h < p.y + 0.5) mn = mn < -9e4 ? h : min(mn, h);
@@ -878,9 +889,10 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
     // vlak naast een muur zijn alle 4 texels dak (2 m) → anders 'zon' (lichte strook = doorkijk); dan ring eromheen (12 texels) gebruiken
     if (ws < 0.05 && tol > 0.0) {
       vec2 a2 = vec2(0.0); float w2 = 0.0;
+      bool oneR = one && i.x >= 1 && i.y >= 1 && (i.x - 1) / P == c0.x && (i.y - 1) / P == c0.y && (i.x + 2) / P == c0.x && (i.y + 2) / P == c0.y;
       for (int y = -1; y <= 2; y++) for (int x = -1; x <= 2; x++) {
         if (x >= 0 && x <= 1 && y >= 0 && y <= 1) continue;
-        vec4 t = bkTexel(i + ivec2(x, y));
+        vec4 t = oneR ? bkAt(s0, c0, i + ivec2(x, y)) : bkTexel(i + ivec2(x, y));
         if (t == vec4(0.0)) continue;
         float h = (t.b * 65280.0 + t.a * 255.0) / 65535.0 * 1000.0 - 100.0;
         float w = 1.0 - smoothstep(tol, tol + 1.5, h - p.y);
@@ -1676,10 +1688,9 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
             float k = max(smoothstep(0.42, 0.52, nd) * uDbg.x, smoothstep(1.7, 2.1, dd) * uDbg.y); // smalle overgang = strakke lijn i.p.v. vlekkerige rand
             if (uFilm > 0.5) { // E Filmisch: gloed op linsters (24 tikken), waas bovenin (= ver weg in iso), ACES-curve
               vec3 bl = vec3(0.0); float rot = fract(sin(dot(vUv, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831;
-              for (int i = 0; i < 24; i++) { float an = float(i) * 2.39996 + rot, r = sqrt((float(i) + 0.5) / 24.0) * 22.0;
-                bl += max(texture2D(tC, vUv + vec2(cos(an), sin(an)) * r / uRes).rgb - 0.72, 0.0); }
-              c.rgb += bl / 24.0 * 2.2;
-              if (n0.w > 0.0) c.rgb = mix(c.rgb, texture2D(tSky, vec2(0.5, 0.6)).rgb, smoothstep(0.7, 1.0, vUv.y) * 0.05); // was 0.5–1 × 0.16: te opvallend (gebruiker)
+              for (int i = 0; i < 12; i++) { float an = float(i) * 2.39996 + rot, r = sqrt((float(i) + 0.5) / 12.0) * 22.0;
+                bl += max(texture2D(tC, vUv + vec2(cos(an), sin(an)) * r / uRes).rgb - 0.9, 0.0); }
+              c.rgb += bl / 12.0 * 4.0; // drempel 0,72 → 0,9: lichte pastelgrond gaf een witte waas over alles (gebruiker); waas bovenin weg
               vec3 x = c.rgb * 1.2, t = clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
               c.rgb = mix(vec3(dot(t, vec3(0.2126, 0.7152, 0.0722))), t, 1.15); }
             float ed = smoothstep(1.7, 2.1, dd) * uDbg.y;
@@ -1826,6 +1837,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
 
   // ---------- Renderlus (alleen tekenen als er iets veranderde) ----------
   const ease = t => t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
+  let slowT = 0, slowN = 0, slowSaid = false;
   let lastT = 0, moveT = 0, shadowDirty = true, shadowKey = '', moveNow = false, lastZ = 0;
   const lastCP = new THREE.Vector3(), lastCT = new THREE.Vector3();
   H.moving = () => moveNow; // slepen/zoomen/vliegen bezig (tot 250 ms erna); bij stilstand emit('still')
@@ -1932,7 +1944,9 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     const moving = now - moveT < 250;
     if (moving !== moveNow) { moveNow = moving; dirty = true; if (!moving) { lastLod = 0; emit('still'); } } // stilstand: scherp + detail/tegels/grond bijwerken
     // iso: canvas blijft op max 1,5 (omlijning + nabewerking zijn per pixel); kleiner tekenen tijdens bewegen gebeurt in draw() → geen canvas-herallocatie
-    const prW = camera === ortho ? Math.min(PR, 1.5) : moving ? PR_MOVE : PR;
+    const prW = fxOn.zuinig ? 1 : camera === ortho ? Math.min(PR, 1.5) : moving ? PR_MOVE : PR; // Zuinig: altijd 1 (scherp scherm = tot 4× minder pixels)
+    // traag? tijdens slepen/zoomen (niet de intro) beelden per seconde tellen; 4 s gemiddeld < 20/s → één keer 'slow' (ui.js stelt Zuinig voor)
+    if (moving && moveNow && !intro && !fxOn.zuinig && !slowSaid && !document.hidden) { slowT += dt; slowN++; if (slowT > 4000) { if (slowN * 1000 / slowT < 20) { slowSaid = true; emit('slow', Math.round(slowN * 1000 / slowT)); } slowT = slowN = 0; } }
     if (renderer.getPixelRatio() !== prW) { renderer.setPixelRatio(prW); dirty = true; }
     if (!area) return;
     // doel volgt het terrein (anders draai je om een punt in de lucht of onder de grond)
@@ -1981,7 +1995,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     // A2: iso op stand 700/2200 = gebakken zonschaduw (schaduwkaart niet bijwerken); dichterbij scherpe live schaduw. Contactschaduw in iso altijd (zodra gebakken)
     const bk = iso && H.bakeReady === true && isoHalf() > 400 ? 1 : 0;
     if (bk !== U.uBaked.value) { U.uBaked.value = bk; if (!bk) shadowDirty = true; }
-    U.uBkAO.value = iso && U.uBk.value && fxOn.ao ? 1 : 0;
+    U.uBkAO.value = iso && U.uBk.value && fxOn.ao && !fxOn.zuinig ? 1 : 0; // Zuinig: geen contactschaduw (±6,5 ms GPU per beeld)
     const key = Math.round(controls.target.x / 20) + ',' + Math.round(controls.target.z / 20) + ',' + Math.round(S / 50);
     if (!moving && !bk && (shadowDirty || key !== shadowKey)) { // tijdens bewegen blijft de schaduwkaart staan
       shadowDirty = false; shadowKey = key; renderer.shadowMap.needsUpdate = true;
@@ -2010,7 +2024,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
   const layerOn = { straten: 1, wijken: 1, water: 1, spoor: 1, wegen: 1, bomen: 1, gebouwen: 1 };
   try { Object.assign(layerOn, JSON.parse(localStorage.getItem('h3d.layers') || '{}')); } catch {}
   // effecten aan/uit (menu's Sfeer/Stad in ui.js); elk iso-bestand leest H.fxOn(k) en luistert naar 'fx'
-  // zuinig = geen effect maar een stand: gedeelde animatietik 10/s i.p.v. 20/s, water stil (standaard uit)
+  // zuinig = geen effect maar een stand: gedeelde animatietik 10/s i.p.v. 20/s, water stil, geen contactschaduw (standaard uit)
   // inkt (zwarte omlijning i.p.v. licht randje) standaard uit, bouwjaar (daken/gevels op bouwjaar i.p.v. Mijnstreek-palet) standaard aan
   const FXK = ['wolken', 'lucht', 'verkeer', 'props', 'randen', 'ao', 'diorama', 'zuinig', 'inkt', 'bouwjaar', 'film'];
   // wolken (wolkschaduw) standaard uit (buggy): alleen aan als de gebruiker hem zelf aanzet (eigen sleutel h3d.wolken, oude h3d.fx-waarde telt niet)

@@ -124,6 +124,8 @@ body[data-lm="r"] .pin.lm em, body[data-lm="g"] .pin.lm em, body[data-lm="u"] .p
 #card .row { display: grid; grid-template-columns: 76px 1fr; gap: 8px; padding: 5px 0; border-top: 1px solid var(--line); font-size: 13px; }
 #card .row b { color: var(--ink2); font-weight: 500; }
 #card .row span { overflow-wrap: anywhere; }
+#card .row small { color: var(--ink2); font-size: 11px; }
+#card .row .dim { color: var(--ink2); font-style: italic; }
 #card .note { white-space: normal; margin: 0 0 10px; }
 #card .near { border-top: 1px solid var(--line); padding-top: 6px; margin-top: 2px; }
 #card .near > b { display: block; font-size: 12px; color: var(--ink2); font-weight: 500; margin-bottom: 2px; }
@@ -219,3 +221,8 @@ body.no-webgl #nowebgl { display: grid; }
 #labels, #pins { transition: opacity .8s; }
 body.intro #labels, body.intro #pins { opacity: 0; }
 .lb.pl.on { color: #fff; text-shadow: 0 0 4px rgba(40, 30, 20, .9), 0 0 10px rgba(217, 130, 43, .9); }
+
+/* Zuinig voorstellen (ui.js askZuinig) */
+#zask { position: fixed; left: 50%; bottom: 44px; transform: translateX(-50%); z-index: 30; display: flex; align-items: center; gap: 8px; max-width: calc(100vw - 32px); box-sizing: border-box; padding: 8px 8px 8px 14px; background: var(--paper); color: var(--ink); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); font-size: 13px; }
+#zask button { border: 1px solid var(--line); background: var(--paper2); color: var(--ink); border-radius: 8px; padding: 4px 12px; font: inherit; cursor: pointer; }
+#zask button[data-z="1"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
