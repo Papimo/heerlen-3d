@@ -485,6 +485,8 @@
   const W1 = hex3(ST.area.water), W2 = hex3(ST.area.zwembad), BASEV = hex3(ST.base);
   const SEAS = ['zomer', 'herfst', 'winter', 'lente'];
   const GT = { uTpm: { value: 1 }, uSeason: { get value() { return Math.max(0, SEAS.indexOf(H.getSeason?.())); } } }; // velden kleuren mee (app.js SEASONS)
+  const GMS = new URLSearchParams(location.search).has('nogmsaa') ? 4 : 0; // ?nogmsaa = oud gedrag (rtG MSAA 4× bij PR<1,5); standaard uit (terrein leest rtG bilineair)
+  const NOGD = new URLSearchParams(location.search).has('nogdiscard'); // ?nogdiscard = oud gedrag (discard); anders alfa 0 (materiaal blendt zonder diepte → zelfde beeld, geen TBDR-straf)
   const GMAT = new THREE.ShaderMaterial({
     uniforms: GT, transparent: true, depthTest: false, depthWrite: false,
     vertexShader: `attribute vec4 aC, aK; attribute vec2 aO; attribute float aU; uniform float uTpm;
@@ -553,7 +555,7 @@
           c.rgb = crop(int(k - 7.5), dot(vP, vec2(-vD.y, vD.x)), vn(vP / 9.0 + 3.7) * 0.6 + vn(vP / 2.7) * 0.4, aa);
         } else if (k > 3.5) { // streepjes (DASH in ground.js)
           float P = k < 4.5 ? 9.0 : k < 5.5 ? 12.0 : k < 6.5 ? 0.85 : 0.65, on = k < 5.5 ? 3.0 : k < 6.5 ? 0.3 : 0.27;
-          if (mod(vU, P) > on) discard;
+          if (mod(vU, P) > on) ${NOGD ? 'discard' : 'c.a = 0.0'};
         } else if (k > 2.5) { // maaistrepen 5 m (2,5 m lichter)
           if (fract(dot(vP, vec2(-vD.y, vD.x)) / 5.0) < 0.5) c.rgb = min(c.rgb * 1.06, 1.0);
         } else if (k > 0.5) { // gras: vlekken licht/donker/droog, dichtbij plukjes (en bloemetjes)
@@ -574,7 +576,7 @@
             }
           }
         }
-        if (c.a < 0.004) discard;
+        if (c.a < 0.004) ${NOGD ? 'discard' : 'c.a = 0.0'};
         gl_FragColor = c; // sRGB-waarden ongewijzigd; terrein decodeert (grLin)
       }`,
   });
@@ -623,7 +625,7 @@
     // anders bij elk begin/einde opnieuw aanmaken). MSAA 4× alleen bij pixelratio < 1,5 (bij 1600×900 × 1,5: zonder ±20 MB, met ±100 MB).
     const mx = Math.min(4096, r.capabilities.maxTextureSize);
     let w = Math.min(mx, W), h = Math.min(mx, Math.ceil(Hh * 1.5 / 16) * 16);
-    if (!rtG) { rtG = new THREE.WebGLRenderTarget(w, h, { samples: r.capabilities.isWebGL2 && r.getPixelRatio() < 1.5 ? 4 : 0, depthBuffer: false }); GU.tGr.value = rtG.texture; }
+    if (!rtG) { rtG = new THREE.WebGLRenderTarget(w, h, { samples: r.capabilities.isWebGL2 && GMS && r.getPixelRatio() < 1.5 ? 4 : 0, depthBuffer: false }); GU.tGr.value = rtG.texture; }
     else if (w > rtG.width || h > rtG.height) rtG.setSize(Math.max(w, rtG.width), Math.max(h, rtG.height));
     w = rtG.width; h = rtG.height;
     paint(L, R, B, T, w, h);
@@ -665,7 +667,7 @@
     Object.assign(top, { left: -hs, right: hs, bottom: -hs, top: hs }); top.updateProjectionMatrix();
     // doel van de iso-camera hergebruiken als het groot genoeg is; anders 2048² (MSAA ×4 op 4096² zou ±270 MB kosten)
     const r = H.renderer, mx = Math.min(2048, r.capabilities.maxTextureSize);
-    if (!rtG) { rtG = new THREE.WebGLRenderTarget(mx, mx, { samples: r.capabilities.isWebGL2 && r.getPixelRatio() < 1.5 ? 4 : 0, depthBuffer: false }); GU.tGr.value = rtG.texture; }
+    if (!rtG) { rtG = new THREE.WebGLRenderTarget(mx, mx, { samples: r.capabilities.isWebGL2 && GMS && r.getPixelRatio() < 1.5 ? 4 : 0, depthBuffer: false }); GU.tGr.value = rtG.texture; }
     else if (rtG.width < 1600 || rtG.height < 1600) rtG.setSize(Math.max(mx, rtG.width), Math.max(mx, rtG.height));
     paint(-hs, hs, -hs, hs, rtG.width, rtG.height);
   }

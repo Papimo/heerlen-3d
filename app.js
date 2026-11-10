@@ -104,7 +104,7 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
   const redraw = () => { dirty = true; full = true; };
   const BUILD = 'anime-1 licht randje, daken op bouwjaar, middag zacht, bolle bomen (2026-11-09)', DBG_U = { value: new THREE.Vector2(1, 1) }; // ?gpu: versie zichtbaar + schakelaars omlijning (x = vlaklijnen, y = dieptelijnen)
   H.redraw = redraw;
-  H.VERSION = '0.9-test'; // getoond onderaan (ui.js #attr); bij release ophogen
+  H.VERSION = '0.9-test2'; // getoond onderaan (ui.js #attr); bij release ophogen
   // na de upload naar de GPU de kopie in het werkgeheugen weggooien (canvas → 1×1, DataTexture-data → null). Opnieuw tekenen = nieuw canvas/nieuwe textuur
   H.freeAfterUpload = tex => { tex.onUpdate = () => { tex.onUpdate = null; const im = tex.image; if (im && im.getContext) im.width = im.height = 1; else if (im && im.data) im.data = null; }; return tex; };
 
@@ -938,6 +938,7 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
     if (c.x < 0.0 || c.x > 1.0 || c.y < 0.0 || c.y > 1.0 || c.z >= 1.0) return 1.0;
     float rot = 6.2831 * fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
     float sr = 4.0 * uPerM, bs = 0.0, bn = 0.0;
+${QS.has('noshfast') ? `
     for (int i = 0; i < 8; i++) { float a = float(i) * 2.39996 + rot, r = sqrt((float(i) + 0.5) / 8.0);
       float d = unpackRGBAToDepth(texture2D(directionalShadowMap[0], c.xy + vec2(cos(a), sin(a)) * r * sr));
       if (d < c.z) { bs += d; bn += 1.0; } }
@@ -945,9 +946,22 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
     float pr = clamp((c.z - bs / bn) * uDR * uSoft, 0.3, 6.0) * uPerM, s = 0.0;
     for (int i = 0; i < 12; i++) { float a = float(i) * 2.39996 + rot, r = sqrt((float(i) + 0.5) / 12.0);
       s += step(c.z, unpackRGBAToDepth(texture2D(directionalShadowMap[0], c.xy + vec2(cos(a), sin(a)) * r * pr))); }
+    s /= 12.0;` : `
+    // perf (?noshfast = oud): zelfde gouden-hoek-spiraal, maar richting per lezing doordraaien met een vaste matrix (2 i.p.v. 40 sin/cos per pixel);
+    // alle 8 zoeklezingen in de schaduw én halfschaduw-straal ≤ zoekstraal → vol in de schaduw, de 12 PCF-lezingen overslaan
+    const mat2 GA = mat2(-0.73736888, 0.67549029, -0.67549029, -0.73736888); vec2 d0 = vec2(cos(rot), sin(rot)), dv = d0;
+    for (int i = 0; i < 8; i++) { float r = sqrt((float(i) + 0.5) / 8.0);
+      float d = unpackRGBAToDepth(texture2D(directionalShadowMap[0], c.xy + dv * (r * sr))); dv = GA * dv;
+      if (d < c.z) { bs += d; bn += 1.0; } }
+    if (bn < 0.5) return 1.0;
+    float pr = clamp((c.z - bs / bn) * uDR * uSoft, 0.3, 6.0) * uPerM, s = 0.0;
+    if (bn < 7.5 || pr > sr) { dv = d0;
+      for (int i = 0; i < 12; i++) { float r = sqrt((float(i) + 0.5) / 12.0);
+        s += step(c.z, unpackRGBAToDepth(texture2D(directionalShadowMap[0], c.xy + dv * (r * pr)))); dv = GA * dv; }
+      s /= 12.0; }`}
     vec4 o = uShX * vec4(sc.xyz / sc.w, 1.0); // lag dit punt al in het vorige schaduwkader? dan vol, anders infaden
     float was = step(0.0, o.x) * step(o.x, 1.0) * step(0.0, o.y) * step(o.y, 1.0);
-    return mix(1.0, s / 12.0, max(was, uShT));
+    return mix(1.0, s, max(was, uShT));
   #else
     return 1.0;
   #endif
@@ -1651,7 +1665,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     if (!dyn.size) scene.traverse(x => { if (x.isLight) x.layers.enable(1); });
     o.traverse(x => x.layers.set(1)); scene.add(o); dyn.add(o); redraw(); return o;
   };
-  // H.addPost({ material, order, enabled }): extra beeldstap na de omlijning (alleen iso). material = THREE.ShaderMaterial met uniform tIn (vorig beeld, lineair);
+  // H.addPost({ material, order, enabled, still, timed }): (still = hangt niet van tijd/animatie af → mag gecachet worden; timed = tijdsafhankelijk, mag achter still-stappen; geen van beide = onbekend, nooit gecachet na zichzelf) extra beeldstap na de omlijning (alleen iso). material = THREE.ShaderMaterial met uniform tIn (vorig beeld, lineair);
   // vult indien aanwezig ook tN (RG32F: r = gepakte normaal → nrmUnpack uit H.NRM_GLSL, g = diepte; 0 = leeg), uRes (Vector2, px), uTime (s), uHalf (zichtbare halve hoogte, m).
   // before() (optioneel) = vlak vóór de stap aanroepen (bv. camera-uniforms bijwerken, ook bij beelden zonder animate-tik).
   // De laatste stap tekent op het scherm → fragment shader altijd eindigen met #include <colorspace_fragment>. enabled = false → overgeslagen.
@@ -1699,6 +1713,37 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     renderer.setRenderTarget(rtM); renderer.render(scene, camera);
     renderer.setRenderTarget(null); renderer.render(blitScene, blitCam);
   }
+  // 92: gloed (E Filmisch) op ¼ resolutie: drempel + 4 bilineaire taps (4×4 px gemiddeld) → 2× 9-tap blur (σ ≈ 11 px op volle res, ≈ oude straal 22 px). Eén keer per scène-render
+  // (draw → postFresh), niet per wolkentik. Half-float lineair (waarden 0…0,1). ?noglow4 = oude lus van 12 tikken op volle resolutie in de post-shader.
+  const GLOW4 = !QS.has('noglow4'), SPLIT = !QS.has('nopostsplit'); let rtK = null, kKey = ''; // SPLIT = 82: cache van niet-tijdsafhankelijke post-stappen (zie runPosts)
+  let rtG1 = null, rtG2 = null, glowDown, glowBlur, glowHave = false, postFresh = true;
+  function makeGlow() {
+    const w = Math.max(1, Math.round(rtS.x / 4)), h = Math.max(1, Math.round(rtS.y / 4));
+    if (!rtG1) {
+      const o = { type: THREE.HalfFloatType, format: THREE.RGBAFormat, colorSpace: THREE.NoColorSpace, minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, depthBuffer: false };
+      rtG1 = new THREE.WebGLRenderTarget(w, h, o); rtG2 = rtG1.clone();
+      const VS = 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }', K = [0, 1, 2, 3, 4].map(i => Math.exp(-i * i / (2 * 1.83 * 1.83)));
+      const ks = K[0] + 2 * (K[1] + K[2] + K[3] + K[4]), wt = K.map(v => (v / ks).toFixed(5));
+      glowDown = new THREE.ShaderMaterial({ uniforms: { tSrc: { value: null }, uPx: { value: new THREE.Vector2() } }, vertexShader: VS, depthTest: false, depthWrite: false,
+        fragmentShader: `varying vec2 vUv; uniform sampler2D tSrc; uniform vec2 uPx;
+          void main() { vec3 s = vec3(0.0); for (int i = 0; i < 4; i++) s += max(texture2D(tSrc, vUv + vec2(i < 2 ? -1.0 : 1.0, (i & 1) == 0 ? -1.0 : 1.0) * uPx).rgb - 0.9, 0.0);
+            gl_FragColor = vec4(s * 0.25, 1.0); }` });
+      glowBlur = new THREE.ShaderMaterial({ uniforms: { tSrc: { value: null }, uStep: { value: new THREE.Vector2() } }, vertexShader: VS, depthTest: false, depthWrite: false,
+        fragmentShader: `varying vec2 vUv; uniform sampler2D tSrc; uniform vec2 uStep;
+          void main() { vec3 s = texture2D(tSrc, vUv).rgb * ${wt[0]};
+            ${[1, 2, 3, 4].map(i => `s += (texture2D(tSrc, vUv + uStep * ${i}.0).rgb + texture2D(tSrc, vUv - uStep * ${i}.0).rgb) * ${wt[i]};`).join(' ')}
+            gl_FragColor = vec4(s, 1.0); }` });
+    }
+    if (rtG1.width !== w || rtG1.height !== h) { rtG1.setSize(w, h); rtG2.setSize(w, h); }
+    const src = post.uniforms.tC.value; mq('gloed');
+    glowDown.uniforms.tSrc.value = src; glowDown.uniforms.uPx.value.set(1 / rtS.x, 1 / rtS.y);
+    pq.material = glowDown; renderer.setRenderTarget(rtG1); renderer.render(postScene, postCam);
+    glowBlur.uniforms.tSrc.value = rtG1.texture; glowBlur.uniforms.uStep.value.set(1.5 / w, 0); // stap 1,5 ¼-px: lineair filter vult de gaten
+    pq.material = glowBlur; renderer.setRenderTarget(rtG2); renderer.render(postScene, postCam);
+    glowBlur.uniforms.tSrc.value = rtG2.texture; glowBlur.uniforms.uStep.value.set(0, 1.5 / h);
+    renderer.setRenderTarget(rtG1); renderer.render(postScene, postCam);
+    pq.material = post; post.uniforms.tGlow.value = rtG1.texture; glowHave = true;
+  }
   function draw(fullDraw = true) {
     if (isoCam() && preScene.length) { mq('voor-scène'); for (const fn of preScene) fn(camera); mq(renderer.shadowMap.needsUpdate ? 'kleur+schaduw' : 'kleur'); } // meter: grond-pass e.d. apart
     if (!isoCam() || !canPost() || !useMRT) SC.ok = false;
@@ -1719,9 +1764,9 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
       });
       // tN/tDN highp: three r160 zet geen sampler-precisie → standaard lowp → telefoon (Mali e.d.) las de diepte als 16 bit → streeplijnen
       post = new THREE.ShaderMaterial({
-        uniforms: { tC: { value: useMRT ? rtC.texture[0] : rtC.texture }, tN: { value: rtN.texture }, tSky: { value: skyTex }, uMrt: { value: useMRT ? 1 : 0 }, uPd: { value: 0 }, uFog: { value: new THREE.Vector2() }, tD: { value: null }, tDN: { value: null }, uDyn: { value: 0 }, uRes: { value: new THREE.Vector2() }, uW: { value: 2 }, uK: { value: 0.85 }, uInk: { value: H.isoColors.ink }, uLine: U.uLine, uFilm: U.uFilm, uDbg: DBG_U },
+        uniforms: { tC: { value: useMRT ? rtC.texture[0] : rtC.texture }, tN: { value: rtN.texture }, tSky: { value: skyTex }, tGlow: { value: null }, uMrt: { value: useMRT ? 1 : 0 }, uPd: { value: 0 }, uFog: { value: new THREE.Vector2() }, tD: { value: null }, tDN: { value: null }, uDyn: { value: 0 }, uRes: { value: new THREE.Vector2() }, uW: { value: 2 }, uK: { value: 0.85 }, uInk: { value: H.isoColors.ink }, uLine: U.uLine, uFilm: U.uFilm, uDbg: DBG_U },
         vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
-        fragmentShader: `varying vec2 vUv; uniform sampler2D tC, tD, tSky; uniform highp sampler2D tN, tDN; uniform vec2 uRes; uniform float uW, uK, uDyn, uMrt, uLine, uFilm, uPd; uniform vec2 uFog; uniform vec3 uInk; uniform vec2 uDbg;
+        fragmentShader: `varying vec2 vUv; uniform sampler2D tC, tD, tSky${GLOW4 ? ', tGlow' : ''}; uniform highp sampler2D tN, tDN; uniform vec2 uRes; uniform float uW, uK, uDyn, uMrt, uLine, uFilm, uPd; uniform vec2 uFog; uniform vec3 uInk; uniform vec2 uDbg;
           ${NRM_GLSL}
           ivec2 tq(highp sampler2D t, vec2 o) { return clamp(ivec2(gl_FragCoord.xy + o), ivec2(0), textureSize(t, 0) - 1); } // exacte pixel (vUv+o/uRes rondde op telefoons af → strepen)
           vec4 N(vec2 o) { ivec2 u = tq(tN, o); vec2 s = texelFetch(tN, u, 0).xy; // xyz = normaal, w = diepte
@@ -1737,10 +1782,10 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
             if (uPd > 0.5) { float zf = 20.0 / max(n0.w, 20.0); dd *= zf * zf; } // rijcamera (perspectief): grond loopt niet-lineair weg
             float k = max(smoothstep(0.42, 0.52, nd) * uDbg.x, smoothstep(1.7, 2.1, dd) * uDbg.y); // smalle overgang = strakke lijn i.p.v. vlekkerige rand
             if (uFilm > 0.5) { // E Filmisch: gloed op linsters (24 tikken), waas bovenin (= ver weg in iso), ACES-curve
-              vec3 bl = vec3(0.0); float rot = fract(sin(dot(vUv, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831;
+              ${GLOW4 ? 'c.rgb += texture2D(tGlow, vUv).rgb * 4.0; // 92: gloed uit ¼-res textuur (drempel + blur, zie makeGlow)' : `vec3 bl = vec3(0.0); float rot = fract(sin(dot(vUv, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831;
               for (int i = 0; i < 12; i++) { float an = float(i) * 2.39996 + rot, r = sqrt((float(i) + 0.5) / 12.0) * 22.0;
                 bl += max(texture2D(tC, vUv + vec2(cos(an), sin(an)) * r / uRes).rgb - 0.9, 0.0); }
-              c.rgb += bl / 12.0 * 4.0; // drempel 0,72 → 0,9: lichte pastelgrond gaf een witte waas over alles (gebruiker); waas bovenin weg
+              c.rgb += bl / 12.0 * 4.0;`} // drempel 0,72 → 0,9: lichte pastelgrond gaf een witte waas over alles (gebruiker); waas bovenin weg
               vec3 x = c.rgb * 1.2, t = clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
               c.rgb = mix(vec3(dot(t, vec3(0.2126, 0.7152, 0.0722))), t, 1.15); }
             float ed = smoothstep(1.7, 2.1, dd) * uDbg.y;
@@ -1754,6 +1799,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
       postScene = new THREE.Scene(); postCam = new THREE.Camera();
       pq = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), post); pq.frustumCulled = false; postScene.add(pq);
     }
+    postFresh = true; // 82/92: nieuwe scène-render (of scroll) → gecachte post-stappen en gloed opnieuw maken
     renderer.getDrawingBufferSize(dbs);
     // tijdens bewegen de scène kleiner tekenen in eigen, bewaarde doelen (canvas blijft gelijk → geen herallocatie); omlijning schaalt op
     const low = false, sc = 1; // kleiner tekenen tijdens bewegen gaf strepen (omlijning/diepte opgeschaald met factor 1,5) → uit; mechaniek blijft voor later
@@ -1853,6 +1899,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
   }
   // nabewerking los: ook zonder nieuwe scène-render (rtC/rtN hergebruiken) als alleen een post-animatie (wolken) verandert
   function runPosts() {
+    const fresh = postFresh; postFresh = false; // true = net een scène-render/scroll (draw); false = losse tik (wolken e.d.) → gecachte stappen + gloed hergebruiken
     // bewegende laag (laag 1): klein, dus goedkoop; alleen als er iets zichtbaar is
     let dynOn = false; for (const o of dyn) if (o.visible) { dynOn = true; break; }
     if (dynOn) {
@@ -1876,19 +1923,31 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     // uW altijd 1: symmetrisch bemonsterd → lijn ±2 px; uW 2 gaf ±4 px (te dik bij startzoom)
     post.uniforms.uRes.value.copy(rtS); post.uniforms.uW.value = 1; // uRes = maat van rtN (kleiner tijdens bewegen)
     post.uniforms.uK.value = driveCam ? 0.75 : 0.85 * Math.min(1, 0.4 + ppm * 0.3); post.uniforms.uPd.value = driveCam ? 1 : 0; post.uniforms.uFog.value.set(driveCam ? DRV_FAR * 0.45 : 0, driveCam ? DRV_FAR * 0.95 : 0);
-    const on = posts.filter(p => p.enabled !== false && (!driveCam || p.drive)); for (const p of on) p.before?.(); // rijden: wolken/tilt/papier gaan uit van de iso-camera
+    let on = posts.filter(p => p.enabled !== false && (!driveCam || p.drive)); for (const p of on) p.before?.(); // rijden: wolken/tilt/papier gaan uit van de iso-camera
+    if (GLOW4) { if (U.uFilm.value > 0.5) { if (fresh || !glowHave) makeGlow(); } else glowHave = false; } // 92
+    // 82: stappen die niet van de tijd afhangen ({ still: true } bij H.addPost) → resultaat gecachet (rtK); bij een tik met alleen postDirty alleen de rest opnieuw.
+    // { timed: true } = tijdsafhankelijk (wolken), mag achter de still-stappen (tilt) komen: wolkschaduw is zacht + vermenigvuldigend, dus gelijkwaardig vóór/ná tilt.
+    // Stap zonder vlag (bv. iso/laden.js) = onbekend → volgorde blijft, alleen de omlijning (en still-stappen direct erachter) wordt gecachet. Bewegende laag (dynOn) → geen cache.
+    if (SPLIT && !on.some(p => !p.still && !p.timed)) on = [...on.filter(p => p.still), ...on.filter(p => p.timed)];
     const steps = [post, ...on.map(p => p.material)];
+    let k = 0; if (SPLIT && !dynOn) { k = 1; for (const p of on) { if (!p.still) break; k++; } if (k >= steps.length) k = steps.length - 1; }
     if (steps.length > 1) {
       if (!rtA) { rtA = new THREE.WebGLRenderTarget(4, 4, Object.assign({ depthBuffer: false }, COL)); rtB = rtA.clone(); }
       if (rtA.width !== dbs.x || rtA.height !== dbs.y) { rtA.setSize(dbs.x, dbs.y); rtB.setSize(dbs.x, dbs.y); }
+      if (k) { if (!rtK) rtK = rtA.clone(); if (rtK.width !== dbs.x || rtK.height !== dbs.y) rtK.setSize(dbs.x, dbs.y); }
     }
+    const run = (i, to, from) => {
+      const m = steps[i]; mq(i ? 'post ' + (m.name || i) : 'omlijning');
+      if (i) { const u = m.uniforms; if (u.tIn) u.tIn.value = from.texture; if (u.tN) u.tN.value = rtN.texture; if (u.uRes) u.uRes.value.copy(dbs); if (u.uTime) u.uTime.value = performance.now() / 1000; if (u.uHalf) u.uHalf.value = isoHalf(); if (u.uMove) u.uMove.value = moveNow ? 1 : 0; }
+      pq.material = m; renderer.setRenderTarget(to); renderer.render(postScene, postCam);
+    };
     let src = null, dst = rtA;
-    steps.forEach((m, i) => {
-      mq(i ? 'post ' + (m.name || i) : 'omlijning');
-      if (i) { const u = m.uniforms; if (u.tIn) u.tIn.value = src.texture; if (u.tN) u.tN.value = rtN.texture; if (u.uRes) u.uRes.value.copy(dbs); if (u.uTime) u.uTime.value = performance.now() / 1000; if (u.uHalf) u.uHalf.value = isoHalf(); if (u.uMove) u.uMove.value = moveNow ? 1 : 0; }
-      pq.material = m; renderer.setRenderTarget(i === steps.length - 1 ? null : dst); renderer.render(postScene, postCam);
-      src = dst; dst = dst === rtA ? rtB : rtA;
-    });
+    if (k) {
+      const key = on.map(p => p.material.id).join() + [k, dbs.x, dbs.y, moveNow, driveCam, isoHalf()].join('|');
+      if (fresh || key !== kKey) { let s = null, d = rtA; for (let i = 0; i < k; i++) { const to = i === k - 1 ? rtK : d; run(i, to, s); s = to; d = d === rtA ? rtB : rtA; } kKey = key; }
+      src = rtK;
+    }
+    for (let i = k; i < steps.length; i++) { run(i, i === steps.length - 1 ? null : dst, src); src = dst; dst = dst === rtA ? rtB : rtA; }
     pq.material = post; renderer.setRenderTarget(null);
   }
 
@@ -1962,6 +2021,18 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
   const ease = t => t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
   let slowT = 0, slowN = 0, slowSaid = false;
   let shFadeOld = null, shFadeGo = false, shHad = false, shFadeT = 0; const shInv = new THREE.Matrix4();
+  // perf (?noshskip = uit): lag het hele beeld (4 hoeken op de grond) al in het vorige schaduwkader? Dan valt er niets in te faden
+  // → geen 0,7 s lang elk beeld de hele scène opnieuw tekenen na elke stop (kader = ±1,1× beeld + 25% vooruit, dus bij korte stukjes pannen/inzoomen)
+  const shCv = new THREE.Vector3(), shCd = new THREE.Vector3(), SH_SKIP = !QS.has('noshskip');
+  function shCovers(m) {
+    if (!SH_SKIP || camera !== ortho) return false;
+    camera.updateMatrixWorld(); camera.getWorldDirection(shCd); if (Math.abs(shCd.y) < 1e-3) return false;
+    for (let i = 0; i < 4; i++) {
+      shCv.set(i & 1 ? 1 : -1, i & 2 ? 1 : -1, -1).unproject(camera); shCv.addScaledVector(shCd, (controls.target.y - shCv.y) / shCd.y).applyMatrix4(m);
+      if (shCv.x < 0.01 || shCv.x > 0.99 || shCv.y < 0.01 || shCv.y > 0.99) return false;
+    }
+    return true;
+  }
   let lastT = 0, moveT = 0, shadowDirty = true, shadowKey = '', moveNow = false, lastZ = 0;
   const lastCP = new THREE.Vector3(), lastCT = new THREE.Vector3();
   H.moving = () => moveNow; // slepen/zoomen/vliegen bezig (tot 250 ms erna); bij stilstand emit('still')
@@ -2170,7 +2241,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     if (shFadeGo) { // schaduwkaart is net ververst: nieuw gebied (buiten vorig kader) ±0,7 s laten opkomen, zoals de panden groeien
       shFadeGo = false; shHad = true;
       if (shFadeOld) U.uShX.value.copy(shFadeOld).multiply(shInv.copy(sun.shadow.matrix).invert()); else U.uShX.value.makeTranslation(9, 9, 0);
-      U.uShT.value = 0; shFadeT = now;
+      U.uShT.value = shFadeOld && shCovers(shFadeOld) ? 1 : 0; shFadeT = now;
     }
     if (U.uShT.value < 1) { U.uShT.value = Math.min(1, (now - shFadeT) / 700); full = dirty = true; }
     saveView();

@@ -11,6 +11,7 @@
   let tiltOn = H.fxOn('randen'); // aan/uit via H.setFx('randen') (menu Sfeer, toets T)
 
   // 102: dither (interleaved gradient noise, Jimenez) ±0,5/255 na de sRGB-omzetting, in de laatste pass voor het scherm (tilt order 20; staat tilt uit → wolkenpass). ?nodither = uit
+  const NOSPLIT = /[?&]nopostsplit\b/.test(location.search); // 82: oude volgorde (wolken vóór tilt, alles elke tik)
   const DITHER = !/[?&]nodither\b/.test(location.search);
   const DITHER_GLSL = DITHER ? 'gl_FragColor.rgb += (fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) - 0.5) / 255.0 * uDith;' : '';
   const VS = 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }';
@@ -236,7 +237,7 @@
       cam.updateMatrixWorld(); camW.copy(cam.matrixWorld);
       const cx = (cam.right + cam.left) / 2, cy = (cam.top + cam.bottom) / 2, dx = (cam.right - cam.left) / (2 * cam.zoom), dy = (cam.top - cam.bottom) / (2 * cam.zoom);
       lrbt.set(cx - dx, cx + dx, cy - dy, cy + dy);
-      cloudM.uniforms.uDith.value = tiltPost?.enabled ? 0 : 1; // dither alleen als wolken de laatste pass zijn
+      cloudM.uniforms.uDith.value = !NOSPLIT || !tiltPost?.enabled ? 1 : 0; // dither alleen als wolken de laatste pass zijn (82: wolken staan na tilt, tenzij laden-pass actief → dan dubbele ±0,5/255 dither, onschadelijk)
       cloudM.uniforms.uNight.value = H.night(); cloudM.uniforms.uCloudY.value = target().y + CLOUD.height;
     }
   }
@@ -245,8 +246,8 @@
   H.on('terrain', () => { // eerste vak (niet pas bij 'loaded': laden gebeurt alleen in beeld)
     if (started) return; started = true;
     if (!o0) o0 = O();
-    cloudPost = H.addPost({ material: cloudM, order: 10, before: cloudCam, enabled: H.fxOn('wolken') });
-    tiltPost = H.addPost({ material: tiltM, order: 20, enabled: tiltOn });
+    cloudPost = H.addPost({ material: cloudM, order: 10, timed: true, before: cloudCam, enabled: H.fxOn('wolken') });
+    tiltPost = H.addPost({ material: tiltM, order: 20, still: true, enabled: tiltOn });
     makeEvents();
     nextAt = performance.now() / 1000 + 12; // eerste keer snel, daarna af en toe
     H.animate(tick, 'lucht'); // wolken: alleen nabewerking opnieuw (scène-render hergebruikt), zie tick
