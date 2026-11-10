@@ -263,10 +263,6 @@ body.drive #drivehud { display: block; }
 #drivehud .dgauge .hubc { fill: #ff4a3d; }
 #drivehud .dgauge .dnum { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
 #drivehud .dgauge .dunit { font-size: 6px; opacity: .75; }
-#drivehud .dseat { pointer-events: auto; position: fixed; right: 16px; top: 16px; display: flex; gap: 4px; padding: 4px; border-radius: 12px; background: rgba(30, 32, 38, .78); }
-#drivehud .dseat button { display: flex; flex-direction: column; align-items: center; min-width: 46px; padding: 4px 6px; border: 0; border-radius: 8px; background: transparent; color: #fff; font: 700 15px/1.1 system-ui, sans-serif; cursor: pointer; }
-#drivehud .dseat button small { font-size: 10px; font-weight: 500; opacity: .8; }
-#drivehud .dseat button.on { background: rgba(255, 255, 255, .22); }
 #drivehud .dstreet { margin-top: 6px; font-weight: 600; text-shadow: 0 1px 3px rgba(0, 0, 0, .7); min-height: 1.3em; }
 #drivehud .dexit { pointer-events: auto; position: fixed; right: 16px; bottom: 18px; padding: 8px 12px; border: 0; border-radius: 10px; background: rgba(30, 32, 38, .86); color: #fff; font: 600 14px system-ui, sans-serif; cursor: pointer; }
 #drivehud .dhelp { margin-top: 6px; font-size: 12px; opacity: .85; text-shadow: 0 1px 3px rgba(0, 0, 0, .8); }

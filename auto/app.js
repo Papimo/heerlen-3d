@@ -140,6 +140,8 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
     }, 0);
 
     scene = H.scene = new THREE.Scene();
+    // stilstaand spul: matrix één keer uitrekenen i.p.v. elk beeld (updateMatrixWorld kostte ±4 ms CPU/beeld). Later toegevoegde kinderen rekenen gewoon mee
+    H.freeze = o => { o.traverse(x => { x.updateMatrix(); x.matrixAutoUpdate = false; }); return o; };
     scene.background = SKY;
     scene.fog = new THREE.Fog(SKY, 7000, 18000);
     camera = persp = new THREE.PerspectiveCamera(42, el.clientWidth / el.clientHeight, 2, 40000);
@@ -494,7 +496,7 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
         g.computeBoundingSphere(); g.computeBoundingBox();
         const m = new THREE.Mesh(g, [MAT.roof, MAT.wall]);
         m.castShadow = m.receiveShadow = true; m.userData.chunk = c;
-        scene.add(m);
+        scene.add(H.freeze(m));
         return m;
       };
       // terrein
@@ -511,7 +513,7 @@ if (uEra.z > 0.0 && (aInfo.x < uEra.x || aInfo.x > uEra.y)) { // bouwjaar-filter
       c.terrain = new THREE.Mesh(tg, terrMat(new THREE.MeshLambertMaterial({ color: STYLES[style].bg })));
       c.terrain.receiveShadow = true; c.terrain.renderOrder = 1; // terrein als laatste (dure shader): wat panden/linten/bomen bedekken valt weg in de dieptetest
       c.terrain.userData.chunk = c;
-      scene.add(c.terrain);
+      scene.add(H.freeze(c.terrain));
       if (H.baseH === undefined || minH - 3 < H.baseH) { H.baseH = minH - 3; if (ground) ground.position.y = H.baseH; }
       H.chunks.set(h.i + '_' + h.j, c); // vanaf hier telt het vak mee (hoogte, grond); c.mesh komt pas in stap 2 → overal `if (c.mesh)`
       c.level = 0;
@@ -1429,7 +1431,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
         if (part === 'wall') geo.setAttribute('aBase', new THREE.Float32BufferAttribute(a.base, 1));
         geo.computeBoundingSphere();
         const me = new THREE.Mesh(geo, part === 'roof' || a.era || a.full ? matFor(col) : matWall(col)); me.receiveShadow = true;
-        scene.add(me); hlMeshes.push(me);
+        scene.add(H.freeze(me)); hlMeshes.push(me);
       }
       if (selKey && !selMesh) H.selectMark(selKey); // vak van de gekozen plek kwam later binnen
       shadowDirty = true; emit('marks'); redraw();
@@ -2168,7 +2170,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     const d = H.layerData;
     if (layersBuilt || !d || !allIn || !scene) return;
     layersBuilt = true;
-    const add = (k, mesh, ribbon) => { mesh.receiveShadow = true; mesh.userData.ribbon = !!ribbon; mesh.visible = layerVis(k, mesh); scene.add(mesh); (layerObjs[k] ||= []).push(mesh); };
+    const add = (k, mesh, ribbon) => { mesh.receiveShadow = true; mesh.userData.ribbon = !!ribbon; mesh.visible = layerVis(k, mesh); scene.add(H.freeze(mesh)); (layerObjs[k] ||= []).push(mesh); };
     const addR = (k, geos, mat) => { for (const g of geos) add(k, new THREE.Mesh(g, mat), true); };
     // water: beken als lint (4–8 m), vijvers plat op de laagste oeverhoogte
     const waterMat = ribbonMat({ color: '#7eaed3' }, -2);
@@ -2248,7 +2250,8 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
   function treeGeo(conifer, lo) { // boom van 1 m hoog: stam (donker) + kroon (wit, gekleurd per boom via instanceColor)
     const crown = conifer ? new THREE.ConeGeometry(0.22, 0.85, lo ? 5 : 7, 1, true).translate(0, 0.55, 0)
       : lo ? new THREE.OctahedronGeometry(1, 0).scale(0.4, 0.4, 0.4).translate(0, 0.62, 0) : blobCrown(0); // bos: grove bollen (±130k bomen)
-    const trunk = new THREE.CylinderGeometry(0.035, 0.05, 0.3, 5, 1, true).translate(0, 0.15, 0);
+    const th = conifer ? 0.3 : 0.5; // bolle kroon begint pas op ±0,42 → stam tot 0,5 (anders zweeft de kroon, zichtbaar bij rijden)
+    const trunk = new THREE.CylinderGeometry(0.035, 0.05, th, 5, 1, true).translate(0, th / 2, 0);
     const flat = g => g.index ? g.toNonIndexed() : g, parts = [...(lo ? [] : [[flat(trunk), [0.42, 0.36, 0.3]]]), [flat(crown), [1, 1, 1]]];
     const n = parts.reduce((t, [g]) => t + g.attributes.position.count, 0), P = new Float32Array(n * 3), C = new Float32Array(n * 3);
     let o = 0;
@@ -2316,7 +2319,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
           const t = rnd(); im.setColorAt(i, kind ? col.setHSL(0.36 + rnd() * 0.04, 0.38, 0.22 + rnd() * 0.06) : t < 0.12 ? col.setHSL(0.06 + rnd() * 0.07, 0.6, 0.42 + rnd() * 0.08) : col.setHSL(0.22 + rnd() * 0.08, 0.46 + rnd() * 0.14, 0.3 + rnd() * 0.1)); // ±12% herfst
         });
         im.computeBoundingSphere(); im.receiveShadow = true; im.full = idx.length; im.geoHi = gHi; im.geoLo = gLo; im.aTA = aTA; im.count = 0; // updateDetail zet de dichtheid (en laat ze groeien)
-        im.visible = !!layerOn.bomen; scene.add(im); (layerObjs.bomen ||= []).push(im); c.trees.push(im);
+        im.visible = !!layerOn.bomen; scene.add(H.freeze(im)); (layerObjs.bomen ||= []).push(im); c.trees.push(im);
       }
     }
     lastLod = 0; // dichtheid meteen naar afstand zetten

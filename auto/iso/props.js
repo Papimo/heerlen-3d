@@ -118,7 +118,7 @@
   const TRUNK = '#6b5444', GLASS = '#f4efe2';
   let ST = null; // pas bij het eerste vak bouwen (THREE + H3D zijn er dan zeker)
   const style = () => ST ||= {
-    tree: [merge([part(cyl(0.05, 0.035, 0.3, 5), TRUNK), part(H.blobCrown ? H.blobCrown(1, 11) : ico(1, 0), '#fff', H.blobCrown ? { tint: 1 } : { p: [0, 0.58, 0], s: [0.32, 0.4, 0.32], tint: 1 })]), // bolle klont (dichtbij: fijnere bollen)
+    tree: [merge([part(cyl(0.05, 0.035, 0.5, 5), TRUNK), part(H.blobCrown ? H.blobCrown(1, 11) : ico(1, 0), '#fff', H.blobCrown ? { tint: 1 } : { p: [0, 0.58, 0], s: [0.32, 0.4, 0.32], tint: 1 })]), // bolle klont (dichtbij: fijnere bollen)
            merge([part(cyl(0.05, 0.035, 0.3, 5), TRUNK), part(cone(0.22, 0.85, 7), '#fff', { p: [0, 0.13, 0], tint: 1 })])],
     treeLo: [merge([part(new THREE.OctahedronGeometry(1, 0), '#fff', { p: [0, 0.62, 0], s: [0.4, 0.4, 0.4], tint: 1 })]), // ver weg: alleen kroon (zoals bossen)
              merge([part(cone(0.22, 0.85, 5), '#fff', { p: [0, 0.13, 0], tint: 1 })])],
@@ -522,7 +522,7 @@
       pm.onAfterRender = (r, s, cam, geo) => geo.setDrawRange(0, Infinity);
       group.add(pm); v.pool = pm;
     }
-    H.scene.add(group); VAK.push(v);
+    H.scene.add(H.freeze ? H.freeze(group) : group); VAK.push(v);
     detail(v); H.shadowDirty();
   }
 
