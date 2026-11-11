@@ -84,10 +84,10 @@
   }
 
   // ---------- auto: speelgoedauto (van buiten = geparkeerd in iso) met dashboard + stuur voor de bestuurder ----------
-  let wheel = null, needle = null, wheels = [];
+  let wheel = null, needle = null, wheels = [], charm = null;
   function makeCar() {
     const g = new THREE.Group(), M = c => { const m = new THREE.MeshLambertMaterial({ color: c }); H.celify?.(m, 'car'); return m; }; // zelfde cel-look als de rest
-    const red = M(0xd9564a), dark = M(0x2f323a), dash = M(0x454a55), tyre = M(0x1e1f23), white = M(0xf3efe6), chrome = M(0xc9ccd2);
+    const red = M(0xd9564a), dark = M(0x2f323a), dash = M(0x3b302b), tyre = M(0x1e1f23), white = M(0xf3efe6), chrome = M(0xc9ccd2);
     const box = (w, h, d, x, y, z, m) => { const o = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); o.position.set(x, y, z); g.add(o); return o; };
     box(1.8, 0.5, 1.45, 0, 0.62, -1.38, red);    // motorkap
     box(1.8, 0.5, 0.95, 0, 0.62, 1.62, red);     // kofferbak
@@ -105,17 +105,48 @@
     for (const [x, z] of [[0.82, -1.35], [-0.82, -1.35], [0.82, 1.3], [-0.82, 1.3]]) {
       const w = new THREE.Mesh(new THREE.CylinderGeometry(0.33, 0.33, 0.24, 14), tyre); w.rotation.z = Math.PI / 2; w.position.set(x, 0.33, z); g.add(w); wheels.push(w);
     }
+    // --- interieur retro jaren 70 (keuze B): dun groot stuur met claxonring, houten strook met chroomlijsten, twee chroomklokken onder een kap, radio, binnenspiegel met geurboompje ---
+    const wood = M(0x8a5a2b), cream = M(0xefe6cf), green = M(0x3f8f4a), ink = M(0x26262b);
+    const mk = (geo, m, par, x = 0, y = 0, z = 0) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); par.add(o); return o; };
+    const ZF = -0.285; // voorkant dashboard (naar de bestuurder)
+    box(1.7, 0.085, 0.02, 0, 0.9, ZF, wood);
+    box(1.7, 0.008, 0.026, 0, 0.947, ZF, chrome); box(1.7, 0.008, 0.026, 0, 0.853, ZF, chrome);
+    box(0.02, 0.015, 2.0, 0.8, 0.885, 0.15, chrome); box(0.02, 0.015, 2.0, -0.8, 0.885, 0.15, chrome); // sierlijst deuren
+    box(0.03, 0.05, 0.14, 0, 0.895, -2.0, chrome); // motorkap-ornament
+    // radio midden: kast, schaalvenster, wijzertje, twee draaiknoppen
+    box(0.28, 0.07, 0.012, 0.08, 0.9, ZF + 0.012, ink); box(0.15, 0.028, 0.006, 0.08, 0.908, ZF + 0.02, cream); box(0.004, 0.028, 0.004, 0.11, 0.908, ZF + 0.024, red);
+    for (const x of [-0.035, 0.195]) { const k = mk(new THREE.CylinderGeometry(0.017, 0.02, 0.03, 12), chrome, g, x, 0.9, ZF + 0.03); k.rotation.x = Math.PI / 2; }
+    // handschoenkastje rechts
+    box(0.3, 0.004, 0.004, 0.55, 0.925, ZF + 0.012, ink); box(0.05, 0.012, 0.012, 0.55, 0.905, ZF + 0.016, chrome);
     // stuur: kantelt naar de bestuurder, draait om eigen as
     const piv = new THREE.Group(); piv.position.set(CAR.eye[0], 1.0, -0.17); piv.rotation.x = 0.45; g.add(piv);
     wheel = new THREE.Group(); piv.add(wheel);
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.19, 0.022, 8, 28), dark); wheel.add(ring);
-    for (const a of [Math.PI / 2, Math.PI * 7 / 6, Math.PI * 11 / 6]) { const s = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.025, 0.02), dark); s.position.set(Math.cos(a) * 0.09, Math.sin(a) * 0.09, 0); s.rotation.z = a; wheel.add(s); }
-    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.04, 12), chrome); hub.rotation.x = Math.PI / 2; wheel.add(hub);
-    const col = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.3, 8), dark); col.rotation.x = Math.PI / 2; col.position.z = -0.15; piv.add(col);
-    // teller achter het stuur
-    const dial = new THREE.Group(); dial.position.set(CAR.eye[0], 1.04, -0.52); dial.rotation.x = -0.35; g.add(dial);
-    dial.add(new THREE.Mesh(new THREE.CircleGeometry(0.085, 24), white));
-    needle = new THREE.Mesh(new THREE.BoxGeometry(0.006, 0.07, 0.004), red); needle.geometry.translate(0, 0.03, 0.003); dial.add(needle);
+    mk(new THREE.TorusGeometry(0.205, 0.011, 8, 40), ink, wheel);
+    mk(new THREE.TorusGeometry(0.105, 0.005, 6, 32, Math.PI), chrome, wheel).rotation.z = Math.PI; // claxonring (onderste helft)
+    for (const a of [0, Math.PI]) { const sp = mk(new THREE.BoxGeometry(0.2, 0.022, 0.012), cream, wheel, Math.cos(a) * 0.1, 0, 0); sp.rotation.z = a; }
+    mk(new THREE.BoxGeometry(0.02, 0.105, 0.008), chrome, wheel, 0, -0.052, 0);
+    const hub = mk(new THREE.CylinderGeometry(0.04, 0.048, 0.035, 16), cream, wheel); hub.rotation.x = Math.PI / 2;
+    const cap = mk(new THREE.CylinderGeometry(0.02, 0.02, 0.04, 12), chrome, wheel); cap.rotation.x = Math.PI / 2;
+    const col = mk(new THREE.CylinderGeometry(0.025, 0.03, 0.3, 8), ink, piv, 0, 0, -0.15); col.rotation.x = Math.PI / 2;
+    // klokken achter het stuur: snelheid (links) + benzine (rechts), chroomrand, onder een kap
+    const pod = new THREE.Group(); pod.position.set(CAR.eye[0], 1.045, -0.52); pod.rotation.x = -0.35; g.add(pod);
+    mk(new THREE.BoxGeometry(0.4, 0.2, 0.02), ink, pod, 0, 0, -0.012);
+    mk(new THREE.BoxGeometry(0.42, 0.02, 0.13), dash, pod, 0, 0.105, 0.05); // kap
+    const clock = (x, n) => {
+      const d = new THREE.Group(); d.position.set(x, 0, 0); pod.add(d);
+      mk(new THREE.CircleGeometry(0.078, 28), cream, d); mk(new THREE.TorusGeometry(0.08, 0.007, 6, 28), chrome, d);
+      for (let k = 0; k < n; k++) { const a = 2.2 - k / (n - 1) * 4.4, t = mk(new THREE.BoxGeometry(0.005, k % 2 ? 0.01 : 0.018, 0.002), ink, d, -Math.sin(a) * 0.062, Math.cos(a) * 0.062, 0.002); t.rotation.z = a; }
+      const nd = mk(new THREE.BoxGeometry(0.006, 0.058, 0.004), red, d); nd.geometry.translate(0, 0.025, 0.005);
+      mk(new THREE.CircleGeometry(0.01, 10), ink, d, 0, 0, 0.008);
+      return nd;
+    };
+    needle = clock(-0.095, 15); clock(0.095, 5).rotation.z = -0.9; // benzine: driekwart vol
+    // binnenspiegel + geurboompje (zwaait mee in pose)
+    box(0.02, 0.06, 0.02, 0, 1.455, -0.2, ink); box(0.24, 0.065, 0.015, 0, 1.4, -0.19, ink); box(0.22, 0.05, 0.004, 0, 1.4, -0.181, chrome);
+    charm = new THREE.Group(); charm.position.set(0, 1.365, -0.19); g.add(charm);
+    mk(new THREE.BoxGeometry(0.003, 0.1, 0.003), ink, charm, 0, -0.05, 0);
+    for (const [r, h, y] of [[0.022, 0.035, -0.105], [0.032, 0.04, -0.13], [0.042, 0.045, -0.158]]) mk(new THREE.ConeGeometry(r, h, 3), green, charm, 0, y, 0).scale.z = 0.12;
+    mk(new THREE.BoxGeometry(0.012, 0.022, 0.004), wood, charm, 0, -0.19, 0);
     g.traverse(o => { if (o.isMesh) { o.castShadow = false; o.receiveShadow = false; o.userData.car = true; } });
     g.visible = false;
     H.scene.add(g);
@@ -260,6 +291,7 @@
     cam.updateMatrixWorld();
     if (wheel) wheel.rotation.z = S.steer * 3.2;
     if (needle) needle.rotation.z = 2.2 - Math.min(1, Math.abs(S.v) * 3.6 / 140) * 4.4;
+    if (charm) charm.rotation.z += (Math.max(-0.6, Math.min(0.6, S.steer * S.v * 0.06)) + Math.sin(performance.now() / 420) * Math.min(0.05, Math.abs(S.v) * 0.004) - charm.rotation.z) * Math.min(1, dt * 4);
     for (const w of wheels) w.rotation.x -= S.v * dt / 0.33;
     // laden + schaduwkader volgen een punt vóór de auto
     const t = H.controls; if (t) t.target.set(S.x - Math.sin(S.yaw) * 120, S.y, S.z - Math.cos(S.yaw) * 120);
