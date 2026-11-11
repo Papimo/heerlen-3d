@@ -76,7 +76,7 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
   // uGOn = 0 zodra niets meer groeit (dan geen enkele rekenstap extra). Schaduw pas als het staat (castShadow uit tijdens groeien).
   const GROW = { dur: 0.5, spread: 1.8, jitter: 0.15 }; GROW.end = GROW.dur + GROW.spread + GROW.jitter;
   const T0 = performance.now(), nowS = () => (performance.now() - T0) / 1000;
-  const GU = { uGT: { value: 0 }, uGOn: { value: 0 }, uGDur: { value: GROW.dur }, uEra: { value: new THREE.Vector3(0, 0, 0) }, uPand: { value: null } }; // uEra = bouwjaar y0, y1, krimp 0…1 (H.setEra)
+  const GU = { uGT: { value: 0 }, uGOn: { value: 0 }, uGDur: { value: GROW.dur }, uEra: { value: new THREE.Vector3(0, 0, 0) }, uPand: { value: null }, uEraC: { value: new THREE.Vector4(0, 0, 0, 0) } }; // uEraC = kleur bouwjaar-filter + aan (87) // uEra = bouwjaar y0, y1, krimp 0…1 (H.setEra)
   const ERA_T = 0.9; let eraGoal = 0, eraT = 0; // s heen/terug
   const TREE_U = { uTT: { value: 1e4 } }; let treeFadeEnd = 0; // bomen groeien (treesFor/updateDetail)
   // ---------- Pand-textuur (roadmap 86, ?nopandtex = oude attributen per hoekpunt) ----------
@@ -111,7 +111,9 @@ void pandRead() { ivec2 t = ivec2(aPand + 0.5); pdA = texelFetch(uPand, t, 0); p
 #define pSeed pdA.z
 #define pInfo vec4(pdA.w, pdB.xyz)
 #define pBiz (vec2(floor(pdB.w / 256.0), mod(pdB.w, 256.0)) / 255.0)
+#define pHl texelFetch(uPand, ivec2(aPand + 0.5) + ivec2(0, 2), 0)
 ` : `
+#define pHl vec4(0.0)
 attribute float aGrow, aGBase, aSeed; attribute vec4 aInfo; attribute vec2 aBiz;
 void pandRead() {}
 #define pGrow aGrow
@@ -146,7 +148,7 @@ if (uEra.z > 0.0 && (pInfo.x < uEra.x || pInfo.x > uEra.y)) { // bouwjaar-filter
   const redraw = () => { dirty = true; full = true; };
   const BUILD = 'anime-1 licht randje, daken op bouwjaar, middag zacht, bolle bomen (2026-11-09)', DBG_U = { value: new THREE.Vector2(1, 1) }; // ?gpu: versie zichtbaar + schakelaars omlijning (x = vlaklijnen, y = dieptelijnen)
   H.redraw = redraw;
-  H.VERSION = '0.9.1-test'; // getoond onderaan (ui.js #attr); bij release ophogen
+  H.VERSION = '0.9.1-test2'; // getoond onderaan (ui.js #attr); bij release ophogen
   // na de upload naar de GPU de kopie in het werkgeheugen weggooien (canvas → 1×1, DataTexture-data → null). Opnieuw tekenen = nieuw canvas/nieuwe textuur
   H.freeAfterUpload = tex => { tex.onUpdate = () => { tex.onUpdate = null; const im = tex.image; if (im && im.getContext) im.width = im.height = 1; else if (im && im.data) im.data = null; }; return tex; };
 
@@ -1154,15 +1156,27 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
           if (vBz.y > 0.6 && fract(vS * 3.1) < 0.34) p = mix(p, ${lin('#cdd1d4')}, step(ht, 0.35)); // bitumen-dak: aluminium dakrand
         } }`;
   const isoPal = (s, roof) => {
-    Object.assign(s.uniforms, { uPalR: U.uPalR, uPalW: U.uPalW, uDim: U.uDim, uAnime: U.uAnime });
+    Object.assign(s.uniforms, { uPalR: U.uPalR, uPalW: U.uPalW, uDim: U.uDim, uAnime: U.uAnime, uHlN: U.uNight });
+    // oplichten (87): vHl = (kleur, stijl) uit de pand-textuur; stijl 1 = plek (dak in kleur, gevel band begane grond), 2 = heel pand (bouwjaar-filter, uitgelicht)
+    const hlGlow = 'vHl.rgb * 0.18 * (1.0 + 1.6 * uHlN)';
     // vI = (bouwjaar, dakoppervlak, voet, lange as), vHt = hoogte in m; pSeed/pInfo/pBiz/pGBase komen uit PAND_GLSL (via addGrow, ook op deze materialen)
-    s.vertexShader = s.vertexShader.replace('#include <common>', `#include <common>\nvarying float vS, vHt; varying vec3 vRW; varying vec4 vI; varying vec2 vBz;`)
-      .replace('#include <project_vertex>', `#include <project_vertex>\nvS = pSeed; vRW = (modelMatrix * vec4(transformed, 1.0)).xyz; vec4 pI = pInfo; vec2 pB = pBiz; vI = vec4(pI.x, pI.y, pGBase, pI.w); vHt = pI.z * 0.1; vBz = vec2((pB.x - 0.5) * 3.14159265, pB.y);`);
-    s.fragmentShader = s.fragmentShader.replace('#include <common>', `#include <common>\nvarying float vS, vHt; varying vec3 vRW; varying vec4 vI; uniform vec3 uPalR[8]; uniform vec3 uPalW[8]; uniform float uDim, uAnime;\n#define BK_FOOT vI.z\n${BIZ_COMMON}`)
+    s.vertexShader = s.vertexShader.replace('#include <common>', `#include <common>\nvarying float vS, vHt; varying vec3 vRW; varying vec4 vI; varying vec2 vBz; varying vec4 vHl; uniform vec4 uEraC;`)
+      .replace('#include <project_vertex>', `#include <project_vertex>\nvS = pSeed; vRW = (modelMatrix * vec4(transformed, 1.0)).xyz; vec4 pI = pInfo; vec2 pB = pBiz; vI = vec4(pI.x, pI.y, pGBase, pI.w); vHt = pI.z * 0.1; vBz = vec2((pB.x - 0.5) * 3.14159265, pB.y);
+vHl = pHl; if (uEraC.a > 0.5 && vHl.a < 0.5 && pI.x >= uEra.x && pI.x <= uEra.y) vHl = vec4(uEraC.rgb, 2.0);`);
+    s.fragmentShader = s.fragmentShader.replace('#include <common>', `#include <common>\nvarying float vS, vHt; varying vec3 vRW; varying vec4 vI; varying vec4 vHl; uniform vec3 uPalR[8]; uniform vec3 uPalW[8]; uniform float uDim, uAnime, uHlN;\n#define BK_FOOT vI.z\n${BIZ_COMMON}`)
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+      ${roof ? `if (vHl.a > 0.5) totalEmissiveRadiance += ${hlGlow};`
+        : `if (vHl.a > 1.5) totalEmissiveRadiance += ${hlGlow}; else if (vHl.a > 0.5) totalEmissiveRadiance = mix(totalEmissiveRadiance, vHl.rgb * (1.0 - hlLip) * 0.32 * (1.0 + 1.6 * uHlN), hlIn);`}`)
       .replace('#include <color_fragment>', `#include <color_fragment>
       {
         vec3 p = ${roof ? 'uPalR[int(fract(vS * 7.31) * 7.999)]' : 'uPalW[int(vS * 7.999)]'};${roof ? ROOF_MIJN + ANIME_ROOF : ANIME_WALL}
         diffuseColor.rgb = mix(p, vec3(dot(p, vec3(0.3, 0.59, 0.11)) * 1.1), 0.7 * uDim); gGlass *= 1.0 - uDim; gGloss *= 1.0 - uDim;
+      }
+      float hlIn = 0.0, hlLip = 0.0, hlHb = 0.0; // gevel: binnen de band, luifelrand, hoogte boven de voet
+      if (vHl.a > 0.5) {
+        ${roof ? 'hlIn = 1.0; diffuseColor.rgb = vHl.rgb;' : `if (vHl.a > 1.5) { hlIn = 1.0; diffuseColor.rgb = vHl.rgb; }
+        else { hlHb = vRW.y - vI.z - 1.0; hlIn = step(hlHb, 4.0); hlLip = hlIn * step(3.65, hlHb); diffuseColor.rgb = mix(diffuseColor.rgb, vHl.rgb * (1.0 - 0.45 * hlLip), hlIn); }`}
+        gGlass *= 1.0 - hlIn; gGloss *= 1.0 - hlIn;
       }`);
   };
   // kaart op het terrein (+ ondergrond): in iso iets voller/zachter (= canvasfilter saturate 1.25 · contrast 0.85 · brightness 1.06 uit het ontwerp)
@@ -1199,7 +1213,15 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
         float win = step(0.25, f.x) * step(f.x, 0.75) * step(0.3, f.y) * step(f.y, 0.8);
         float lit = step(0.8, h21(vec2(floor(u / 3.2), floor(fy)) + floor(vW.xz / 40.0)));
         float fade = smoothstep(700.0, 2200.0, length(vW - uEye));
-        gl_FragColor.rgb += vec3(1.0, 0.72, 0.38) * mix(win * lit, 0.05, fade) * step(abs(n.y), 0.5) * uNight * 0.6;
+        if (vHl.a < 0.5) gl_FragColor.rgb += vec3(1.0, 0.72, 0.38) * mix(win * lit, 0.05, fade) * step(abs(n.y), 0.5) * uNight * 0.6;
+        else if (vHl.a < 1.5) { // pand van een plek (87, was matWall): etalage in de band + avondramen in categoriekleur
+          float fx = fract(u / 4.0), fy2 = (hlHb - 4.0) / 3.1; vec2 g2 = vec2(fract(u / 3.2), fract(fy2));
+          float shop = hlIn * (1.0 - hlLip) * step(0.06, fx) * step(fx, 0.94) * step(0.35, hlHb) * step(hlHb, 3.45);
+          float win2 = (1.0 - hlIn) * step(0.22, g2.x) * step(g2.x, 0.78) * step(0.28, g2.y) * step(g2.y, 0.82);
+          float lit2 = step(0.25, h21(vec2(floor(u / 3.2), floor(fy2)) + floor(vW.xz / 40.0)));
+          vec3 glowC = mix(pow(max(vHl.rgb, 0.0), vec3(1.0 / 2.2)) * 1.9, vec3(1.0, 0.86, 0.62), 0.3);
+          gl_FragColor.rgb += step(abs(n.y), 0.5) * uNight * glowC * (mix(shop, 0.15 * hlIn, fade) * 0.9 + mix(win2 * lit2, 0.12 * (1.0 - hlIn), fade) * 0.85);
+        }
       }`);
     runPatch('wall', s, MAT.wall);
   };
@@ -1454,6 +1476,24 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     const m = hullMat[st.col] ||= new THREE.MeshBasicMaterial({ color: st.col, side: THREE.BackSide, transparent: st.op < 1, opacity: st.op, depthWrite: st.op >= 1, fog: false });
     const me = new THREE.Mesh(geo, m); me.renderOrder = st.op < 1 ? 3 : 0; return me;
   }
+  // 87: oplichten = texel (kleur + stijl) in de pand-textuur i.p.v. losse kopieën van de driehoeken; ?nohltex = oude kopieën. Omhulsels (lm r/g) blijven een kopie.
+  const HLTEX = PANDTEX && !QS.has('nohltex'), hlCol = new THREE.Color(); let hlPrev = new Set();
+  H.HLTEX = HLTEX;
+  function hlApply(want) { // want: vak → [b, kleur, stijl, …]
+    const e = GU.uEraC.value; if (era) { hlCol.set(era.col); e.set(hlCol.r, hlCol.g, hlCol.b, 1); } else e.w = 0;
+    const D = PAND.data; if (!D) return;
+    for (const c of new Set([...hlPrev, ...want.keys()])) {
+      if (c.pRow == null) continue;
+      const rows = Math.ceil(c.bR.length / PW), a = want.get(c);
+      for (let r = 0; r < rows; r++) { const o = ((c.pRow + r) * 3 + 2) * PW * 4; D.fill(0, o, o + PW * 4); }
+      if (a) for (let k = 0; k < a.length; k += 3) {
+        const b = a[k], o = (((c.pRow + (b / PW | 0)) * 3 + 2) * PW + b % PW) * 4;
+        hlCol.set(a[k + 1]); D[o] = hlCol.r; D[o + 1] = hlCol.g; D[o + 2] = hlCol.b; D[o + 3] = a[k + 2];
+      }
+      pandPush(c.pRow, rows);
+    }
+    hlPrev = new Set(want.keys());
+  }
   let hlT = 0;
   function rebuildHighlights() { // gebundeld: hooguit één keer per beeld
     if (hlT) return;
@@ -1469,18 +1509,22 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
       }
       // één dak- en één muurmesh per kleur over alle vakken (was per vak × kleur: honderden draw calls)
       const groups = new Map(); // kleur → { roof, wall, base }
+      const want = new Map(), wantAdd = (c, b, col, st) => { let a = want.get(c); if (!a) want.set(c, a = []); a.push(b, col, st); };
       for (const keys of byBuilding.values()) {
         const m = marks.get(keys[0]);
         if (era) { const y = m.best.c.year?.[m.best.b]; if (!(y >= era.y0 && y <= era.y1)) continue; } // bouwjaar-filter: plek-kopie krimpt mee (= weg)
         if (keys[0][0] === 'l' && lmStyle !== '0') { // bekend gebouw
           if (lmStyle[0] === 'w') continue; // wimpel: alleen DOM
           if (HULL[lmStyle]) { const t = { roof: [], wall: [], base: [] }; copyFaces(m.best.c, m.best.b, t); const me = hullMesh(t.roof.concat(t.wall), HULL[lmStyle]); scene.add(me); hlMeshes.push(me); continue; }
+          if (HLTEX) { wantAdd(m.best.c, m.best.b, '#fbf2df', 2); continue; }
           let a = groups.get('#fbf2df'); if (!a) groups.set('#fbf2df', a = { roof: [], wall: [], base: [], full: true }); copyFaces(m.best.c, m.best.b, a); continue; // u: uitgelicht
         }
+        if (HLTEX) { wantAdd(m.best.c, m.best.b, m.color, 1); continue; }
         let a = groups.get(m.color); if (!a) groups.set(m.color, a = { roof: [], wall: [], base: [] });
         copyFaces(m.best.c, m.best.b, a);
       }
-      if (era) { // panden van een plek houden hun categoriekleur; verborgen panden (eigen modellen) overslaan
+      if (HLTEX) hlApply(want); // bouwjaar-filter: kleur via uEraC in de shader (geen kopieën)
+      else if (era) { // panden van een plek houden hun categoriekleur; verborgen panden (eigen modellen) overslaan
         const a = { roof: [], wall: [], base: [], era: true }; groups.set('era', a);
         for (const c of H.chunks.values()) {
           if (!c.mesh || !c.year) continue;
