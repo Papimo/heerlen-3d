@@ -528,7 +528,7 @@
 
   // ---------- uitdunnen naar afstand (gelijkwaardige afstand = chunkDist × lens, zoals bossen) ----------
   function detail(v) {
-    const d = H.chunkDist(v.c) * H.lens(), drv = !!H.driving?.(), far = drv && H.chunkDist(v.c) > (H.DRV_FAR || 650) + 100;
+    const d = H.treeDist(H.chunkDist(v.c) * H.lens()), drv = !!H.driving?.(), far = drv && H.chunkDist(v.c) > (H.DRV_FAR || 650) + 100;
     const f = far ? 0 : drv ? 1 : d < 1800 ? 1 : d < 4000 ? 1 / 3 : 0, cast = !drv && d < 1800, lo = !!H.treeLo?.(d); let ch = false;
     for (const im of v.trees) {
       const g = lo ? im.geoLo : im.geoHi; if (im.geometry !== g) { im.geometry = g; ch = true; }

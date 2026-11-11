@@ -8,8 +8,8 @@
   const CAR = {
     len: 4.2, wid: 1.8, wb: 2.6,          // m; wielbasis voor de draaicirkel
     eye: [-0.36, 1.26, 0.27],             // bestuurder links (rechts rijden); hoogte gekozen door gebruiker (tussen 1,18 en 1,34)
-    vMax: 22, vBoost: 33, vRev: 5, vOff: 8, // m/s (80 / 120 km/u; buiten de weg 29 km/u)
-    acc: 4.5, brake: 9, hand: 12, drag: 0.35, offDrag: 3, steerMax: 0.6, grav: 4.9,
+    vMax: 33.4, vBoost: 38.9, vRev: 5, vOff: 19.5, // m/s (120 / 140 km/u met Shift; buiten de weg 70 km/u)
+    acc: 4.5, brake: 9, hand: 12, drag: 0.35, offDrag: 1, steerMax: 0.6, grav: 4.9,
   };
   const CELL = 50; // m, raster voor wegstukken
   let car = null, cam = null, on = false, drop = false;
@@ -203,7 +203,7 @@
     if (thr) v += (v < -0.1 ? CAR.brake : CAR.acc) * dt;
     if (brk) v -= (v > 0.1 ? CAR.brake : CAR.acc * 0.7) * dt;
     if (hand) v -= Math.sign(v) * Math.min(Math.abs(v), CAR.hand * dt);
-    v -= Math.sign(v) * Math.min(Math.abs(v), (CAR.drag + (S.off ? CAR.offDrag : 0) + 0.003 * v * v) * dt);
+    v -= Math.sign(v) * Math.min(Math.abs(v), (CAR.drag + (S.off ? CAR.offDrag : 0) + 0.002 * v * v) * dt);
     v -= CAR.grav * Math.sin(S.pitch) * dt; // heuvel op = trager, af = sneller (Heerlen!)
     const vmax = S.off ? CAR.vOff : boost ? CAR.vBoost : CAR.vMax;
     if (v > vmax) v = Math.max(vmax, v - CAR.brake * dt);

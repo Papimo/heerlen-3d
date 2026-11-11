@@ -148,7 +148,7 @@ if (uEra.z > 0.0 && (pInfo.x < uEra.x || pInfo.x > uEra.y)) { // bouwjaar-filter
   const redraw = () => { dirty = true; full = true; };
   const BUILD = 'anime-1 licht randje, daken op bouwjaar, middag zacht, bolle bomen (2026-11-09)', DBG_U = { value: new THREE.Vector2(1, 1) }; // ?gpu: versie zichtbaar + schakelaars omlijning (x = vlaklijnen, y = dieptelijnen)
   H.redraw = redraw;
-  H.VERSION = '0.9.1-test2'; // getoond onderaan (ui.js #attr); bij release ophogen
+  H.VERSION = '0.9.1-test3'; // getoond onderaan (ui.js #attr); bij release ophogen
   // na de upload naar de GPU de kopie in het werkgeheugen weggooien (canvas → 1×1, DataTexture-data → null). Opnieuw tekenen = nieuw canvas/nieuwe textuur
   H.freeAfterUpload = tex => { tex.onUpdate = () => { tex.onUpdate = null; const im = tex.image; if (im && im.getContext) im.width = im.height = 1; else if (im && im.data) im.data = null; }; return tex; };
 
@@ -638,12 +638,15 @@ if (uEra.z > 0.0 && (pInfo.x < uEra.x || pInfo.x > uEra.y)) { // bouwjaar-filter
   const lens = () => camera === ortho ? isoHalf() / TAN21 / camera.position.distanceTo(controls.target) : Math.tan(persp.fov * Math.PI / 360) / TAN21;
   const viewDist = () => camera.position.distanceTo(controls.target) * lens();
   // halve breedte van het schaduwkader (en waarbinnen panden schaduw werpen)
-  const shadowExt = () => camera === ortho ? Math.max(350, Math.min(3000, Math.max(isoHalf() * ortho.right / ISO_H0, isoHalf() * 2.2) * 1.1))
+  const shHalf = () => QS.has('shclose') ? isoHalf() : Math.max(isoHalf(), ISO_LEVELS[1]); // dichtste stand houdt het schaduwkader van de stand ervoor: inzoomen = geen nieuwe schaduwkaart (?shclose = oud, scherper)
+  const shadowExt = () => camera === ortho ? Math.max(350, Math.min(3000, Math.max(shHalf() * ortho.right / ISO_H0, shHalf() * 2.2) * 1.1))
     : Math.max(350, Math.min(2600, viewDist() * 1.1));
   // schaduwkader schuift vooruit in de laatste schuifrichting (zelfde kosten, schaduw ligt al klaar waar je heen gaat); render-lus zet shC
   const shC = new THREE.Vector3(), shLast = new THREE.Vector3(), shDir = new THREE.Vector3(), SH_AHEAD = 0.25, shFw = new THREE.Vector3(), DRV_SH = 280; // DRV_SH: zover vooruit moet de schaduw kloppen tijdens rijden (m) // meer = achterkant van het beeld valt buiten het kader
   let shKeep = false;
   H.lens = lens;
+  const treeDist = d => camera === ortho && !QS.has('treedist') ? isoHalf() / TAN21 : d; // gelijkwaardige afstand voor bomen/straatmeubilair (?treedist = oud: per vak)
+  H.treeDist = treeDist;
   function wantLevel(c) {
     if (camera === ortho) { // iso: overal dezelfde schaal → tegelniveau uit meters per schermpixel (incl. pixeldichtheid), niet uit afstand
       const h = isoHalf(), mpp = 2 * h / (renderer.domElement.clientHeight * PR); // tegel z: ±98 730 / 2^z m per px op 50,9° NB
@@ -684,7 +687,8 @@ if (uEra.z > 0.0 && (pInfo.x < uEra.x || pInfo.x > uEra.y)) { // bouwjaar-filter
       const cast = shadows && !far && chunkDist(c, shC, 0) < S;
       if (c.mesh && !c.growing && c.mesh.castShadow !== cast && !mv) { c.mesh.castShadow = cast; ch = true; }
       if (c.trees) { // bomen: dichtbij alles, verder weg uitgedund, heel ver weg geen
-        const f = driveCam ? (chunkDist(c, camera.position) < DRV_FAR + 100 ? 1 : 0) : d < 1800 ? 1 : d < 4000 ? 1 / 3 : d < 8000 ? 1 / 8 : 0, lo = dbs.y / (2 * d * TAN21) < TREE_LO_PPM; // d × lens → px/m zoals in iso
+        const dT = treeDist(d); // iso: voor alle vakken gelijk (alleen de zoomstand telt) → schuiven wisselt geen bomen meer per vak
+        const f = driveCam ? (chunkDist(c, camera.position) < DRV_FAR + 100 ? 1 : 0) : dT < 1800 ? 1 : dT < 4000 ? 1 / 3 : dT < 8000 ? 1 / 8 : 0, lo = dbs.y / (2 * dT * TAN21) < TREE_LO_PPM; // d × lens → px/m zoals in iso
         for (const im of c.trees) {
           const g = lo ? im.geoLo : im.geoHi; if (im.geometry !== g && (lo || !mv)) { im.geometry = g; ch = true; }
           const n = Math.round(im.full * f), cs = cast && f === 1 && !driveCam; // rijden: bomen werpen geen schaduw (scheelt schaduwpass)
@@ -2455,6 +2459,10 @@ vHl = pHl; if (uEraC.a > 0.5 && vHl.a < 0.5 && pI.x >= uEra.x && pI.x <= uEra.y)
     // rijden: kader ligt vóór de auto; schaduwkaart (= hele stad nog eens tekenen) pas opnieuw als het zichtbare stuk (auto + DRV_SH m vooruit) er bijna uit valt
     // → rechtdoor rijden ±1× per 250–300 m, bocht van ±90° = 1×. Iso: per 20 m van het doel (zoals altijd)
     let key = Math.round(controls.target.x / 20) + ',' + Math.round(controls.target.z / 20) + ',' + Math.round(S / 50);
+    if (!driveCam && camera === ortho && shadowKey && !QS.has('shclose') && isoHalf() < ISO_LEVELS[1] - 1) { // dichtste stand: kaart van de stand ervoor houden zolang het beeld binnen dat kader valt
+      const fr = sun.shadow.camera.right, vr = Math.max(isoHalf() * ortho.right / ISO_H0, isoHalf() * 2.2);
+      if (fr <= S * 1.05 && Math.hypot(controls.target.x - shC.x, controls.target.z - shC.z) + vr < fr - 20) key = shadowKey;
+    }
     if (driveCam) {
       camera.getWorldDirection(shFw); shFw.y = 0; if (shFw.lengthSq() < 1e-6) shFw.set(0, 0, -1); shFw.normalize();
       const p = camera.position, r = S - 20, ax = p.x + shFw.x * DRV_SH - shC.x, az = p.z + shFw.z * DRV_SH - shC.z, bx = p.x - shC.x, bz = p.z - shC.z;
