@@ -148,7 +148,7 @@ if (uEra.z > 0.0 && (pInfo.x < uEra.x || pInfo.x > uEra.y)) { // bouwjaar-filter
   const redraw = () => { dirty = true; full = true; };
   const BUILD = 'anime-1 licht randje, daken op bouwjaar, middag zacht, bolle bomen (2026-11-09)', DBG_U = { value: new THREE.Vector2(1, 1) }; // ?gpu: versie zichtbaar + schakelaars omlijning (x = vlaklijnen, y = dieptelijnen)
   H.redraw = redraw;
-  H.VERSION = '0.9.1-test5'; // getoond onderaan (ui.js #attr); bij release ophogen
+  H.VERSION = '0.9.1-test6'; // getoond onderaan (ui.js #attr); bij release ophogen
   // na de upload naar de GPU de kopie in het werkgeheugen weggooien (canvas → 1×1, DataTexture-data → null). Opnieuw tekenen = nieuw canvas/nieuwe textuur
   H.freeAfterUpload = tex => { tex.onUpdate = () => { tex.onUpdate = null; const im = tex.image; if (im && im.getContext) im.width = im.height = 1; else if (im && im.data) im.data = null; }; return tex; };
 
@@ -1841,6 +1841,7 @@ vHl = pHl; if (uEraC.a > 0.5 && vHl.a < 0.5 && pI.x >= uEra.x && pI.x <= uEra.y)
   // 92: gloed (E Filmisch) op ¼ resolutie: drempel + 4 bilineaire taps (4×4 px gemiddeld) → 2× 9-tap blur (σ ≈ 11 px op volle res, ≈ oude straal 22 px). Eén keer per scène-render
   // (draw → postFresh), niet per wolkentik. Half-float lineair (waarden 0…0,1). ?noglow4 = oude lus van 12 tikken op volle resolutie in de post-shader.
   const GLOW4 = !QS.has('noglow4'), SPLIT = !QS.has('nopostsplit'); let rtK = null, kKey = ''; // SPLIT = 82: cache van niet-tijdsafhankelijke post-stappen (zie runPosts)
+  const GLOWK = QS.has('glow') ? +QS.get('glow') : 1.6;
   let rtG1 = null, rtG2 = null, glowDown, glowBlur, glowHave = false, postFresh = true;
   function makeGlow() {
     const w = Math.max(1, Math.round(rtS.x / 4)), h = Math.max(1, Math.round(rtS.y / 4));
@@ -1868,6 +1869,7 @@ vHl = pHl; if (uEraC.a > 0.5 && vHl.a < 0.5 && pI.x >= uEra.x && pI.x <= uEra.y)
     glowBlur.uniforms.tSrc.value = rtG2.texture; glowBlur.uniforms.uStep.value.set(0, 1.5 / h);
     renderer.setRenderTarget(rtG1); renderer.render(postScene, postCam);
     pq.material = post; post.uniforms.tGlow.value = rtG1.texture; glowHave = true;
+    post.uniforms.uGlowK.value = GLOWK * (1 - 0.6 * U.uNight.value) * (driveCam ? 0.5 : 1); // gloed: was vast 4,0 (gebruiker: te veel, vooral op ramen); avond/nacht en rijden minder. ?glow=4 = oud
   }
   function draw(fullDraw = true) {
     if (isoCam() && preScene.length && !zoomOn()) { mq('voor-scène'); for (const fn of preScene) fn(camera); mq(renderer.shadowMap.needsUpdate ? 'kleur+schaduw' : 'kleur'); } // meter: grond-pass e.d. apart
@@ -1889,9 +1891,9 @@ vHl = pHl; if (uEraC.a > 0.5 && vHl.a < 0.5 && pI.x >= uEra.x && pI.x <= uEra.y)
       });
       // tN/tDN highp: three r160 zet geen sampler-precisie → standaard lowp → telefoon (Mali e.d.) las de diepte als 16 bit → streeplijnen
       post = new THREE.ShaderMaterial({
-        uniforms: { tC: { value: useMRT ? rtC.texture[0] : rtC.texture }, tN: { value: rtN.texture }, tSky: { value: skyTex }, tGlow: { value: null }, uMrt: { value: useMRT ? 1 : 0 }, uPd: { value: 0 }, uFog: { value: new THREE.Vector2() }, tD: { value: null }, tDN: { value: null }, uDyn: { value: 0 }, uRes: { value: new THREE.Vector2() }, uW: { value: 2 }, uK: { value: 0.85 }, uInk: { value: H.isoColors.ink }, uLine: U.uLine, uFilm: U.uFilm, uDbg: DBG_U },
+        uniforms: { tC: { value: useMRT ? rtC.texture[0] : rtC.texture }, tN: { value: rtN.texture }, tSky: { value: skyTex }, tGlow: { value: null }, uGlowK: { value: 1.6 }, uMrt: { value: useMRT ? 1 : 0 }, uPd: { value: 0 }, uFog: { value: new THREE.Vector2() }, tD: { value: null }, tDN: { value: null }, uDyn: { value: 0 }, uRes: { value: new THREE.Vector2() }, uW: { value: 2 }, uK: { value: 0.85 }, uInk: { value: H.isoColors.ink }, uLine: U.uLine, uFilm: U.uFilm, uDbg: DBG_U },
         vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
-        fragmentShader: `varying vec2 vUv; uniform sampler2D tC, tD, tSky${GLOW4 ? ', tGlow' : ''}; uniform highp sampler2D tN, tDN; uniform vec2 uRes; uniform float uW, uK, uDyn, uMrt, uLine, uFilm, uPd; uniform vec2 uFog; uniform vec3 uInk; uniform vec2 uDbg;
+        fragmentShader: `varying vec2 vUv; uniform sampler2D tC, tD, tSky${GLOW4 ? ', tGlow' : ''}; uniform highp sampler2D tN, tDN; uniform vec2 uRes; uniform float uW, uK, uDyn, uMrt, uLine, uFilm, uPd, uGlowK; uniform vec2 uFog; uniform vec3 uInk; uniform vec2 uDbg;
           ${NRM_GLSL}
           ivec2 tq(highp sampler2D t, vec2 o) { return clamp(ivec2(gl_FragCoord.xy + o), ivec2(0), textureSize(t, 0) - 1); } // exacte pixel (vUv+o/uRes rondde op telefoons af → strepen)
           vec4 N(vec2 o) { ivec2 u = tq(tN, o); vec2 s = texelFetch(tN, u, 0).xy; // xyz = normaal, w = diepte
@@ -1907,7 +1909,7 @@ vHl = pHl; if (uEraC.a > 0.5 && vHl.a < 0.5 && pI.x >= uEra.x && pI.x <= uEra.y)
             if (uPd > 0.5) { float zf = 20.0 / max(n0.w, 20.0); dd *= zf * zf; } // rijcamera (perspectief): grond loopt niet-lineair weg
             float k = max(smoothstep(0.42, 0.52, nd) * uDbg.x, smoothstep(1.7, 2.1, dd) * uDbg.y); // smalle overgang = strakke lijn i.p.v. vlekkerige rand
             if (uFilm > 0.5) { // E Filmisch: gloed op linsters (24 tikken), waas bovenin (= ver weg in iso), ACES-curve
-              ${GLOW4 ? 'c.rgb += texture2D(tGlow, vUv).rgb * 4.0; // 92: gloed uit ¼-res textuur (drempel + blur, zie makeGlow)' : `vec3 bl = vec3(0.0); float rot = fract(sin(dot(vUv, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831;
+              ${GLOW4 ? 'c.rgb += texture2D(tGlow, vUv).rgb * uGlowK; // 92: gloed uit ¼-res textuur (drempel + blur, zie makeGlow)' : `vec3 bl = vec3(0.0); float rot = fract(sin(dot(vUv, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831;
               for (int i = 0; i < 12; i++) { float an = float(i) * 2.39996 + rot, r = sqrt((float(i) + 0.5) / 12.0) * 22.0;
                 bl += max(texture2D(tC, vUv + vec2(cos(an), sin(an)) * r / uRes).rgb - 0.9, 0.0); }
               c.rgb += bl / 12.0 * 4.0;`} // drempel 0,72 → 0,9: lichte pastelgrond gaf een witte waas over alles (gebruiker); waas bovenin weg
