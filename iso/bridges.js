@@ -7,6 +7,43 @@
   // ground.js prep() leegt GD.line → nu al kopiëren (alleen de ruwe records; decoderen pas bij bouwen)
   const RAW = GD.line.filter(l => l[2] === 1 && l[0] !== 'beek' && l[0] !== 'zand').map(l => ({ c: l[0], w: l[1] / 10, d: l[3] }));
   if (!RAW.length) return;
+  // wat er ónder de bruggen ligt (weg, spoor, pad, beek): stukken in een raster van 50 m, alleen rond de bruggen → pijlers niet op de weg (?pilold = oud)
+  const UC = 50, UNDER = new Map(), PILOLD = new URLSearchParams(location.search).has('pilold');
+  if (!PILOLD) {
+    const near = new Set(), qq = GD.q, cell = v => Math.floor(v / UC);
+    for (const r of RAW) { // vakjes langs elke brug (+1 rondom)
+      let x = 0, y = 0, px = 0, py = 0;
+      for (let k = 0; k < r.d.length; k += 2) {
+        x += r.d[k] * qq; y += r.d[k + 1] * qq;
+        const m = k ? Math.max(1, Math.ceil(Math.hypot(x - px, y - py) / 25)) : 1;
+        for (let j = 1; j <= m; j++) { const gx = cell(px + (x - px) * j / m), gy = cell(py + (y - py) * j / m); for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) near.add((gx + a) + ',' + (gy + b)); }
+        px = x; py = y;
+      }
+    }
+    for (const l of GD.line) {
+      if (l[2] || l[0] === 'zand') continue;
+      const d = l[3], hw = Math.max(l[1] / 20, /spoor|tram/.test(l[0]) ? 2 : 1); let x = 0, y = 0, px = 0, py = 0;
+      for (let k = 0; k < d.length; k += 2) {
+        x += d[k] * qq; y += d[k + 1] * qq;
+        if (k) {
+          const x0 = cell(Math.min(x, px)), x1 = cell(Math.max(x, px)), y0 = cell(Math.min(y, py)), y1 = cell(Math.max(y, py)); let sg = null;
+          for (let gx = x0; gx <= x1; gx++) for (let gy = y0; gy <= y1; gy++) { const kk = gx + ',' + gy; if (!near.has(kk)) continue; sg ||= [px, py, x, y, hw]; (UNDER.get(kk) || UNDER.set(kk, []).get(kk)).push(sg); }
+        }
+        px = x; py = y;
+      }
+    }
+  }
+  // pijler op (rx, ry) (m t.o.v. origin) met brugrichting (ux, uy): staat hij op iets wat eronderdoor loopt? Stukken die (bijna) meelopen met de brug tellen niet (stoep/fietsstrook óp de brug)
+  function blocked(rx, ry, ux, uy) {
+    const gx = Math.floor(rx / UC), gy = Math.floor(ry / UC);
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) for (const g of UNDER.get((gx + a) + ',' + (gy + b)) || []) {
+      const dx = g[2] - g[0], dy = g[3] - g[1], L2 = dx * dx + dy * dy || 1, t = Math.max(0, Math.min(1, ((rx - g[0]) * dx + (ry - g[1]) * dy) / L2));
+      if (Math.hypot(rx - g[0] - dx * t, ry - g[1] - dy * t) > g[4] + 1.8) continue; // 1,8 m = halve kolom + marge
+      if (Math.abs(dx * ux + dy * uy) / Math.sqrt(L2) > 0.94) continue;
+      return true;
+    }
+    return false;
+  }
   const q = GD.q, DECK = 0.8, RAIL = 0.9, STEP = 20, MINGAP = 2.5, TOP = 0.2; // TOP: dek ligt iets boven het terrein aan de uiteinden
   const COL = { beton: new THREE.Color('#8d8a84'), top: new THREE.Color('#4a4b50'), rail: new THREE.Color('#a9a59d'), spoor: new THREE.Color('#5a5650') };
   let O, km, mat, group, BR = null;
@@ -50,13 +87,22 @@
     for (const i of [0, n - 1]) for (let k = 1; k < pr.length - 1; k++) tri(ring[i][0], ring[i][k], ring[i][k + 1], COL.beton);
     // pijlers
     let pil = 0;
-    for (let s = STEP / 2; s < L; s += STEP) {
+    const at = s => { // punt op booglengte s → [x, y, ux, uy]
       let i = 1; while (i < n - 1 && S[i] < s) i++;
-      const t = (s - S[i - 1]) / ((S[i] - S[i - 1]) || 1), x = P[i - 1][0] + (P[i][0] - P[i - 1][0]) * t, yy = P[i - 1][1] + (P[i][1] - P[i - 1][1]) * t;
+      const t = (s - S[i - 1]) / ((S[i] - S[i - 1]) || 1), dx = P[i][0] - P[i - 1][0], dy = P[i][1] - P[i - 1][1], l = Math.hypot(dx, dy) || 1;
+      return [P[i - 1][0] + dx * t, P[i - 1][1] + dy * t, dx / l, dy / l];
+    };
+    for (let s0 = STEP / 2; s0 < L; s0 += STEP) {
+      let s = s0, A = at(s0);
+      if (!PILOLD && blocked(A[0] - O[0], A[1] - O[1], A[2], A[3])) { // op een weg/spoor eronder: langs de brug opschuiven (berm/middenberm), anders weglaten
+        A = null;
+        for (const o of [-4, 4, -8, 8]) { const s2 = s0 + o; if (s2 < 1 || s2 > L - 1) continue; const B = at(s2); if (!blocked(B[0] - O[0], B[1] - O[1], B[2], B[3])) { A = B; s = s2; break; } }
+        if (!A) continue;
+      }
+      const [x, yy, ux, uy] = A;
       if (!hasDem(x, yy)) continue;
       const g = H.heightAt(x, yy), top = hA + (hB - hA) * s / L - DECK;
       if (top - g <= MINGAP) continue;
-      const dx = P[i][0] - P[i - 1][0], dy = P[i][1] - P[i - 1][1], l = Math.hypot(dx, dy) || 1, ux = dx / l, uy = dy / l;
       const cx = x - O[0], cz = -(yy - O[1]), bot = g - 0.3, hs = Math.min(hw, 3) * 0.6, ht = 0.5; // kolom 1×(2·hs) + dwarsbalk onder het dek
       const box = (hl, hwd, y0, y1, c) => { // doos, lengte-as langs de brug
         const e = [[-hl, -hwd], [hl, -hwd], [hl, hwd], [-hl, hwd]].map(([a, bb]) => [cx + ux * a + uy * bb, cz - uy * a + ux * bb]); // (a = langs, bb = zijwaarts)

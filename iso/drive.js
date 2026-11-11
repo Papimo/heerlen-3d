@@ -193,6 +193,7 @@
 
   // ---------- rijden ----------
   const hAt = (x, z) => H.heightAt(x + H.areaInfo.origin[0], H.areaInfo.origin[1] - z);
+  const BUMPY = new URLSearchParams(location.search).has('bumpy'); // ?bumpy = oude, hobbelige vering
   let gridT = 0;
   function step(dt) {
     const k = c => keys.has(c);
@@ -221,11 +222,21 @@
     S.v = v;
     // hoogte, kanteling uit het terrein onder de wielen
     const f = -Math.sin(S.yaw), g = -Math.cos(S.yaw), hb = CAR.wb / 2;
-    const hF = hAt(S.x + f * hb, S.z + g * hb), hB = hAt(S.x - f * hb, S.z - g * hb), hL = hAt(S.x + g * 0.8, S.z - f * 0.8), hR = hAt(S.x - g * 0.8, S.z + f * 0.8);
-    const a = Math.min(1, dt * 8);
-    S.y += ((hF + hB) / 2 - S.y) * a;
-    S.pitch += (Math.atan2(hF - hB, CAR.wb) - S.pitch) * a;
-    S.roll += (Math.atan2(hL - hR, 1.6) - S.roll) * a;
+    // gladgestreken (?bumpy = oud): hoogte = gewogen gemiddelde over ±6 m langs de rijrichting, kanteling over een lange basis (±5 m / ±2 m), kanteling trager dan hoogte
+    if (BUMPY) {
+      const hF = hAt(S.x + f * hb, S.z + g * hb), hB = hAt(S.x - f * hb, S.z - g * hb), hL = hAt(S.x + g * 0.8, S.z - f * 0.8), hR = hAt(S.x - g * 0.8, S.z + f * 0.8);
+      const a = Math.min(1, dt * 8);
+      S.y += ((hF + hB) / 2 - S.y) * a;
+      S.pitch += (Math.atan2(hF - hB, CAR.wb) - S.pitch) * a;
+      S.roll += (Math.atan2(hL - hR, 1.6) - S.roll) * a;
+    } else {
+      const along = d => hAt(S.x + f * d, S.z + g * d), side = d => (hAt(S.x + g * d + f * 2, S.z - f * d + g * 2) + hAt(S.x + g * d - f * 2, S.z - f * d - g * 2)) / 2;
+      const h6 = along(6), h3 = along(3), h0 = along(0), b3 = along(-3), b6 = along(-6);
+      const hm = (h6 + 2 * h3 + 3 * h0 + 2 * b3 + b6) / 9, hF = (h6 * 2 + h3 + along(9)) / 4, hB = (b6 * 2 + b3 + along(-9)) / 4; // voor/achter: zwaartepunt ±6 m
+      S.y += (hm - S.y) * Math.min(1, dt * 10);
+      S.pitch += (Math.atan2(hF - hB, 12) - S.pitch) * Math.min(1, dt * 4);
+      S.roll += (Math.atan2(side(2) - side(-2), 4) * 0.6 - S.roll) * Math.min(1, dt * 3);
+    }
     // rondkijken veert terug als je niet sleept
     if (!look) { const b = Math.exp(-dt * 2.5); S.lookY *= b; S.lookP *= b; }
     // muurraster van de vakken rondom alvast opbouwen (één per 0,3 s, niet tijdens een botsing)

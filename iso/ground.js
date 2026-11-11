@@ -584,7 +584,7 @@
   const G = { mesh: null, ready: false, gen: null };
   const tmp = new THREE.Vector3(), dir = new THREE.Vector3(), fw = new THREE.Vector3(), pts = Array.from({ length: 8 }, () => new THREE.Vector3()), clr = new THREE.Color();
   let rtG = null, lastKey = '', gDirty = true;
-  const topN = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 20000); let rtN = null, lastKeyN = ''; // rijden: scherpe grond dichtbij
+  const topN = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 20000); // rijden: scherpe grond dichtbij
   const boxOf = c => c.gBox || (c.gBox = new THREE.Box3().setFromObject(c.terrain));
   function foot(cam, h0, h1) { // schermhoeken → grond op hoogte h0 en h1
     let k = 0;
@@ -595,7 +595,7 @@
   }
   function gPass(cam) {
     if (!iso() || !G.mesh) { GU.uGrOn.value = 0; return; }
-    GU.uGrNOn.value = 0;
+    GU.uGrNOn.value = 0; GU.uGrXOn.value = 0;
     if (!cam.isOrthographicCamera) { if (H.driving?.()) drivePass(cam); else GU.uGrOn.value = 0; return; }
     const r = H.renderer, gl = r.getContext(), W = gl.drawingBufferWidth, Hh = gl.drawingBufferHeight;
     cam.updateMatrixWorld();
@@ -634,22 +634,26 @@
   // (één schaal: ±2048 px / 520 m ≈ 25 cm per texel; verder weg zonder grondlaag → basiskleur)
   const DRV = { back: 40, size: 480, step: 8, ang: 0.07 };
   // + scherp vak dichtbij: 192 m (24 m achter, 168 m vóór), 2048² ≈ 9 cm per texel; opnieuw bij 16 m of ±4°. Shader kiest per pixel scherp (binnen) of grof
-  const DRN = { back: 24, size: 192, step: 16, ang: 0.07, px: 2048 };
-  function drivePassN(cam) {
-    const qa = Math.round(Math.atan2(fw.x, fw.z) / DRN.ang), qx = Math.round(cam.position.x / DRN.step) * DRN.step, qz = Math.round(cam.position.z / DRN.step) * DRN.step;
-    const key = qx + ',' + qz + ',' + qa;
-    if (key === lastKeyN && !gDirtyN) return;
-    lastKeyN = key; gDirtyN = false;
-    const f = new THREE.Vector3(Math.sin(qa * DRN.ang), 0, Math.cos(qa * DRN.ang)), c = DRN.size / 2 - DRN.back, cx = qx + f.x * c, cz = qz + f.z * c, hs = DRN.size / 2;
-    topN.position.set(cx, 10000, cz); topN.up.copy(f); topN.lookAt(cx, 0, cz);
-    Object.assign(topN, { left: -hs, right: hs, bottom: -hs, top: hs }); topN.updateProjectionMatrix(); topN.updateMatrixWorld();
-    const r = H.renderer, mx = Math.min(DRN.px, r.capabilities.maxTextureSize);
-    if (!rtN) { rtN = new THREE.WebGLRenderTarget(mx, mx, { samples: r.capabilities.isWebGL2 ? 4 : 0, depthBuffer: false }); GU.tGrN.value = rtN.texture; }
+  // + heel dichtbij (X): 64 m (10 m achter, 54 m vóór), 2048² ≈ 3 cm per texel, zonder MSAA (16 MB); opnieuw bij 8 m of ±4°. ?nonear2 = zonder
+  const DRN = { back: 24, size: 192, step: 16, ang: 0.07, px: 2048, ms: 4, cam: topN, rt: null, key: '', u: 'N' };
+  const DRX = { back: 10, size: 64, step: 8, ang: 0.07, px: 2048, ms: 0, cam: new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 20000), rt: null, key: '', u: 'X' };
+  const NEAR2 = !new URLSearchParams(location.search).has('nonear2');
+  function drivePassN(cam, D, dirty) {
+    const qa = Math.round(Math.atan2(fw.x, fw.z) / D.ang), qx = Math.round(cam.position.x / D.step) * D.step, qz = Math.round(cam.position.z / D.step) * D.step;
+    const key = qx + ',' + qz + ',' + qa, on = GU['uGr' + D.u + 'On'];
+    // gPass zet 'aan' elk beeld op 0 → ook zonder opnieuw schilderen weer aanzetten (stond alleen aan in het beeld waarin geschilderd werd = bijna nooit scherp)
+    if (key === D.key && !dirty && D.rt) { on.value = 1; return; }
+    D.key = key;
+    const f = new THREE.Vector3(Math.sin(qa * D.ang), 0, Math.cos(qa * D.ang)), c = D.size / 2 - D.back, cx = qx + f.x * c, cz = qz + f.z * c, hs = D.size / 2, tc = D.cam;
+    tc.position.set(cx, 10000, cz); tc.up.copy(f); tc.lookAt(cx, 0, cz);
+    Object.assign(tc, { left: -hs, right: hs, bottom: -hs, top: hs }); tc.updateProjectionMatrix(); tc.updateMatrixWorld();
+    const r = H.renderer, mx = Math.min(D.px, r.capabilities.maxTextureSize);
+    if (!D.rt) { D.rt = new THREE.WebGLRenderTarget(mx, mx, { samples: r.capabilities.isWebGL2 ? D.ms : 0, depthBuffer: false }); GU['tGr' + D.u].value = D.rt.texture; }
     r.getClearColor(clr); const ca = r.getClearAlpha(), at = r.getRenderTarget();
-    GT.uTpm.value = mx / DRN.size;
-    r.setRenderTarget(rtN); r.setClearColor(0x000000, 0); r.clear(true, false, false); r.render(gScene, topN);
+    GT.uTpm.value = mx / D.size;
+    r.setRenderTarget(D.rt); r.setClearColor(0x000000, 0); r.clear(true, false, false); r.render(gScene, tc);
     r.setClearColor(clr, ca); r.setRenderTarget(at);
-    GU.uGrVPN.value.multiplyMatrices(topN.projectionMatrix, topN.matrixWorldInverse); GU.uGrNOn.value = 1;
+    GU['uGrVP' + D.u].value.multiplyMatrices(tc.projectionMatrix, tc.matrixWorldInverse); on.value = 1;
   }
   let gDirtyN = true;
   function drivePass(cam) {
@@ -657,7 +661,7 @@
     const qa = Math.round(Math.atan2(fw.x, fw.z) / DRV.ang), qx = Math.round(cam.position.x / DRV.step) * DRV.step, qz = Math.round(cam.position.z / DRV.step) * DRV.step;
     const key = 'drv' + qx + ',' + qz + ',' + qa;
     if (gDirty) gDirtyN = true;
-    drivePassN(cam); GT.uTpm.value = (rtG?.width || 2048) / DRV.size; // GT.uTpm terugzetten voor de grove pass
+    const dN = gDirtyN; gDirtyN = false; drivePassN(cam, DRN, dN); if (NEAR2) drivePassN(cam, DRX, dN); GT.uTpm.value = (rtG?.width || 2048) / DRV.size; // GT.uTpm terugzetten voor de grove pass
     if (!gDirty && key === lastKey) return;
     lastKey = key; gDirty = false;
     fw.set(Math.sin(qa * DRV.ang), 0, Math.cos(qa * DRV.ang));
@@ -760,15 +764,16 @@
   // ---------- shader terrein (alleen iso): kleur uit het grond-doel op wereldpositie ----------
   const GU = { tGr: { value: new THREE.DataTexture(new Uint8Array(4), 1, 1) }, uGrVP: { value: new THREE.Matrix4() }, uGrM: { value: new THREE.Vector2(1, 1) },
     uGrTpm: { value: 1 }, uGrOn: { value: 0 }, uGrT: { value: 0 },
-    tGrN: { value: new THREE.DataTexture(new Uint8Array(4), 1, 1) }, uGrVPN: { value: new THREE.Matrix4() }, uGrNOn: { value: 0 } };
-  GU.tGrN.value.needsUpdate = true;
+    tGrN: { value: new THREE.DataTexture(new Uint8Array(4), 1, 1) }, uGrVPN: { value: new THREE.Matrix4() }, uGrNOn: { value: 0 },
+    tGrX: { value: new THREE.DataTexture(new Uint8Array(4), 1, 1) }, uGrVPX: { value: new THREE.Matrix4() }, uGrXOn: { value: 0 } };
+  GU.tGrN.value.needsUpdate = true; GU.tGrX.value.needsUpdate = true;
   GU.tGr.value.needsUpdate = true;
   H.patchTerrain('ground', s => {
     Object.assign(s.uniforms, GU); H.seasonize?.(s, '');
     s.vertexShader = s.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vGrW;')
       .replace('#include <project_vertex>', '#include <project_vertex>\nvGrW = (modelMatrix * vec4(transformed, 1.0)).xyz;');
     s.fragmentShader = s.fragmentShader.replace('#include <common>', `#include <common>
-      varying vec3 vGrW; uniform sampler2D tGr, tGrN; uniform mat4 uGrVP, uGrVPN; uniform vec2 uGrM; uniform float uGrT, uGrTpm, uGrOn, uGrNOn;
+      varying vec3 vGrW; uniform sampler2D tGr, tGrN, tGrX; uniform mat4 uGrVP, uGrVPN, uGrVPX; uniform vec2 uGrM; uniform float uGrT, uGrTpm, uGrOn, uGrNOn, uGrXOn;
       const vec3 GR_BASE = vec3(${BASEV});
       float grH(vec2 p) { vec3 q = fract(p.xyx * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
       float grN(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(grH(i), grH(i + vec2(1, 0)), f.x), mix(grH(i + vec2(0, 1)), grH(i + vec2(1, 1)), f.x), f.y); }
@@ -783,6 +788,9 @@
         if (uGrNOn > 0.5) { vec2 nUv = (uGrVPN * vec4(vGrW, 1.0)).xy * 0.5 + 0.5; // rijden: scherp vak dichtbij, rand zacht overvloeien
           vec2 e2 = min(nUv, 1.0 - nUv); float nk = smoothstep(0.0, 0.04, min(e2.x, e2.y));
           if (nk > 0.0) { vec4 tn = texture2D(tGrN, nUv); grC = mix(grC, tn.rgb + GR_BASE * (1.0 - tn.a), nk); } }
+        if (uGrXOn > 0.5) { vec2 xUv = (uGrVPX * vec4(vGrW, 1.0)).xy * 0.5 + 0.5; // heel dichtbij (3 cm per texel)
+          vec2 e3 = min(xUv, 1.0 - xUv); float xk = smoothstep(0.0, 0.08, min(e3.x, e3.y));
+          if (xk > 0.0) { vec4 tx = texture2D(tGrX, xUv); grC = mix(grC, tx.rgb + GR_BASE * (1.0 - tx.a), xk); } }
         diffuseColor.rgb = grLin(grC);
         float grW = grWat(grC) * smoothstep(0.8, 1.0, uGrTpm) * uGrOn;
         ${H.seasonize ? 'diffuseColor.rgb = seasonGround(diffuseColor.rgb, grWat(grC));' : ''}
