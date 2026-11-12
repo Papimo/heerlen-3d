@@ -87,26 +87,16 @@ body.night .lb.pl { color: rgba(255, 243, 220, .85); text-shadow: 0 1px 2px rgba
 .lb.st::before { content: '🚉 '; }
 body.night .lb { color: #efe6d6; text-shadow: 0 0 2px #000, 0 0 4px rgba(0, 0, 0, .8); }
 body.night .lb.st { color: #fff; }
-/* bekend gebouw (body[data-lm], app.js LM_STYLES): 0 = messing ruit (oud) · w1–w3 = wimpel op het dak · r/g/u = markering op het pand zelf, kleine naam */
+/* bekend gebouw (body[data-lm], app.js LM_STYLES): 0 = messing ruit (oud) · w3 = banier op het dak */
 .pin .flag { display: none; }
 .pin.lm em { font-weight: 700; font-variant: small-caps; letter-spacing: .03em; border-left-color: var(--lmc, #3a2f2a); }
 body[data-lm="0"] .pin.lm > i { border-radius: 2px; transform: rotate(45deg); opacity: 1 !important; width: 10px; height: 10px; left: -5px; top: -5px; background: #c9a227; }
 body[data-lm="0"] .pin.lm em { border-left-color: #c9a227; font-variant: normal; letter-spacing: 0; }
-body[data-lm^="w"] .pin.lm > i, body[data-lm="r"] .pin.lm > i, body[data-lm="g"] .pin.lm > i, body[data-lm="u"] .pin.lm > i { opacity: 0 !important; }
-body[data-lm^="w"] .pin.lm .flag { display: block; position: absolute; left: -1px; bottom: 0; width: 2px; height: 26px; background: #2a2420; border-radius: 1px; filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, .35)); }
-body[data-lm^="w"] .pin.lm .flag u { position: absolute; left: 2px; top: 0; width: 17px; height: 11px; background: var(--lmc); clip-path: polygon(0 0, 100% 50%, 0 100%); animation: lmwave 2.6s ease-in-out infinite; transform-origin: 0 50%; }
-body[data-lm^="w"] .pin.lm em { bottom: 30px; }
-body[data-lm="w1"] .pin.lm { --lmc: #2a2420; }
-body[data-lm="w2"] .pin.lm { --lmc: #7b3f8c; }
 body[data-lm="w3"] .pin.lm { --lmc: #8e2f2b; }
-body[data-lm="w3"] .pin.lm .flag { height: 30px; }
-body[data-lm="w3"] .pin.lm .flag u { width: 13px; height: 17px; clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 72%, 0 100%); animation: none; }
+body[data-lm="w3"] .pin.lm > i { opacity: 0 !important; }
+body[data-lm="w3"] .pin.lm .flag { display: block; position: absolute; left: -1px; bottom: 0; width: 2px; height: 30px; background: #2a2420; border-radius: 1px; filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, .35)); }
+body[data-lm="w3"] .pin.lm .flag u { position: absolute; left: 2px; top: 0; width: 13px; height: 17px; background: var(--lmc); clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 72%, 0 100%); }
 body[data-lm="w3"] .pin.lm em { bottom: 34px; }
-body[data-lm="r"] .pin.lm, body[data-lm="u"] .pin.lm { --lmc: #2a2420; }
-body[data-lm="g"] .pin.lm { --lmc: #d9b36a; }
-body[data-lm="r"] .pin.lm em, body[data-lm="g"] .pin.lm em, body[data-lm="u"] .pin.lm em { bottom: 4px; font-size: 11px; background: rgba(255, 255, 255, .82); }
-@keyframes lmwave { 0%, 100% { transform: scaleX(1) skewY(0deg); } 50% { transform: scaleX(.86) skewY(4deg); } }
-@media (prefers-reduced-motion: reduce) { .pin.lm .flag u { animation: none !important; } }
 .pin.shut em { color: #77726b; }
 #menu summary { list-style: none; width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--line); background: var(--paper); box-shadow: var(--shadow); display: grid; place-items: center; cursor: pointer; font-size: 18px; }
 #menu summary::-webkit-details-marker { display: none; }

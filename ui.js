@@ -3,7 +3,7 @@
   const $ = id => document.getElementById(id);
   const gemNames = () => (H3D.areaInfo?.parts || [{ name: 'Heerlen' }]).map(p => p.name); // gemeenten die aan staan (zoeken, teksten)
   const gemQ = () => gemNames().join(' OR ');
-  document.body.dataset.lm = H3D.lmStyle?.() || 'w1'; // stijl bekende gebouwen (app.js LM_STYLES, style.css)
+  document.body.dataset.lm = H3D.lmStyle?.() || 'w3'; // stijl bekende gebouwen (app.js LM_STYLES, style.css)
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   const store = {
