@@ -481,7 +481,7 @@
   document.addEventListener('pointerdown', e => { if (!e.target.closest('.grp')) grps.forEach(d => d.removeAttribute('open')); });
   H3D.on('layer', k => { if (k === 'gebouwen') rebuildPins(); });
   // ontwerppagina's (design/18_bekende-gebouwen.html) sturen de app in een iframe: stijl bekende gebouwen proberen (niet bewaren), naar een gebouw vliegen
-  addEventListener('message', e => { const d = e.data || {}; if (d.h3d === 'lm') H3D.setLmStyle(d.v, true); if (d.h3d === 'goto') { const it = landmarks().find(l => l.id === d.id); if (it) openItem(it); } });
+  addEventListener('message', e => { const d = e.data || {}; if (d.h3d === 'lm') H3D.setLmStyle(d.v, true); if (d.h3d === 'biz') H3D.setBiz(d.v, d.fade, true); if (d.h3d === 'fly') H3D.flyTo(d.x, d.y, { dist: d.dist || 260 }); if (d.h3d === 'goto') { const it = landmarks().find(l => l.id === d.id); if (it) openItem(it); } });
   res.addEventListener('click', e => {
     const b = e.target.closest('.res'); if (!b) return;
     if (b.dataset.era) setEra(eraHit);

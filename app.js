@@ -74,9 +74,10 @@ vec3 nrmUnpack(float p) { float x = floor(p / 4096.0); vec2 e = vec2(x, p - x * 
   // ---------- Mooi laden (design/11_laden.html, keuze 3·3·3·1+2): panden groeien op bouwjaar uit de grond ----------
   // Per hoekpunt aGrow = starttijd (s sinds T0) van dat pand (vak klaar + bouwjaar × spreiding), aGBase = voet. Geen uniform per vak nodig.
   // uGOn = 0 zodra niets meer groeit (dan geen enkele rekenstap extra). Schaduw pas als het staat (castShadow uit tijdens groeien).
+  const BIZ_FADE = 0.8; // s: kleur bedrijfspand vloeit in na het groeien (uBiz.y)
   const GROW = { dur: 0.5, spread: 1.8, jitter: 0.15 }; GROW.end = GROW.dur + GROW.spread + GROW.jitter;
   const T0 = performance.now(), nowS = () => (performance.now() - T0) / 1000;
-  const GU = { uGT: { value: 0 }, uGOn: { value: 0 }, uGDur: { value: GROW.dur }, uEra: { value: new THREE.Vector3(0, 0, 0) }, uPand: { value: null }, uEraC: { value: new THREE.Vector4(0, 0, 0, 0) } }; // uEraC = kleur bouwjaar-filter + aan (87) // uEra = bouwjaar y0, y1, krimp 0…1 (H.setEra)
+  const GU = { uGT: { value: 0 }, uGOn: { value: 0 }, uGDur: { value: GROW.dur }, uEra: { value: new THREE.Vector3(0, 0, 0) }, uPand: { value: null }, uEraC: { value: new THREE.Vector4(0, 0, 0, 0) }, uBiz: { value: new THREE.Vector2(0, 0) } }; // uBiz = (stijl bedrijfspand, kleur pas na groeien) — design/19_ontwerpronde.html // uEraC = kleur bouwjaar-filter + aan (87) // uEra = bouwjaar y0, y1, krimp 0…1 (H.setEra)
   const ERA_T = 0.9; let eraGoal = 0, eraT = 0; // s heen/terug
   const TREE_U = { uTT: { value: 1e4 } }; let treeFadeEnd = 0; // bomen groeien (treesFor/updateDetail)
   // ---------- Pand-textuur (roadmap 86, ?nopandtex = oude attributen per hoekpunt) ----------
@@ -148,7 +149,7 @@ if (uEra.z > 0.0 && (pInfo.x < uEra.x || pInfo.x > uEra.y)) { // bouwjaar-filter
   const redraw = () => { dirty = true; full = true; };
   const BUILD = 'anime-1 licht randje, daken op bouwjaar, middag zacht, bolle bomen (2026-11-09)', DBG_U = { value: new THREE.Vector2(1, 1) }; // ?gpu: versie zichtbaar + schakelaars omlijning (x = vlaklijnen, y = dieptelijnen)
   H.redraw = redraw;
-  H.VERSION = '0.9.1-test6'; // getoond onderaan (ui.js #attr); bij release ophogen
+  H.VERSION = '0.9.1-test7'; // getoond onderaan (ui.js #attr); bij release ophogen
   // na de upload naar de GPU de kopie in het werkgeheugen weggooien (canvas → 1×1, DataTexture-data → null). Opnieuw tekenen = nieuw canvas/nieuwe textuur
   H.freeAfterUpload = tex => { tex.onUpdate = () => { tex.onUpdate = null; const im = tex.image; if (im && im.getContext) im.width = im.height = 1; else if (im && im.data) im.data = null; }; return tex; };
 
@@ -564,7 +565,7 @@ if (uEra.z > 0.0 && (pInfo.x < uEra.x || pInfo.x > uEra.y)) { // bouwjaar-filter
           if (perBuilding) { g.setAttribute('aInfo', new THREE.BufferAttribute(info, 4)); g.setAttribute('aBiz', new THREE.BufferAttribute(biz, 2, true)); }
           if (perBuilding) { g.setAttribute('aGrow', new THREE.BufferAttribute(grow, 1)); g.setAttribute('aGBase', new THREE.BufferAttribute(gbase, 1)); }
         }
-        if (perBuilding) c.growEnd = gt0 + GROW.end;
+        if (perBuilding) c.growEnd = gt0 + GROW.end + (GU.uBiz.value.y ? BIZ_FADE : 0);
         g.addGroup(0, nr * 3, 0); g.addGroup(nr * 3, nw * 3, 1);
         g.computeBoundingSphere(); g.computeBoundingBox();
         const m = new THREE.Mesh(g, [MAT.roof, MAT.wall]);
@@ -1166,11 +1167,13 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
     // vI = (bouwjaar, dakoppervlak, voet, lange as), vHt = hoogte in m; pSeed/pInfo/pBiz/pGBase komen uit PAND_GLSL (via addGrow, ook op deze materialen)
     s.vertexShader = s.vertexShader.replace('#include <common>', `#include <common>\nvarying float vS, vHt; varying vec3 vRW; varying vec4 vI; varying vec2 vBz; varying vec4 vHl; uniform vec4 uEraC;`)
       .replace('#include <project_vertex>', `#include <project_vertex>\nvS = pSeed; vRW = (modelMatrix * vec4(transformed, 1.0)).xyz; vec4 pI = pInfo; vec2 pB = pBiz; vI = vec4(pI.x, pI.y, pGBase, pI.w); vHt = pI.z * 0.1; vBz = vec2((pB.x - 0.5) * 3.14159265, pB.y);
-vHl = pHl; if (uEraC.a > 0.5 && vHl.a < 0.5 && pI.x >= uEra.x && pI.x <= uEra.y) vHl = vec4(uEraC.rgb, 2.0);`);
-    s.fragmentShader = s.fragmentShader.replace('#include <common>', `#include <common>\nvarying float vS, vHt; varying vec3 vRW; varying vec4 vI; varying vec4 vHl; uniform vec3 uPalR[8]; uniform vec3 uPalW[8]; uniform float uDim, uAnime, uHlN;\n#define BK_FOOT vI.z\n${BIZ_COMMON}`)
+vHl = pHl; if (uEraC.a > 0.5 && vHl.a < 0.5 && pI.x >= uEra.x && pI.x <= uEra.y) vHl = vec4(uEraC.rgb, 2.0);
+vHk = (uBiz.y < 0.5 || uGOn < 0.5) ? 1.0 : clamp((uGT - pGrow - uGDur) / ${BIZ_FADE.toFixed(2)}, 0.0, 1.0);`);
+    s.vertexShader = s.vertexShader.replace('varying vec4 vHl;', 'varying vec4 vHl; varying float vHk; uniform vec2 uBiz;');
+    s.fragmentShader = s.fragmentShader.replace('#include <common>', `#include <common>\nvarying float vS, vHt; varying vec3 vRW; varying vec4 vI; varying vec4 vHl; varying float vHk; uniform vec2 uBiz; uniform vec3 uPalR[8]; uniform vec3 uPalW[8]; uniform float uDim, uAnime, uHlN;\n#define BK_FOOT vI.z\n${BIZ_COMMON}`)
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
-      ${roof ? `if (vHl.a > 0.5) totalEmissiveRadiance += ${hlGlow};`
-        : `if (vHl.a > 1.5) totalEmissiveRadiance += ${hlGlow}; else if (vHl.a > 0.5) totalEmissiveRadiance = mix(totalEmissiveRadiance, vHl.rgb * (1.0 - hlLip) * 0.32 * (1.0 + 1.6 * uHlN), hlIn);`}`)
+      ${roof ? `if (vHl.a > 0.5) totalEmissiveRadiance += ${hlGlow} * hlIn;`
+        : `if (vHl.a > 1.5) totalEmissiveRadiance += ${hlGlow}; else if (vHl.a > 0.5) { if (uBiz.x > 1.5 && uBiz.x < 2.5) totalEmissiveRadiance += vHl.rgb * 0.12 * hlLip * (1.0 + 1.6 * uHlN); else totalEmissiveRadiance = mix(totalEmissiveRadiance, vHl.rgb * (1.0 - hlLip) * 0.32 * (1.0 + 1.6 * uHlN), hlIn); }`}`)
       .replace('#include <color_fragment>', `#include <color_fragment>
       {
         vec3 p = ${roof ? 'uPalR[int(fract(vS * 7.31) * 7.999)]' : 'uPalW[int(vS * 7.999)]'};${roof ? ROOF_MIJN + ANIME_ROOF : ANIME_WALL}
@@ -1178,8 +1181,21 @@ vHl = pHl; if (uEraC.a > 0.5 && vHl.a < 0.5 && pI.x >= uEra.x && pI.x <= uEra.y)
       }
       float hlIn = 0.0, hlLip = 0.0, hlHb = 0.0; // gevel: binnen de band, luifelrand, hoogte boven de voet
       if (vHl.a > 0.5) {
-        ${roof ? 'hlIn = 1.0; diffuseColor.rgb = vHl.rgb;' : `if (vHl.a > 1.5) { hlIn = 1.0; diffuseColor.rgb = vHl.rgb; }
-        else { hlHb = vRW.y - vI.z - 1.0; hlIn = step(hlHb, 4.0); hlLip = hlIn * step(3.65, hlHb); diffuseColor.rgb = mix(diffuseColor.rgb, vHl.rgb * (1.0 - 0.45 * hlLip), hlIn); }`}
+        ${roof ? `hlIn = vHl.a > 1.5 ? 1.0 : (uBiz.x < 0.5 ? 1.0 : uBiz.x > 3.5 ? 0.3 : 0.0) * vHk; diffuseColor.rgb = mix(diffuseColor.rgb, vHl.rgb, hlIn);`
+        : `if (vHl.a > 1.5) { hlIn = 1.0; diffuseColor.rgb = vHl.rgb; }
+        else if (uBiz.x > 2.5 && uBiz.x < 3.5) { hlHb = vRW.y - vI.z - 1.0; } // n: alleen de pin, pand ongemoeid
+        else if (uBiz.x > 1.5) { // l: gestreept zonnescherm boven een donkere etalage, rest van de gevel eigen kleur
+          hlHb = vRW.y - vI.z - 1.0;
+          vec3 bn = normalize(cross(dFdx(vRW), dFdy(vRW))); float bu = abs(bn.x) > abs(bn.z) ? vRW.z : vRW.x;
+          float aw = step(2.9, hlHb) * step(hlHb, 3.75), sh = step(hlHb, 2.9), fx = fract(bu / 4.0);
+          float glass = sh * step(0.08, fx) * step(fx, 0.92) * step(0.4, hlHb) * step(hlHb, 2.6);
+          vec3 stripe = mix(vHl.rgb, vec3(0.9, 0.82, 0.67), step(0.5, fract(bu / 0.75)));
+          vec3 c = mix(diffuseColor.rgb, stripe * (1.0 - 0.4 * step(hlHb, 3.05)), aw); // onderrand scherm donkerder (schaduwrand)
+          c = mix(c, vec3(0.035, 0.045, 0.055) + vHl.rgb * 0.06, glass);
+          diffuseColor.rgb = mix(diffuseColor.rgb, c, vHk); hlIn = sh * vHk; hlLip = aw * vHk;
+        } else { // 0/p: band begane grond (pui + luifelrand); z: zelfde band, zachter
+          hlHb = vRW.y - vI.z - 1.0; float ba = (uBiz.x > 3.5 ? 0.55 : 1.0) * vHk;
+          hlIn = step(hlHb, 4.0); hlLip = hlIn * step(3.65, hlHb); diffuseColor.rgb = mix(diffuseColor.rgb, vHl.rgb * (1.0 - 0.45 * hlLip), hlIn * ba); hlIn *= ba; hlLip *= ba; }`}
         gGlass *= 1.0 - hlIn; gGloss *= 1.0 - hlIn;
       }`);
   };
@@ -1217,7 +1233,7 @@ vHl = pHl; if (uEraC.a > 0.5 && vHl.a < 0.5 && pI.x >= uEra.x && pI.x <= uEra.y)
         float win = step(0.25, f.x) * step(f.x, 0.75) * step(0.3, f.y) * step(f.y, 0.8);
         float lit = step(0.8, h21(vec2(floor(u / 3.2), floor(fy)) + floor(vW.xz / 40.0)));
         float fade = smoothstep(700.0, 2200.0, length(vW - uEye));
-        if (vHl.a < 0.5) gl_FragColor.rgb += vec3(1.0, 0.72, 0.38) * mix(win * lit, 0.05, fade) * step(abs(n.y), 0.5) * uNight * 0.6;
+        if (vHl.a < 0.5 || (vHl.a < 1.5 && uBiz.x > 2.5 && uBiz.x < 3.5)) gl_FragColor.rgb += vec3(1.0, 0.72, 0.38) * mix(win * lit, 0.05, fade) * step(abs(n.y), 0.5) * uNight * 0.6;
         else if (vHl.a < 1.5) { // pand van een plek (87, was matWall): etalage in de band + avondramen in categoriekleur
           float fx = fract(u / 4.0), fy2 = (hlHb - 4.0) / 3.1; vec2 g2 = vec2(fract(u / 3.2), fract(fy2));
           float shop = hlIn * (1.0 - hlLip) * step(0.06, fx) * step(fx, 0.94) * step(0.35, hlHb) * step(hlHb, 3.45);
@@ -1465,9 +1481,21 @@ vHl = pHl; if (uEraC.a > 0.5 && vHl.a < 0.5 && pI.x >= uEra.x && pI.x <= uEra.y)
   // bekende gebouwen (plek-sleutel 'l…'): niet meer goud verven. design/18_bekende-gebouwen.html — ?lm= of h3d.lm:
   // 0 = goud (oud) · w1/w2/w3 = wimpel (DOM, ui.js/style.css; pand ongemoeid) · r = inktrand · g = zachte gloed · u = uitgelicht (lichter pand)
   const LM_STYLES = ['0', 'w1', 'w2', 'w3', 'r', 'g', 'u'];
-  let lmStyle = 'w1'; try { const q = new URLSearchParams(location.search).get('lm'), st = localStorage.getItem('h3d.lm'); lmStyle = LM_STYLES.includes(q) ? q : LM_STYLES.includes(st) ? st : lmStyle; } catch {}
+  let lmStyle = 'w3'; // keuze 2026-11-12 (design/19): 1c banier try { const q = new URLSearchParams(location.search).get('lm'), st = localStorage.getItem('h3d.lm'); lmStyle = LM_STYLES.includes(q) ? q : LM_STYLES.includes(st) ? st : lmStyle; } catch {}
   H.lmStyle = () => lmStyle;
   H.setLmStyle = (v, keep) => { if (!LM_STYLES.includes(v)) return; lmStyle = v; if (!keep) try { localStorage.setItem('h3d.lm', v); } catch {} document.body.dataset.lm = v; rebuildHighlights(); emit('lmstyle', v); };
+  // bedrijfspanden (panden van een plek), design/19_ontwerpronde.html — ?biz= of h3d.biz (+ ?bizfade / h3d.bizfade = kleur pas na groeien):
+  // 0 = dak in kleur + pui (oud) · p = alleen pui · l = zonnescherm + etalage · n = alleen pin · z = zacht (dak 30%, pui 55%). Alleen iso met pand-textuur (HLTEX).
+  const BIZ_STYLES = ['0', 'p', 'l', 'n', 'z'];
+  let bizStyle = 'z', bizFade = true; // keuze 2026-11-12 (design/19): D zacht + kleur pas na groeien; ?biz=0 = oud, ?bizfade=0 = direct kleur
+  try { const q = QS.get('biz'), st = localStorage.getItem('h3d.biz'); bizStyle = BIZ_STYLES.includes(q) ? q : BIZ_STYLES.includes(st) ? st : bizStyle; const fq = QS.get('bizfade'), fs = localStorage.getItem('h3d.bizfade'); bizFade = fq != null ? fq !== '0' : fs != null ? fs === '1' : bizFade; } catch {}
+  GU.uBiz.value.set(BIZ_STYLES.indexOf(bizStyle), bizFade ? 1 : 0);
+  H.bizStyle = () => bizStyle;
+  H.setBiz = (v, fade, keep) => {
+    if (!BIZ_STYLES.includes(v)) return; bizStyle = v; bizFade = !!fade;
+    if (!keep) try { localStorage.setItem('h3d.biz', v); localStorage.setItem('h3d.bizfade', bizFade ? '1' : '0'); } catch {}
+    GU.uBiz.value.set(BIZ_STYLES.indexOf(v), bizFade ? 1 : 0); redraw(); emit('bizstyle', v);
+  };
   const HULL = { r: { col: '#2a2420', grow: 1.4, op: 1 }, g: { col: '#fff4d6', grow: 3.5, op: 0.42 } };
   const hullMat = {};
   function hullMesh(pos, st) { // omhulsel: binnenkant (BackSide) van een rond het midden opgeblazen kopie → dikke rand/gloed om het silhouet
@@ -2291,7 +2319,8 @@ vHl = pHl; if (uEraC.a > 0.5 && vHl.a < 0.5 && pI.x >= uEra.x && pI.x <= uEra.y)
   const zuinigNow = () => !!fxOn.zuinig || autoZ;
   const animMs = () => zuinigNow() || (IDLE && performance.now() - inputT > 10000) ? 100 : 50; H.animMs = animMs;
   if (IDLE) {
-    const wake = () => { const a = !document.hidden && document.hasFocus(); if (a && !awake) { animT = 0; redraw(); } awake = a; };
+    const inFrame = window !== window.top; // in een iframe (ontwerppagina's) heeft de app nooit focus → anders blijven wolken/onthullen stilstaan
+    const wake = () => { const a = !document.hidden && (inFrame || document.hasFocus()); if (a && !awake) { animT = 0; redraw(); } awake = a; };
     addEventListener('blur', wake); addEventListener('focus', wake); document.addEventListener('visibilitychange', wake); wake();
   }
   H.shadowDirty = () => { shadowDirty = true; redraw(); };

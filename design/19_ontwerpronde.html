@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Parkstad 3D · ontwerpronde bedrijven</title>
+<style>
+  :root { --paper: #fbf8f2; --paper2: #f1ece2; --ink: #2b2620; --ink2: #6f665b; --line: #e2d9ca; --accent: #c2410c; --serif: Georgia, 'Times New Roman', serif; --sans: system-ui, sans-serif; }
+  @media (prefers-color-scheme: dark) { :root { --paper: #24211d; --paper2: #2e2a25; --ink: #f1ebe1; --ink2: #b3a898; --line: #3d3832; --accent: #fb923c; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper2); color: var(--ink); font: 14px/1.45 var(--sans); }
+  main { max-width: 1320px; margin: 0 auto; padding: 24px 16px 110px; }
+  h1 { font: 600 28px/1.2 var(--serif); margin: 0 0 4px; }
+  h2 { font: 600 22px var(--serif); margin: 30px 0 4px; }
+  .lead, .sub { color: var(--ink2); max-width: 880px; margin: 0 0 14px; }
+  .view { position: sticky; top: 0; z-index: 3; background: var(--paper2); padding: 8px 0 10px; }
+  .frame { position: relative; border-radius: 14px; overflow: hidden; border: 1px solid var(--line); background: #cfc6b6; aspect-ratio: 16 / 9; max-height: 62vh; width: 100%; }
+  .frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  .frame .lab { position: absolute; top: 10px; left: 10px; font: 600 12px var(--sans); background: #000a; color: #fff; padding: 3px 10px; border-radius: 999px; pointer-events: none; }
+  .tools { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0 0; align-items: center; }
+  .tools button { border: 1px solid var(--line); background: var(--paper); color: var(--ink); border-radius: 999px; padding: 5px 12px; cursor: pointer; font-weight: 600; }
+  .tools button.on { background: var(--ink); color: var(--paper); }
+  .tools i { width: 1px; height: 22px; background: var(--line); margin: 0 6px; }
+  .tools span { color: var(--ink2); margin-left: 4px; font-size: 13px; }
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .opt { background: var(--paper); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; cursor: pointer; }
+  .opt.showing { box-shadow: 0 0 0 2px var(--ink); }
+  .opt.picked { outline: 3px solid var(--accent); }
+  .pv { height: 92px; background: linear-gradient(#e9e2d3, #d9cfbb); position: relative; overflow: hidden; }
+  .pv svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .body { padding: 11px 12px 12px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
+  .body h3 { margin: 0; font: 600 16px var(--serif); }
+  .body h3 small { font: 600 12px var(--sans); color: var(--ink2); margin-right: 6px; }
+  .body p { margin: 0; color: var(--ink2); font-size: 13px; }
+  .body ul { margin: 0; padding-left: 18px; font-size: 12.5px; }
+  .tags { display: flex; gap: 5px; flex-wrap: wrap; }
+  .tags span { font-size: 11px; border-radius: 999px; padding: 1px 8px; background: var(--paper2); border: 1px solid var(--line); color: var(--ink2); }
+  .tags span.warn { color: #a5552a; border-color: #e3b58f; }
+  .kies { margin-top: auto; border: 1px solid var(--line); background: var(--paper2); color: var(--ink); border-radius: 8px; padding: 7px 12px; cursor: pointer; font-weight: 600; }
+  .kies.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  #pick { position: fixed; left: 0; right: 0; bottom: 0; background: var(--paper); border-top: 1px solid var(--line); padding: 10px 16px; display: flex; gap: 12px; align-items: center; z-index: 5; }
+  #pick code { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #pick button { border: 0; background: var(--accent); color: #fff; border-radius: 8px; padding: 8px 16px; font-weight: 600; cursor: pointer; }
+  @media (max-width: 1100px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+  @media (max-width: 560px) { .grid { grid-template-columns: 1fr; } .view { position: static; } }
+  .sec { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+  .sec label { font-weight: 600; font-size: 13px; display: flex; gap: 6px; align-items: center; cursor: pointer; background: var(--paper); border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; }
+  .why { background: var(--paper); border: 1px solid var(--line); border-radius: 14px; padding: 12px 16px; margin: 0 0 14px; max-width: 880px; font-size: 13.5px; }
+  .why b { font-family: var(--serif); }
+  /* indeling: app links vast in beeld, opties rechts in een eigen scrollkolom */
+  body { height: 100vh; overflow: hidden; }
+  main { max-width: none; height: calc(100vh - 54px); padding: 0; display: grid; grid-template-columns: minmax(0, 1fr) 440px; }
+  .view { grid-column: 1; grid-row: 1; position: static; height: 100%; padding: 12px 8px 10px 16px; display: flex; flex-direction: column; min-height: 0; }
+  .frame { aspect-ratio: auto; max-height: none; flex: 1; min-height: 0; }
+  #side { grid-column: 2; grid-row: 1; overflow-y: auto; padding: 12px 16px 24px 8px; min-height: 0; }
+  #side h1 { font-size: 22px; } #side h2 { margin-top: 20px; }
+  .lead, .sub, .why { font-size: 13px; }
+  .grid, .grid.grid { grid-template-columns: 1fr; gap: 8px; }
+  .opt { flex-direction: row; }
+  .pv { width: 150px; height: auto; min-height: 84px; flex: none; }
+  .body { padding: 8px 10px; gap: 4px; }
+  .body h3 { font-size: 15px; }
+  .body ul { font-size: 12px; }
+  .kies { padding: 5px 10px; align-self: flex-start; }
+  #pick { height: 54px; }
+  @media (max-width: 900px) {
+    body { height: auto; overflow: auto; }
+    main { display: block; height: auto; }
+    .view { position: sticky; top: 0; z-index: 3; height: 46vh; padding: 6px 8px; background: var(--paper2); }
+    #side { overflow: visible; padding: 8px 16px 80px; }
+    .tools span { display: none; }
+  }
+</style>
+</head>
+<body>
+<main>
+
+
+  <div class="view">
+    <div class="frame"><iframe id="app" src="../index.html?biz=0&lm=0" title="Parkstad 3D"></iframe><span class="lab" id="lab">Bedrijven 0 · Huidig</span></div>
+    <div class="tools" id="tools">
+      <button data-fly="196526,322224">Saroleastraat</button><button data-fly="196474,322338">Corio Center</button><button data-fly="196645,322082">Pancratiusplein</button><button data-fly="192969,326267">Hoensbroek</button><button data-fly="193005,321580">Voerendaal</button>
+      <i></i><button data-go="pancratius">Pancratiuskerk</button><button data-go="glaspaleis">Glaspaleis</button><button data-go="hoensbroek">Kasteel Hoensbroek</button>
+      <i></i><button id="ab" title="Ingedrukt houden = huidig zien">◐ Huidig ↔ keuze (ingedrukt houden)</button>
+      <button id="reload" title="App opnieuw starten met deze keuze, om het inladen/groeien te zien">▶ Inladen opnieuw bekijken</button>
+      <span>Tip: in de app Sfeer › Avond (etalages) en dicht inzoomen.</span>
+    </div>
+  </div>
+
+  <div id="side">
+  <h1>Ontwerpronde · bedrijven &amp; bekende gebouwen</h1>
+  <p class="lead">Hieronder draait de echte app (iso, zelfde data, licht en shaders). Klik op een kaart om hem links te zien; knoppen onder de app vliegen naar winkelstraten en bekende gebouwen.</p>
+  <h2>1 · Bedrijven aangeven</h2>
+  <div class="why"><b>Het probleem.</b> Nu wordt het hele dak in de categoriekleur geverfd. Bij het inladen schieten panden uit de grond en springen de daken één voor één naar rood, bruin of blauw. Van bovenaf wordt het een lappendeken, en de kaart verliest zijn rust.<br>
+  <b>De richtingen.</b> Kleur alleen op straatniveau (A, B), of helemaal niet (C). Of alles zachter (D). Losse schakelaar: <i>kleur pas na het groeien</i>. Die werkt bij elke richting en is los te kiezen.</div>
+  <div class="sec"><label><input type="checkbox" id="fade"> Kleur vloeit pas in nadat het pand gegroeid is (0,8 s) — bekijk met ▶ Inladen</label></div>
+  <p class="sub">Kosten: alles zit in de bestaande shader (pand-textuur, keuze per uniform). Geen extra meshes of draw calls, en wisselen kost geen hercompilatie.</p>
+  <div class="grid" id="g1"></div>
+
+  <h2>2 · Bekende gebouwen</h2>
+  <p class="sub">Deze keuze staat nog open sinds 0.7 (nu standaard: 1c Banier). Wimpels zijn HTML, net als de pins (bijna gratis). Rand, gloed en uitgelicht zijn één extra mesh per gebouw (12 stuks).</p>
+  <div class="grid" id="g2"></div>
+  </div>
+</main>
+<div id="pick"><code id="picktxt">Nog niets gekozen</code><button id="copy">Kopieer</button></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const svg = s => `<svg viewBox="0 0 200 92" preserveAspectRatio="xMidYMid meet">${s}</svg>`;
+// iso-schets van drie panden in een straat; het middelste is de zaak (de echte look zie je in het venster)
+const C = { k: '#a8432e', w: '#4a5f72' };
+function street({ roof = null, band = null, bandA = 1, awn = false, pin = true, } = {}) {
+  const box = (x, h, fill, rf, mid) => {
+    const y = 80 - h;
+    let s = `<path d="M${x} 80 V${y} L${x + 20} ${y - 9} V${89 - 9} Z" fill="#e7d9bf" stroke="#8d7c66" stroke-width=".7"/>`; // zijgevel
+    s += `<path d="M${x + 20} ${71} V${y - 9} L${x + 46} ${y - 2} V${78} Z" fill="${fill}" stroke="#8d7c66" stroke-width=".7"/>`; // voorgevel
+    s += `<path d="M${x} ${y} L${x + 20} ${y - 9} L${x + 46} ${y - 2} L${x + 26} ${y + 7} Z" fill="${rf}" stroke="#8d7c66" stroke-width=".7"/>`; // dak
+    if (mid && band) s += `<path d="M${x + 20} 71 V60 L${x + 46} 67 V78 Z" fill="${band}" opacity="${bandA}"/><path d="M${x + 20} 61 L${x + 46} 68" stroke="#0005" stroke-width="2"/>`;
+    if (mid && awn) { for (let k = 0; k < 6; k++) s += `<path d="M${x + 20 + k * 4.33} ${59 + k * 1.17} l4.33 1.17 l1 4 l-4.33 -1.17 z" fill="${k % 2 ? '#f2e6cf' : C.k}"/>`;
+      s += `<path d="M${x + 23} 72 V65.5 L${x + 44} 71 V77.5 Z" fill="#20272d"/>`; }
+    return s;
+  };
+  let s = box(14, 38, '#efe2c8', '#c3654c') + box(130, 34, '#ead9bd', '#b86048');
+  s += box(72, 42, '#f0e4cc', roof ? roof : '#c96d50', true);
+  if (pin) s += `<g transform="translate(106 14)"><path d="M0 18 L-5 10 h10 Z" fill="${C.k}"/><circle cx="0" cy="8" r="7.5" fill="${C.k}"/><text x="0" y="11" font-size="8" text-anchor="middle" fill="#fff">🍽</text></g>`;
+  return `<svg viewBox="10 8 170 84" preserveAspectRatio="xMidYMid meet">${s}</svg>`;
+}
+const mixc = (a, b, t) => '#' + [0, 2, 4].map(i => Math.round(parseInt(a.substr(1 + i, 2), 16) * (1 - t) + parseInt(b.substr(1 + i, 2), 16) * t).toString(16).padStart(2, '0')).join('');
+const BIZ = [
+  ['0', 'Huidig', 'Hele dak in de categoriekleur, plus een gekleurde pui van 4 m met luifelrand.', ['van ver goed te zien', 'bij inladen springen daken één voor één op kleur', 'van boven een lappendeken'], [['huidig']],
+    street({ roof: C.k, band: C.k })],
+  ['p', 'A · Alleen de pui', 'Het dak houdt zijn eigen kleur. Alleen de begane grond (4 m) krijgt de categoriekleur met een donkere luifelrand.', ['van bovenaf rustig, de kaart blijft één geheel', 'in iso zie je de pui aan de straatkant', "'s avonds etalage + ramen in kleur blijven"], [['gratis'], ['van recht boven onzichtbaar', 'warn']],
+    street({ band: C.k })],
+  ['l', 'B · Zonnescherm', 'Een gestreept zonnescherm (categoriekleur/crème) boven een donkere etalage. De gevel erboven houdt zijn eigen kleur.', ['leest als "winkel", ook zonder pin', 'speels, past bij de speelgoedmat-look', 'minste kleur in beeld'], [['gratis'], ['klein: pas vanaf ±stand 220 leesbaar', 'warn']],
+    street({ awn: true })],
+  ['n', 'C · Alleen de pin', 'Pand helemaal ongemoeid; de pin (die er al is) doet het werk.', ['rustigste kaart, nul verspringen bij laden', "'s avonds gewone ramen"], [['gratis'], ['je ziet niet welk pand bij de pin hoort', 'warn']],
+    street({})],
+  ['z', 'D · Zacht', 'Zelfde als nu (dak + pui), maar getemperd: dak 30% kleur, pui 55%.', ['dichtst bij huidig, minder schreeuwerig', 'pand blijft herkenbaar als zaak'], [['gratis'], ['blijft een beetje lappendeken', 'warn']],
+    street({ roof: mixc('#c96d50', C.k, 0.3), band: C.k, bandA: 0.55 })],
+];
+const LM = [
+  ['0', 'Huidig (oud)', 'Pand goud geverfd + messing ruit.', ['valt op', 'botst met kaartkleuren'], [['oud']]],
+  ['w1', '1a · Wimpel inkt', 'Klein donker vlaggetje op het dak, naam in kleinkapitalen. <b>Staat nu standaard aan.</b>', ['pand houdt eigen kleur', 'rustig, past bij inktlijnen'], [['DOM, gratis'], ['wappert', 'warn']]],
+  ['w2', '1b · Wimpel paars', 'Zelfde wimpel in de kleur van de gemeentegrens.', ['één accentkleur voor "bijzonder"'], [['DOM, gratis'], ['paars ook op grens', 'warn']]],
+  ['w3', '1c · Banier', 'Stil hangend vaandel met zwaluwstaart, donkerrood.', ['statiger, "kasteel"-gevoel', 'beweegt niet'], [['DOM, gratis']]],
+  ['r', '3a · Inktrand', 'Dikke donkere rand om het silhouet van het pand.', ['markering zit in de kaart zelf'], [['+1 mesh/gebouw'], ['grillige vormen', 'warn']]],
+  ['g', '3b · Zachte gloed', 'Lichte warme waas om het pand.', ['sfeervol bij nacht'], [['+1 mesh/gebouw'], ['overdag zwak', 'warn']]],
+  ['u', '3c · Uitgelicht', 'Pand papierwit tussen de gekleurde buren.', ['heel rustig, maquette-gevoel'], [['+1 mesh/gebouw'], ['minder contrast', 'warn']]],
+];
+const lmPv = id => {
+  const h = `<path d="M70 82 V46 L100 24 L130 46 V82 Z" fill="${id === '0' ? '#d9b440' : id === 'u' ? '#fbf4e4' : '#efe2c8'}" stroke="#8d7c66"/><path d="M66 48 L100 21 L134 48" fill="none" stroke="${id === '0' ? '#b8901d' : '#c3654c'}" stroke-width="7" stroke-linejoin="round"/>`;
+  const pre = id === 'r' ? `<path d="M66 85 V44 L100 17 L134 44 V85 Z" fill="#2a2420"/>` : id === 'g' ? `<defs><filter id="bl"><feGaussianBlur stdDeviation="5"/></filter></defs><path d="M62 88 V42 L100 12 L138 42 V88 Z" fill="#fff4d6" opacity=".9" filter="url(#bl)"/>` : '';
+  const fc = { w1: '#2a2420', w2: '#7b3f8c', w3: '#8e2f2b' }[id];
+  const fl = fc ? `<line x1="100" y1="20" x2="100" y2="-4" stroke="#2a2420" stroke-width="2"/>` + (id === 'w3' ? `<path d="M101 -4 h14 v18 l-7 -5 l-7 5 z" fill="${fc}"/>` : `<path d="M101 -4 L121 2 L101 8 Z" fill="${fc}"/>`) : id === '0' ? `<rect x="95" y="6" width="10" height="10" transform="rotate(45 100 11)" fill="#c9a227" stroke="#fff" stroke-width="2"/>` : '';
+  return svg(pre + h + fl);
+};
+const card = (sec, [id, t, p, pts, tags, pv]) => `<div class="opt" data-sec="${sec}" data-id="${id}"><div class="pv">${pv || lmPv(id)}</div><div class="body">
+  <h3><small>${id === '0' ? 'Optie 0' : ''}</small>${t}</h3><p>${p}</p><ul>${pts.map(x => `<li>${x}</li>`).join('')}</ul>
+  <div class="tags">${tags.map(([x, w]) => `<span class="${w || ''}">${x}</span>`).join('')}</div>
+  ${id === '0' ? '' : `<button class="kies" data-kies="${id}">Kies deze</button>`}</div></div>`;
+$('g1').innerHTML = BIZ.map(o => card('biz', o)).join('');
+$('g2').innerHTML = LM.map(o => card('lm', o)).join('');
+
+const S = { biz: '0', lm: 'w1' }, P = { biz: null, lm: null }; // S = in beeld, P = gekozen
+let last = 'biz';
+const post = m => $('app').contentWindow?.postMessage(m, '*');
+const fade = () => $('fade').checked;
+const sendAll = (biz = S.biz, lm = S.lm) => { post({ h3d: 'biz', v: biz, fade: fade() }); post({ h3d: 'lm', v: lm }); };
+const nameOf = (sec, id) => (sec === 'biz' ? BIZ : LM).find(o => o[0] === id)[1];
+function show(sec, id) {
+  S[sec] = id; last = sec; sendAll();
+  $('lab').textContent = (sec === 'biz' ? 'Bedrijven ' : 'Bekende gebouwen ') + nameOf(sec, id);
+  document.querySelectorAll('.opt').forEach(e => e.classList.toggle('showing', S[e.dataset.sec] === e.dataset.id));
+}
+document.addEventListener('click', e => {
+  const k = e.target.closest('[data-kies]');
+  if (k) { const sec = k.closest('.opt').dataset.sec, id = k.dataset.kies; P[sec] = P[sec] === id ? null : id;
+    document.querySelectorAll(`.opt[data-sec="${sec}"]`).forEach(o => { o.classList.toggle('picked', o.dataset.id === P[sec]); o.querySelector('.kies')?.classList.toggle('on', o.dataset.id === P[sec]); }); upd(); }
+  const o = e.target.closest('.opt'); if (o) show(o.dataset.sec, o.dataset.id);
+  const f = e.target.closest('[data-fly]'); if (f) { const [x, y] = f.dataset.fly.split(',').map(Number); post({ h3d: 'fly', x, y, dist: 220 }); }
+  const g = e.target.closest('[data-go]'); if (g) post({ h3d: 'goto', id: g.dataset.go });
+});
+$('fade').onchange = () => { sendAll(); upd(); };
+function upd() {
+  const a = [];
+  if (P.biz) a.push(`Bedrijven: ${nameOf('biz', P.biz)} (biz=${P.biz})`);
+  if (P.biz || fade()) a.push(`kleur pas na groeien: ${fade() ? 'ja' : 'nee'}`);
+  if (P.lm) a.push(`Bekende gebouwen: ${nameOf('lm', P.lm)} (lm=${P.lm})`);
+  $('picktxt').textContent = a.length ? a.join(' · ') : 'Nog niets gekozen';
+}
+$('copy').onclick = () => { navigator.clipboard?.writeText($('picktxt').textContent); $('copy').textContent = 'Gekopieerd'; setTimeout(() => $('copy').textContent = 'Kopieer', 1200); };
+$('reload').onclick = () => { $('app').src = `../index.html?biz=${S.biz}&lm=${S.lm}${fade() ? '&bizfade' : ''}&r=${Date.now()}`; };
+const ab = $('ab'); let held = false;
+ab.addEventListener('pointerdown', () => { held = true; sendAll('0', last === 'lm' ? 'w1' : S.lm); $('lab').textContent = 'Huidig'; ab.classList.add('on'); });
+const up = () => { if (!held) return; held = false; show(last, S[last]); ab.classList.remove('on'); };
+ab.addEventListener('pointerup', up); ab.addEventListener('pointerleave', up);
+$('app').addEventListener('load', () => setTimeout(() => show(last, S[last]), 300));
+show('lm', 'w1'); show('biz', '0');
+</script>
+</body>
+</html>
