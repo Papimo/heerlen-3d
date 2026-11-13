@@ -149,7 +149,7 @@ if (uEra.z > 0.0 && (pInfo.x < uEra.x || pInfo.x > uEra.y)) { // bouwjaar-filter
   const redraw = () => { dirty = true; full = true; };
   const BUILD = 'anime-1 licht randje, daken op bouwjaar, middag zacht, bolle bomen (2026-11-09)', DBG_U = { value: new THREE.Vector2(1, 1) }; // ?gpu: versie zichtbaar + schakelaars omlijning (x = vlaklijnen, y = dieptelijnen)
   H.redraw = redraw;
-  H.VERSION = '0.9.2-test2'; // getoond onderaan (ui.js #attr); bij release ophogen
+  H.VERSION = '0.9.2-test3'; // getoond onderaan (ui.js #attr); bij release ophogen
   // na de upload naar de GPU de kopie in het werkgeheugen weggooien (canvas → 1×1, DataTexture-data → null). Opnieuw tekenen = nieuw canvas/nieuwe textuur
   H.freeAfterUpload = tex => { tex.onUpdate = () => { tex.onUpdate = null; const im = tex.image; if (im && im.getContext) im.width = im.height = 1; else if (im && im.data) im.data = null; }; return tex; };
 
@@ -2460,6 +2460,9 @@ vHk = (uBiz.y < 0.5 || uGOn < 0.5) ? 1.0 : clamp((uGT - pGrow - uGDur) / ${BIZ_F
         const old = sun.shadow; sun.shadow = SP.sh; shSpare = old;
         if (SH_XF && old.map) { U.tShOld.value = old.map.texture; U.uShOP.value = U.uPerM.value; U.uShO.value = 0; shXfT = now; } // kruisvervagen: oude kaart blijft tot de volgende ronde in shSpare staan
         U.uPerM.value = SP.perM; U.uDR.value = SP.dr; SP = null;
+        // omrekening nieuw → oud kader + infaden nieuw gebied meteen (vóór dit beeld), niet pas in het shFadeGo-blok ná draw: anders las het eerste beeld
+        // de oude kaart met de omrekening van de vorige ronde (= verschoven schaduw op volle sterkte → flits na elke stop, 0.9.2-test2)
+        U.uShX.value.copy(old.matrix).multiply(shInv.copy(sun.shadow.matrix).invert()); U.uShT.value = shCovers(old.matrix) ? 1 : 0;
         shFadeOld = old.matrix.clone(); shFadeGo = true; dirty = full = true;
       }
     }
