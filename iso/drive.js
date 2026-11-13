@@ -89,21 +89,105 @@
     const g = new THREE.Group(), M = c => { const m = new THREE.MeshLambertMaterial({ color: c }); H.celify?.(m, 'car'); return m; }; // zelfde cel-look als de rest
     const red = M(0xd9564a), dark = M(0x2f323a), dash = M(0x3b302b), tyre = M(0x1e1f23), white = M(0xf3efe6), chrome = M(0xc9ccd2);
     const box = (w, h, d, x, y, z, m) => { const o = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); o.position.set(x, y, z); g.add(o); return o; };
-    box(1.8, 0.5, 1.45, 0, 0.62, -1.38, red);    // motorkap
-    box(1.8, 0.5, 0.95, 0, 0.62, 1.62, red);     // kofferbak
-    box(0.1, 0.5, 2.0, 0.85, 0.62, 0.15, red);   // deuren (alleen dorpel/rand: van binnen zie je erlangs)
-    box(0.1, 0.5, 2.0, -0.85, 0.62, 0.15, red);
-    box(1.72, 0.2, 0.42, 0, 0.92, -0.5, dash);   // dashboard
-    box(1.6, 0.05, 0.9, 0, 1.5, 0.35, red);      // dak
-    const pil = (x0, y0, z0, x1, y1, z1) => { // stijl tussen twee punten
-      const a = new THREE.Vector3(x0, y0, z0), b = new THREE.Vector3(x1, y1, z1), L = a.distanceTo(b);
-      const o = new THREE.Mesh(new THREE.BoxGeometry(0.07, L, 0.07), red); o.position.copy(a).add(b).multiplyScalar(0.5);
-      o.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize()); g.add(o);
+    // --- carrosserie: sedan jaren 70, opgebouwd uit doorsneden (loft) → afgeronde schouders, wielkasten, gewelfde kap/kofferbak/dak ---
+    const body = M(0xd9564a); body.side = THREE.DoubleSide;
+    const loft = (rows, m) => { // rows = doorsneden met evenveel punten [x,y,z]; vlakken tussen opeenvolgende doorsneden
+      const pos = [], idx = [], n = rows[0].length;
+      for (const r of rows) for (const p of r) pos.push(...p);
+      for (let i = 0; i + 1 < rows.length; i++) for (let k = 0; k + 1 < n; k++) { const a = i * n + k, b = a + n; idx.push(a, b, a + 1, a + 1, b, b + 1); }
+      const geo = new THREE.BufferGeometry(); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.setIndex(idx); geo.computeVertexNormals();
+      const o = new THREE.Mesh(geo, m); g.add(o); return o;
     };
-    pil(0.82, 0.87, -0.72, 0.76, 1.48, -0.08); pil(-0.82, 0.87, -0.72, -0.76, 1.48, -0.08); // A-stijlen
-    pil(0.8, 0.87, 0.95, 0.76, 1.48, 0.78); pil(-0.8, 0.87, 0.95, -0.76, 1.48, 0.78);       // C-stijlen
-    for (const [x, z] of [[0.82, -1.35], [-0.82, -1.35], [0.82, 1.3], [-0.82, 1.3]]) {
-      const w = new THREE.Mesh(new THREE.CylinderGeometry(0.33, 0.33, 0.24, 14), tyre); w.rotation.z = Math.PI / 2; w.position.set(x, 0.33, z); g.add(w); wheels.push(w);
+    const sm = (a, b, v) => { const t = Math.min(1, Math.max(0, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
+    const W0 = 0.86, WH = [[-1.35, 0], [1.3, 0]]; // halve breedte; wielen (z)
+    const wOf = z => W0 - 0.075 * sm(-1.75, -2.1, z) - 0.06 * sm(1.75, 2.1, z);                // hoeken rond in bovenaanzicht
+    const topOf = z => 0.955 - 0.1 * sm(-1.0, -2.1, z) - 0.035 * sm(1.3, 2.1, z);             // schouderlijn: kap loopt naar voren af
+    const botOf = z => { let y = 0.3; for (const [zc] of WH) { const d = Math.abs(z - zc); if (d < 0.43) y = Math.max(y, 0.33 + Math.sqrt(0.43 * 0.43 - d * d)); } return y; }; // wielkasten
+    const PROF = [[-0.025, 0.3], [0, 0.42], [0.006, 0.6], [-0.008, 0.78], [-0.035, 0.9], [-0.08, 0.95], [-0.13, 0.955]]; // (x t.o.v. breedte, y) onder → schouder
+    const Z = []; for (let z = -2.1; z <= 2.1001; z += 0.035) Z.push(+z.toFixed(4));
+    for (const sd of [1, -1]) loft(Z.map(z => {
+      const w = wOf(z), t = topOf(z), bo = botOf(z);
+      return PROF.map(([dx, y]) => { const yy = y > 0.6 ? 0.6 + (y - 0.6) * (t - 0.6) / 0.355 : y; return [sd * (w + dx), Math.max(yy, bo), z]; });
+    }), body);
+    const deck = (z0, z1, crown) => loft(Z.filter(z => z >= z0 - 1e-6 && z <= z1 + 1e-6).map(z => { // kap/kofferbak: van schouder tot schouder, licht gewelfd
+      const xe = wOf(z) - 0.13, t = topOf(z), r = [];
+      for (let k = 0; k <= 10; k++) { const u = -1 + k / 5; r.push([u * xe, t + crown * (1 - u * u), z]); }
+      return r;
+    }), body);
+    deck(-2.1, -0.735, 0.035); deck(1.015, 2.1, 0.025);
+    // voor- en achterkant dicht, grille, koplampen, bumpers, achterlichten
+    box(1.56, 0.56, 0.04, 0, 0.58, -2.085, body); box(1.6, 0.62, 0.04, 0, 0.61, 2.085, body);
+    const ink2 = M(0x1d1e22), chromeX = M(0xd7dade), lampM = M(0xfff4d6), tail = M(0xb3262b), amber = M(0xe39a2c), glassM = M(0x9fb4c0), seat = M(0x6b4a33), vinyl = M(0xc9b48f), carpet = M(0x2e2a28);
+    box(0.78, 0.17, 0.03, 0, 0.66, -2.11, ink2);
+    for (const y of [0.75, 0.57]) box(0.82, 0.02, 0.035, 0, y, -2.112, chromeX);
+    for (let k = -3; k <= 3; k++) box(0.012, 0.15, 0.035, k * 0.11, 0.66, -2.112, chromeX); // grille-spijlen
+    for (const x of [-0.58, 0.58]) {
+      const hl = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.05, 24), chromeX); hl.rotation.x = Math.PI / 2; hl.position.set(x, 0.66, -2.105); g.add(hl);
+      const lens = new THREE.Mesh(new THREE.CircleGeometry(0.075, 24), lampM); lens.position.set(x, 0.66, -2.132); lens.rotation.y = Math.PI; g.add(lens);
+      box(0.12, 0.05, 0.03, x * 1.27, 0.5, -2.1, amber);                              // knipperlicht
+      box(0.32, 0.13, 0.03, x * 1.05, 0.7, 2.11, tail); box(0.1, 0.13, 0.031, x * 1.36, 0.7, 2.11, amber); // achterlichten
+    }
+    for (const z of [-2.17, 2.17]) { // chroombumper met rubber strip en hoeken naar achteren
+      const bm = new THREE.Mesh(new THREE.CapsuleGeometry(0.055, 1.62, 4, 12), chromeX); bm.rotation.z = Math.PI / 2; bm.position.set(0, 0.45, z); g.add(bm);
+      box(1.5, 0.025, 0.02, 0, 0.45, z + Math.sign(z) * 0.055, ink2);
+      for (const sx of [-1, 1]) { const c2 = new THREE.Mesh(new THREE.CapsuleGeometry(0.05, 0.18, 4, 8), chromeX); c2.rotation.x = Math.PI / 2; c2.position.set(sx * 0.82, 0.45, z - Math.sign(z) * 0.1); g.add(c2); }
+    }
+    box(0.36, 0.11, 0.01, 0, 0.6, 2.108, M(0xf2c230)); // gele kentekenplaat
+    // ruitstijlen + dak (glas zit er niet in: weerspiegeling + zonnestrook doet de HUD, zie .dglass)
+    const pil = (x0, y0, z0, x1, y1, z1, t = 0.075, d = 0.06) => {
+      const a = new THREE.Vector3(x0, y0, z0), b = new THREE.Vector3(x1, y1, z1), L = a.distanceTo(b);
+      const o = new THREE.Mesh(new THREE.BoxGeometry(t, L, d), body); o.position.copy(a).add(b).multiplyScalar(0.5);
+      o.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize()); g.add(o); return o;
+    };
+    const poly = (pts, m) => { const geo = new THREE.BufferGeometry(), pos = []; for (let k = 1; k + 1 < pts.length; k++) pos.push(...pts[0], ...pts[k], ...pts[k + 1]); geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); geo.computeVertexNormals(); const o = new THREE.Mesh(geo, m); g.add(o); return o; };
+    for (const sd of [1, -1]) {
+      pil(sd * 0.8, 0.95, -0.735, sd * 0.69, 1.46, -0.12);                               // A-stijl
+      pil(sd * 0.83, 0.95, 0.38, sd * 0.71, 1.46, 0.31, 0.06, 0.09);                     // B-stijl
+      poly([[sd * 0.835, 0.95, 0.84], [sd * 0.835, 0.95, 1.05], [sd * 0.69, 1.46, 0.85], [sd * 0.7, 1.46, 0.69]], body); // brede C-stijl
+      pil(sd * 0.78, 0.955, -0.73, sd * 0.68, 1.45, -0.13, 0.02, 0.02).material = ink2;  // rubber ruitlijst
+    }
+    loft([-0.14, 0, 0.15, 0.3, 0.45, 0.6, 0.75, 0.87].map(z => { const r = [], xe = 0.7 - 0.02 * sm(0.6, 0.87, z) - 0.015 * sm(0, -0.14, z); for (let k = 0; k <= 10; k++) { const u = -1 + k / 5; r.push([u * xe, 1.455 + 0.045 * (1 - u * u), z]); } return r; }), body);
+    loft([-0.1, 0.2, 0.5, 0.82].map(z => { const r = []; for (let k = 0; k <= 10; k++) { const u = -1 + k / 5; r.push([u * 0.66, 1.43 + 0.04 * (1 - u * u), z]); } return r; }), vinyl); // hemel
+    box(1.38, 0.05, 0.06, 0, 1.445, -0.13, body); // bovenrand voorruit
+    for (const x of [-0.38, 0.38]) { const v = box(0.52, 0.012, 0.17, x, 1.41, -0.04, vinyl); v.rotation.x = 0.12; } // zonnekleppen
+    // ruitenwissers in rust onderaan de voorruit
+    for (const x of [-0.5, 0.06]) { const wp = box(0.52, 0.012, 0.014, x + 0.24, 1.04, -0.64, ink2); wp.rotation.z = 0.07; wp.rotation.x = -0.69; }
+    // dashboard met gewatteerde bovenrand
+    box(1.6, 0.2, 0.42, 0, 0.92, -0.5, dash);
+    { const lip = new THREE.Mesh(new THREE.CapsuleGeometry(0.06, 1.48, 4, 12), dash); lip.rotation.z = Math.PI / 2; lip.position.set(0, 1.0, -0.64); g.add(lip); }
+    // buitenspiegels (rond, chroom) op de deur bij de A-stijl
+    for (const sd of [1, -1]) {
+      box(0.1, 0.02, 0.03, sd * 0.89, 0.98, -0.62, chromeX);
+      const hd = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.075, 0.045, 20), chromeX); hd.rotation.x = Math.PI / 2; hd.position.set(sd * 0.95, 1.03, -0.62); g.add(hd);
+      const gl = new THREE.Mesh(new THREE.CircleGeometry(0.06, 20), glassM); gl.position.set(sd * 0.95, 1.03, -0.596); g.add(gl);
+    }
+    // binnen: vloer, deurpanelen met armsteun + raamslinger, stoelen, achterbank, hoedenplank
+    box(1.6, 0.04, 2.1, 0, 0.3, 0.25, carpet);
+    for (const sd of [1, -1]) {
+      for (const [z0, z1] of [[-0.7, 0.37], [0.4, 1.0]]) {
+        box(0.03, 0.5, z1 - z0, sd * 0.81, 0.69, (z0 + z1) / 2, vinyl);
+        box(0.032, 0.012, z1 - z0 - 0.06, sd * 0.806, 0.82, (z0 + z1) / 2, chromeX);
+        box(0.08, 0.05, 0.36, sd * 0.77, 0.72, z1 - 0.3, seat);                                           // armsteun
+        const cr = box(0.012, 0.012, 0.09, sd * 0.79, 0.86, z0 + 0.2, chromeX); cr.rotation.x = 0.6;     // raamslinger
+      }
+    }
+    for (const x of [-0.36, 0.36]) {
+      box(0.52, 0.13, 0.5, x, 0.5, 0.33, seat);
+      const bk = box(0.5, 0.62, 0.12, x, 0.86, 0.64, seat); bk.rotation.x = -0.17;
+      box(0.26, 0.17, 0.1, x, 1.26, 0.71, seat);
+      for (let k = -2; k <= 2; k++) box(0.012, 0.56, 0.005, x + k * 0.09, 0.86, 0.575, carpet).rotation.x = -0.17; // ribfluweel-naden
+    }
+    box(1.44, 0.13, 0.5, 0, 0.5, 1.05, seat); const rb = box(1.44, 0.5, 0.12, 0, 0.8, 1.32, seat); rb.rotation.x = -0.2;
+    box(1.5, 0.03, 0.3, 0, 0.96, 1.25, carpet); // hoedenplank
+    // wielen: band + wieldop (chroom) met naaf; groep draait om x (rollen), wieldop naar buiten
+    for (const [x, z] of [[0.81, -1.35], [-0.81, -1.35], [0.81, 1.3], [-0.81, 1.3]]) {
+      const w = new THREE.Group(); w.rotation.z = Math.PI / 2; w.position.set(x, 0.31, z); g.add(w); wheels.push(w);
+      const out = x > 0 ? -1 : 1; // lokale y → wereld −x (rotatie z 90°)
+      w.add(new THREE.Mesh(new THREE.CylinderGeometry(0.31, 0.31, 0.2, 28), tyre));
+      const tr = new THREE.Mesh(new THREE.TorusGeometry(0.27, 0.04, 8, 28), tyre); tr.rotation.x = Math.PI / 2; tr.position.y = out * 0.09; w.add(tr);
+      const hc = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.2, 0.03, 24), chromeX); hc.position.y = out * 0.1; w.add(hc);
+      const nb = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.04, 12), ink2); nb.position.y = out * 0.12; w.add(nb);
+      for (let k = 0; k < 5; k++) { const a = k / 5 * Math.PI * 2, bt = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.012, 0.11), ink2); bt.position.set(Math.cos(a) * 0.12, out * 0.115, Math.sin(a) * 0.12); bt.rotation.y = -a; w.add(bt); }
     }
     // --- interieur retro jaren 70 (keuze B): dun groot stuur met claxonring, houten strook met chroomlijsten, twee chroomklokken onder een kap, radio, binnenspiegel met geurboompje ---
     const wood = M(0x8a5a2b), cream = M(0xefe6cf), green = M(0x3f8f4a), ink = M(0x26262b);
@@ -111,8 +195,8 @@
     const ZF = -0.285; // voorkant dashboard (naar de bestuurder)
     box(1.7, 0.085, 0.02, 0, 0.9, ZF, wood);
     box(1.7, 0.008, 0.026, 0, 0.947, ZF, chrome); box(1.7, 0.008, 0.026, 0, 0.853, ZF, chrome);
-    box(0.02, 0.015, 2.0, 0.8, 0.885, 0.15, chrome); box(0.02, 0.015, 2.0, -0.8, 0.885, 0.15, chrome); // sierlijst deuren
-    box(0.03, 0.05, 0.14, 0, 0.895, -2.0, chrome); // motorkap-ornament
+    box(0.025, 0.015, 1.75, 0.79, 0.958, 0.15, chrome); box(0.025, 0.015, 1.75, -0.79, 0.958, 0.15, chrome); // sierlijst raamonderkant
+    box(0.03, 0.05, 0.14, 0, 0.9, -1.98, chrome); // motorkap-ornament
     // radio midden: kast, schaalvenster, wijzertje, twee draaiknoppen
     box(0.28, 0.07, 0.012, 0.08, 0.9, ZF + 0.012, ink); box(0.15, 0.028, 0.006, 0.08, 0.908, ZF + 0.02, cream); box(0.004, 0.028, 0.004, 0.11, 0.908, ZF + 0.024, red);
     for (const x of [-0.035, 0.195]) { const k = mk(new THREE.CylinderGeometry(0.017, 0.02, 0.03, 12), chrome, g, x, 0.9, ZF + 0.03); k.rotation.x = Math.PI / 2; }
@@ -163,7 +247,7 @@
       ticks += `<line x1="${(Math.sin(a) * r1).toFixed(1)}" y1="${(-Math.cos(a) * r1).toFixed(1)}" x2="${(Math.sin(a) * 47).toFixed(1)}" y2="${(-Math.cos(a) * 47).toFixed(1)}"${big ? ' class="big"' : ''}/>`;
       if (big) ticks += `<text x="${(Math.sin(a) * 32).toFixed(1)}" y="${(-Math.cos(a) * 32 + 3).toFixed(1)}">${k}</text>`;
     }
-    hud.innerHTML = '<svg class="dgauge" viewBox="-52 -52 104 104"><circle r="50" class="face"/>' + ticks
+    hud.innerHTML = '<div class="dglass"></div><svg class="dgauge" viewBox="-52 -52 104 104"><circle r="50" class="face"/>' + ticks
       + '<line class="ndl" x1="0" y1="6" x2="0" y2="-41"/><circle r="4" class="hubc"/><text class="dnum" y="24">0</text><text class="dunit" y="33">km/u</text></svg>'
       + '<div class="dstreet"></div>'
       + '<button type="button" class="dexit">Uitstappen <kbd>Esc</kbd></button>'
@@ -207,7 +291,7 @@
       for (let r = 2; r <= 30 && !ok; r += 2) for (const s of [1, -1]) { const tx = x - Math.sin(yaw) * r * s, tz = z - Math.cos(yaw) * r * s; if (!carHits(tx, tz, yaw)) { x = tx; z = tz; ok = true; break; } }
     }
     Object.assign(S, { x, z, yaw, v: 0, steer: 0, lookY: 0, lookP: 0 });
-    S.y = H.heightAt(x + H.areaInfo.origin[0], H.areaInfo.origin[1] - z);
+    { const rx = x + H.areaInfo.origin[0], ry = H.areaInfo.origin[1] - z, d = H.bridges?.deckAt?.(rx, ry); S.y = d ?? H.heightAt(rx, ry); } // neergezet op een brug = op het dek
     start();
   }
   function start() {
@@ -223,7 +307,10 @@
   }
 
   // ---------- rijden ----------
-  const hAt = (x, z) => H.heightAt(x + H.areaInfo.origin[0], H.areaInfo.origin[1] - z);
+  const hAt = (x, z) => { // terrein, of het brugdek als de auto daar al ongeveer op hoogte rijdt (eronderdoor blijft terrein)
+    const rx = x + H.areaInfo.origin[0], ry = H.areaInfo.origin[1] - z, t = H.heightAt(rx, ry), d = H.bridges?.deckAt?.(rx, ry);
+    return d != null && d > t && S.y > d - 1.6 ? d : t;
+  };
   const BUMPY = new URLSearchParams(location.search).has('bumpy'); // ?bumpy = oude, hobbelige vering
   let gridT = 0;
   function step(dt) {

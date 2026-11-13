@@ -149,7 +149,7 @@ if (uEra.z > 0.0 && (pInfo.x < uEra.x || pInfo.x > uEra.y)) { // bouwjaar-filter
   const redraw = () => { dirty = true; full = true; };
   const BUILD = 'anime-1 licht randje, daken op bouwjaar, middag zacht, bolle bomen (2026-11-09)', DBG_U = { value: new THREE.Vector2(1, 1) }; // ?gpu: versie zichtbaar + schakelaars omlijning (x = vlaklijnen, y = dieptelijnen)
   H.redraw = redraw;
-  H.VERSION = '0.9.1'; // getoond onderaan (ui.js #attr); bij release ophogen
+  H.VERSION = '0.9.2-test1'; // getoond onderaan (ui.js #attr); bij release ophogen
   // na de upload naar de GPU de kopie in het werkgeheugen weggooien (canvas → 1×1, DataTexture-data → null). Opnieuw tekenen = nieuw canvas/nieuwe textuur
   H.freeAfterUpload = tex => { tex.onUpdate = () => { tex.onUpdate = null; const im = tex.image; if (im && im.getContext) im.width = im.height = 1; else if (im && im.data) im.data = null; }; return tex; };
 

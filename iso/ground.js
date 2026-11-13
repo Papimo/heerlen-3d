@@ -38,8 +38,10 @@
     // wegen-ontwerp (design/10_wegen.html): Wegen 1 Belijnd asfalt · Fietspaden 4 Zacht terracotta · Rotondes 4 Grafisch wit · Stoepen 2 Volgens OSM · Zebrapaden 3 Per soort
     road: { asp: '#56595f', aspSoft: '#9a948b', walk: '#e2dcd1', walkEdge: '#9a9389', bike: '#d39a86', isle: '#f3eee4',
       bikeX: '#b8574a', paint: '#fbfaf5' },
+    // snelweg (A76/A79) en autoweg (N-weg, OSM trunk): donker ZOAB met korrel, grasberm, eigen markering (kantstreep, stroken 3/9, blokmarkering bij invoegen)
+    hw: { snelweg: { asp: '#35383d', berm: 3.5, R: 14 }, autoweg: { asp: '#45484d', berm: 1.6, R: 9 } },
   };
-  const RANK = { hoofd: 4, weg: 3, straat: 2, erfweg: 1, voet: 0 }; // straatklassen (rest = paden/snelweg/spoor)
+  const RANK = { snelweg: 6, autoweg: 5, hoofd: 4, weg: 3, straat: 2, erfweg: 1, voet: 0 }; // rijbanen (rest = paden/spoor); op-/afrit telt als 3 (rk)
 
   // ---------- data → features per vak (absolute RD) ----------
   let KM = 1000, BY = null; // BY: 'i_j' → { land, area, pitch, line, wat }
@@ -59,7 +61,7 @@
     (GD.crop || []).forEach(([c, rs, a]) => ALL.crop.push({ c, rs: rs.map(dec), a: a / 1000 })); // GD.crop blijft (iso/farm.js)
     GD.pitch.forEach(([c, rs, surf, box]) => ALL.pitch.push({ c, rs: rs.map(dec), surf, box }));
     const S = [];
-    GD.line.forEach(([c, w, br, d, fl = 0]) => { const f = { c, w: w / 10, br, a: dec(d), sw: fl & 3, ring: !!(fl & 4) }; ALL.line.push(f); if (RANK[c] != null && !br) S.push(f); });
+    GD.line.forEach(([c, w, br, d, fl = 0]) => { const f = { c, w: w / 10, br, a: dec(d), sw: ST.hw[c] ? 0 : fl & 3, ring: !!(fl & 4), link: !!(ST.hw[c] && fl & 8), lanes: ST.hw[c] ? fl >> 4 & 15 : 0 }; ALL.line.push(f); if (RANK[c] != null && !br) S.push(f); });
     (GD.cross || []).forEach(([k, bike, d]) => ALL.cross.push({ k, bike, a: dec(d) }));
     ALL.jn = junctions(S); ALL.isl = islands(S);
     GD.landKeep = GD.land.filter(l => l[0] === 'kerkhof' || l[0] === 'park' || l[0] === 'gras'); // iso/props.js (laadt na het eerste beeld, 96) leest deze nog
@@ -70,11 +72,11 @@
   function junctions(S) {
     const key = (x, y) => Math.round(x * 2) + ',' + Math.round(y * 2), NODES = new Map();
     const node = (x, y) => { const k = key(x, y); let n = NODES.get(k); if (!n) NODES.set(k, n = { x, y, arms: [] }); return n; };
-    const arm = (n, f, x1, y1) => { const dx = x1 - n.x, dy = y1 - n.y, L = Math.hypot(dx, dy) || 1; n.arms.push({ f, dx: dx / L, dy: dy / L }); };
+    const arm = (n, f, x1, y1, k, s) => { const dx = x1 - n.x, dy = y1 - n.y, L = Math.hypot(dx, dy) || 1; n.arms.push({ f, dx: dx / L, dy: dy / L, L, k, s }); }; // k = punt-index van de knoop in f, s = richting (±1)
     const G = new Map(), gk = (x, y) => Math.floor(x / 20) + ',' + Math.floor(y / 20);
     for (const f of S) {
       const a = f.a, n = a.length / 2;
-      for (let k = 0; k < n; k++) { const nd = node(a[2 * k], a[2 * k + 1]); if (k > 0) arm(nd, f, a[2 * k - 2], a[2 * k - 1]); if (k < n - 1) arm(nd, f, a[2 * k + 2], a[2 * k + 3]); }
+      for (let k = 0; k < n; k++) { const nd = node(a[2 * k], a[2 * k + 1]); if (k > 0) arm(nd, f, a[2 * k - 2], a[2 * k - 1], k, -1); if (k < n - 1) arm(nd, f, a[2 * k + 2], a[2 * k + 3], k, 1); }
       for (let k = 0; k < n - 1; k++) { const g = gk((a[2 * k] + a[2 * k + 2]) / 2, (a[2 * k + 1] + a[2 * k + 3]) / 2); if (!G.has(g)) G.set(g, []); G.get(g).push([f, k]); }
     }
     for (const f of S) for (const e of [0, f.a.length / 2 - 1]) {
@@ -84,13 +86,18 @@
         if (g === f) continue;
         const ax = g.a[2 * k], ay = g.a[2 * k + 1], bx = g.a[2 * k + 2], by = g.a[2 * k + 3], vx = bx - ax, vy = by - ay, L2 = vx * vx + vy * vy || 1;
         const t = Math.max(0, Math.min(1, ((x - ax) * vx + (y - ay) * vy) / L2));
-        if (Math.hypot(ax + vx * t - x, ay + vy * t - y) < 0.8) { arm(nd, g, ax, ay); arm(nd, g, bx, by); break found; }
+        if (Math.hypot(ax + vx * t - x, ay + vy * t - y) < 0.8) { arm(nd, g, ax, ay, -1, 0); arm(nd, g, bx, by, -1, 0); break found; } // midden op een stuk: geen index
       }
     }
-    const out = [];
-    for (const n of NODES.values()) if (n.arms.length >= 3) {
-      n.maxR = Math.max(...n.arms.map(a => RANK[a.f.c])); n.maxW = Math.max(...n.arms.map(a => a.f.w + ST.rib.extra)); n.ring = n.arms.some(a => a.f.ring);
-      n.bb = [n.x, n.y, n.x, n.y]; out.push(n);
+    const out = [], rk = f => f.link ? 3 : RANK[f.c];
+    for (const n of NODES.values()) {
+      if (n.arms.length === 2) { // aansluiting kop-aan-kop: alleen bij een breedtesprong (→ taps verloop in paintAll)
+        const [a, b] = n.arms; if (a.f === b.f || Math.abs(a.f.w - b.f.w) < 0.6) continue;
+        n.taper = true;
+      } else if (n.arms.length < 3) continue;
+      n.arms.sort((p, q) => Math.atan2(p.dy, p.dx) - Math.atan2(q.dy, q.dx)); // tegen de klok in → buren voor afgeronde hoeken
+      n.maxR = Math.max(...n.arms.map(a => rk(a.f))); n.maxW = Math.max(...n.arms.map(a => a.f.w + (ST.hw[a.f.c] ? 0 : ST.rib.extra))); n.ring = n.arms.some(a => a.f.ring);
+      n.hw = n.arms.some(a => ST.hw[a.f.c]); n.bb = [n.x, n.y, n.x, n.y]; out.push(n);
     }
     return out;
   }
@@ -313,42 +320,118 @@
       }
       return { a: o };
     };
-    const RT = ST.rib, RD = ST.road, ink = 0.3, IK = 1.6 + 1.2; // inkt 0,3 m per kant; ver weg wegdek ≥ 1,6 texel + inkt ≥ 0,6 texel per kant
-    const wOf = f => f.w + RT.extra, aw = f => wOf(f) * RT.kerb, asp = f => RANK[f.c] >= 1 ? RD.asp : RD.aspSoft;
+    const RT = ST.rib, RD = ST.road, HW = ST.hw, ink = 0.3, IK = 1.6 + 1.2; // inkt 0,3 m per kant; ver weg wegdek ≥ 1,6 texel + inkt ≥ 0,6 texel per kant
+    const rk = f => f.link ? 3 : RANK[f.c], isRd = f => RT.street[f.c] || HW[f.c];
+    const wOf = f => HW[f.c] ? f.w : f.w + RT.extra, aw = f => HW[f.c] ? f.w : wOf(f) * RT.kerb;
+    const asp = f => HW[f.c] ? HW[f.c].asp : RANK[f.c] >= 1 ? RD.asp : RD.aspSoft;
+    // lagen van een rijbaan: 0 inkt, 1 stoeprand (snelweg: wegdek), 2 wegdek → halve breedte, kleur, soort (23 = ZOAB-korrel)
+    const half = (f, l) => l === 0 ? wOf(f) / 2 + ink : l === 1 ? wOf(f) / 2 : aw(f) / 2;
+    const colOf = (f, l) => l === 0 ? RT.ink : l === 1 && !HW[f.c] ? RT.street[f.c][1] : asp(f);
+    const kindOf = (f, l) => l > 0 && HW[f.c] ? 23 : 0;
+    const minOf = l => l === 0 ? IK : 1.6;
+    // stuk van een lijn vanaf de knoop (arm: punt k, richting s) over len m; zonder index (T-aansluiting midden op een stuk) = recht
+    const head = (n, A, len) => {
+      const o = [n.x, n.y], a = A.f.a, m = a.length / 2;
+      if (A.k < 0) { o.push(n.x + A.dx * len, n.y + A.dy * len); return o; }
+      let px = n.x, py = n.y, left = len;
+      for (let k = A.k + A.s; k >= 0 && k < m && left > 0; k += A.s) {
+        const qx = a[2 * k], qy = a[2 * k + 1], L = Math.hypot(qx - px, qy - py);
+        if (L >= left) { o.push(px + (qx - px) * left / L, py + (qy - py) * left / L); break; }
+        o.push(qx, qy); left -= L; px = qx; py = qy;
+      }
+      return o;
+    };
+    // afgeronde hoek tussen arm A en de volgende arm B (tegen de klok in) voor laag l; middelpunt uit de inktlaag → alle lagen concentrisch
+    const fillet = (n, A, B, l, R0) => {
+      const cr = A.dx * B.dy - A.dy * B.dx; let th = Math.atan2(cr, A.dx * B.dx + A.dy * B.dy); if (th < 0) th += Math.PI * 2;
+      if (th > 2.6 || th < 0.06) return null;
+      const nax = -A.dy, nay = A.dx, nbx = -B.dy, nby = B.dx, ha = half(A.f, 0), hb = half(B.f, 0), la = half(A.f, l), lb = half(B.f, l);
+      const lim = HW[A.f.c] && HW[B.f.c] ? 60 : Math.min(A.k < 0 ? 1e9 : A.L, B.k < 0 ? 1e9 : B.L, 35), det = -(nax * nby - nay * nbx);
+      for (let R = R0; R > 0.7; R *= 0.6) {
+        const a1 = ha + R, b1 = hb + R, p0 = (a1 * -nby - nay * b1) / det, p1 = (nax * b1 - a1 * -nbx) / det;
+        const ta = p0 * A.dx + p1 * A.dy, tb = p0 * B.dx + p1 * B.dy; if (ta <= 0 || tb <= 0 || ta > lim || tb > lim) continue;
+        const cx = n.x + p0, cy = n.y + p1, ra = a1 - la, rb = b1 - lb; // afstand middelpunt → rand van laag l
+        let a0 = Math.atan2(-nay, -nax), d = Math.atan2(nby, nbx) - a0; d = ((d + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;
+        const o = [n.x, n.y], st = Math.max(2, Math.ceil(Math.abs(d) / 0.2));
+        for (let i = 0; i <= st; i++) { const t = i / st, r = ra + (rb - ra) * t, an = a0 + d * t; o.push(cx + Math.cos(an) * r, cy + Math.sin(an) * r); }
+        return { o, ta, tb };
+      }
+      return null;
+    };
+    const fil = (x2, pts, col, kd) => { x2.kind = kd; quad(x2, pts, col); x2.kind = 0; };
+    // knoop-vormen voor laag l: afgeronde hoeken (≥ 3 armen) of taps verloop (2 armen, breedtesprong)
+    const nodeShapes = (n, l) => {
+      if (n.taper) {
+        const [p, q] = n.arms, [A, B] = p.f.w >= q.f.w ? [p, q] : [q, p], ha = half(A.f, l), hb = half(B.f, l);
+        const T = Math.min(B.k < 0 ? 40 : B.L, Math.max(6, 7 * (ha - hb))), nx = -B.dy, ny = B.dx, ex = n.x + B.dx * T, ey = n.y + B.dy * T;
+        fil(x, [n.x + nx * ha, n.y + ny * ha, ex + nx * hb, ey + ny * hb, ex - nx * hb, ey - ny * hb, n.x - nx * ha, n.y - ny * ha], colOf(A.f, l), kindOf(A.f, l));
+        return;
+      }
+      const R0 = n.hw ? Math.max(...n.arms.map(a => HW[a.f.c] ? HW[a.f.c].R : 5)) : 5;
+      for (let i = 0; i < n.arms.length; i++) {
+        const A = n.arms[i], B = n.arms[(i + 1) % n.arms.length], F2 = fillet(n, A, B, l, R0); if (!F2) continue;
+        const lo = rk(A.f) <= rk(B.f) ? A.f : B.f, hi = lo === A.f ? B.f : A.f, f = l === 1 ? lo : hi; // stoeprand loopt door van de kleinere weg, wegdek van de grotere
+        fil(x, F2.o, colOf(f, l), kindOf(f, l));
+      }
+    };
     for (const br of [0, 1]) {
-      const L = F.line.filter(f => f.br === br);
-      if (br) for (const f of L) if (f.c !== 'beek') stroke(f, (RT.street[f.c] || f.c === 'snelweg' ? f.w + RT.extra : f.w) + 2.2, ST.bridge);
+      const L = F.line.filter(f => f.br === br), J = br ? [] : F.jn;
+      if (br) for (const f of L) if (f.c !== 'beek') stroke(f, (isRd(f) ? wOf(f) : f.w) + 2.2, ST.bridge);
       for (const f of L) if (f.c === 'beek') stroke(f, f.w, ST.line.beek, 1.6);
+      // grasberm langs snelweg/autoweg (vóór paden en stoepen, die liggen er dan bovenop)
+      if (!br) { x.skind = 1; for (const f of L) if (HW[f.c] && !f.link) stroke(f, f.w + 2 * HW[f.c].berm, ST.land.gras); x.skind = 0; }
       yield;
-      for (const f of L) { if (/^(beek|spoor|tram|snelweg|fiets|stoep)$/.test(f.c) || RT.street[f.c]) continue; stroke(f, f.w, ST.line[f.c] || ST.line.pad, 1.2); if (Y()) yield; }
+      for (const f of L) { if (/^(beek|spoor|tram|fiets|stoep)$/.test(f.c) || isRd(f)) continue; stroke(f, f.w, ST.line[f.c] || ST.line.pad, 1.2); if (Y()) yield; }
       for (const f of L) if (f.c === 'stoep') { const sw = Math.max(f.w, 1.8); stroke(f, sw + 0.35, RD.walkEdge); stroke(f, sw, RD.walk); }
-      const S = L.filter(f => RT.street[f.c]);
+      const S = L.filter(f => RT.street[f.c]), RR = L.filter(isRd), M = L.filter(f => HW[f.c]);
       for (const f of S) if (f.sw) {
         const d = (f.w + RT.extra) / 2 + 0.9;
         for (const [bit, o] of [[1, d], [2, -d]]) if (f.sw & bit) { const g = offset(f.a, o); stroke(g, 2.15, RD.walkEdge); stroke(g, 1.8, RD.walk); }
       }
       yield;
       for (const f of L) if (f.c === 'fiets') stroke(f, f.w * 0.85, RD.bike, 1.02);
-      // straten "Belijnd asfalt": eerst alle randen, dan alle wegdekken → kruisingen lopen in elkaar over
-      for (const f of S) { stroke(f, wOf(f) + 2 * ink, RT.ink, IK); if (Y()) yield; }
-      for (const f of S) { stroke(f, wOf(f), RT.street[f.c][1], 1.6); if (Y()) yield; }
-      for (const f of S) { stroke(f, aw(f), asp(f), 1.6 * RT.kerb); if (Y()) yield; }
-      // markering (fijn): kantstrepen + middenstreep op doorgaande wegen, kruisingsvlak, haaientanden waar een lagere weg aansluit
-      const J = br ? [] : F.jn;
+      // alle rijbanen (straten, autoweg, snelweg, op-/afritten) samen per laag: eerst alle randen, dan stoepranden, dan wegdek → aansluitingen lopen in elkaar over
+      for (let l = 0; l < 3; l++) {
+        for (const f of RR) { if (l === 1 && HW[f.c]) continue; x.skind = kindOf(f, l); stroke(f, half(f, l) * 2, colOf(f, l), minOf(l) * (l === 2 && !HW[f.c] ? RT.kerb : 1)); if (Y()) yield; }
+        x.skind = 0;
+        for (const n of J) nodeShapes(n, l);
+        yield;
+      }
+      // markering (fijn): straten kantstrepen + middenstreep op doorgaande wegen
       x.fine = 1;
       for (const f of S) if (RANK[f.c] >= 3 && aw(f) >= 5) { stroke(f, aw(f) - 0.7, RD.paint); stroke(f, aw(f) - 0.98, asp(f)); }
-      x.lineCap = 'butt'; x.setLineDash([3, 6]); for (const f of S) if (RANK[f.c] >= 3) stroke(f, 0.15, RD.paint); x.setLineDash([]); x.lineCap = 'round';
-      for (const n of J) { x.beginPath(); x.arc(n.x - X0, n.y - Y0, Math.max(0, n.maxW * RT.kerb / 2 - 0.1), 0, Math.PI * 2); x.fillStyle = asp(n.arms.find(a => RANK[a.f.c] === n.maxR).f); x.fill(); }
-      for (const n of J) if (n.maxR >= 3 && !n.ring) for (const a of n.arms) { const r = RANK[a.f.c]; if (r < n.maxR && r >= 1) { const d = n.maxW / 2 + 1; teeth(x, n.x + a.dx * d, n.y + a.dy * d, a.dx, a.dy, aw(a.f) - 0.6); } }
-      x.fine = 0;
+      x.lineCap = 'butt'; x.setLineDash([3, 6]); for (const f of S) if (RANK[f.c] >= 3) stroke(f, 0.15, RD.paint); x.setLineDash([]);
+      // snelweg/autoweg: doorgetrokken kantstrepen 0,45 m uit de rand, stroken 3 m / gat 9 m (aantal uit OSM lanes, anders breedte / 3,5 m)
+      for (const f of M) {
+        const e = f.w / 2 - 0.45, nl = f.lanes || Math.max(1, Math.round(f.w / 3.5));
+        if (f.w >= 4) for (const d of [e, -e]) stroke(offset(f.a, d), 0.2, RD.paint);
+        if (!f.link && nl >= 2) { x.setLineDash([3, 9]); for (let i = 1; i < nl; i++) stroke(offset(f.a, -e + 2 * e * i / nl), 0.15, RD.paint); x.setLineDash([]); }
+        if (Y()) yield;
+      }
+      x.lineCap = 'round';
+      // knopen: wegdek nog eens over de kruising (veegt doorlopende strepen weg), dan haaientanden en blokmarkering bij invoegen
+      for (const n of J) {
+        if (n.taper || n.ring) continue;
+        const d = Math.max(...n.arms.map(a => half(a.f, 2))) + 0.4;
+        x.lineCap = 'butt'; for (const A of n.arms) { x.skind = kindOf(A.f, 2); const h = head(n, A, n.hw ? Math.min(d, 4) : d); x.beginPath(); x.moveTo(h[0] - X0, h[1] - Y0); for (let k = 2; k < h.length; k += 2) x.lineTo(h[k] - X0, h[k + 1] - Y0); x.lineWidth = half(A.f, 2) * 2; x.strokeStyle = asp(A.f); x.stroke(); }
+        x.skind = 0; x.lineCap = 'round';
+        nodeShapes(n, 2);
+      }
+      x.fine = 1;
+      for (const n of J) if (!n.taper && n.maxR >= 3 && n.maxR < 5 && !n.ring) for (const a of n.arms) { const r = rk(a.f); if (r < n.maxR && r >= 1) { const d = n.maxW / 2 + 1; teeth(x, n.x + a.dx * d, n.y + a.dy * d, a.dx, a.dy, aw(a.f) - 0.6); } }
+      // blokmarkering (1 m / 3 m) langs de hoofdrijbaan waar een op-/afrit invoegt: over de lengte van de afgeronde wig
+      x.lineCap = 'butt'; x.setLineDash([1, 3]);
+      for (const n of J) if (n.hw && !n.taper) for (let i = 0; i < n.arms.length; i++) {
+        const A = n.arms[i]; if (!HW[A.f.c] || A.f.link) continue;
+        for (const [B, sd] of [[n.arms[(i + 1) % n.arms.length], 1], [n.arms[(i + n.arms.length - 1) % n.arms.length], -1]]) {
+          if (!B.f.link) continue;
+          const F2 = sd > 0 ? fillet(n, A, B, 2, HW[A.f.c].R) : fillet(n, B, A, 2, HW[A.f.c].R); if (!F2) continue;
+          const len = sd > 0 ? F2.ta : F2.tb, h = head(n, A, len); if (h.length < 4) continue;
+          stroke(offset(h, sd * (half(A.f, 2) - 0.45)), 0.4, RD.paint); // links (+) = afrit tegen de klok in naast A
+        }
+      }
+      x.setLineDash([]); x.lineCap = 'round'; x.fine = 0;
       yield;
-      // snelwegen: lichte berm, donker asfalt, witte kantstrepen, middenstreep 3 m / gat 9 m (alleen ≥ 2 stroken)
-      const M = L.filter(f => f.c === 'snelweg');
-      for (const f of M) stroke(f, f.w + 2 * ink, RT.ink, IK);
-      for (const f of M) stroke(f, f.w, RT.berm, 1.6);
-      for (const f of M) stroke(f, f.w - 0.96, RT.asphalt);
-      for (const f of M) { stroke(f, f.w - 2.04, RT.paint); stroke(f, f.w - 2.76, RT.asphalt); }
-      x.lineCap = 'butt'; x.setLineDash([3, 9]); for (const f of M) if (f.w >= 7) stroke(f, 0.24, RT.paint); x.setLineDash([]); x.lineCap = 'round';
       // spoor: ballast 6 m, dwarsliggers (2,8 m breed, om de 0,65 m), twee spoorstaven 1,5 m uit elkaar; tram blijft oude stijl
       for (const f of L) if (f.c === 'tram') {
         stroke(f, f.w, ST.line.tram); x.setLineDash([0.3, 0.55]); stroke(f, 2.6, shade(ST.line.tram, 0.7)); x.setLineDash([]);
@@ -366,7 +449,7 @@
   }
 
   // ---------- vector-'canvas': deel van CanvasRenderingContext2D, uitvoer = driehoeken in Buf ----------
-  const DASH = { '3,6': [4, 9, 3], '3,9': [5, 12, 3], '0.3,0.55': [6, 0.85, 0.3], '0.27,0.38': [7, 0.65, 0.27] }; // [soort, periode, aan] (zelfde tabel in GMAT)
+  const DASH = { '3,6': [4, 9, 3], '3,9': [5, 12, 3], '0.3,0.55': [6, 0.85, 0.3], '0.27,0.38': [7, 0.65, 0.27], '1,3': [22, 4, 1] }; // [soort, periode, aan] (zelfde tabel in GMAT; 8–21 = velden, 23 = ZOAB-korrel)
   const COL = new Map();
   function rgba(s, ga) {
     let c = COL.get(s);
@@ -408,8 +491,8 @@
   const V2 = a => { const o = []; for (let k = 0; k < a.length; k += 2) o.push(new THREE.Vector2(a[k], a[k + 1])); return o; };
   function VCtx(B) {
     let T = [1, 0, 0, 1, 0, 0], subs = [], cur = null; const stack = [];
-    const KEYS = ['fillStyle', 'strokeStyle', 'lineWidth', 'lineCap', 'globalAlpha', 'dash', 'fine', 'minPx', 'kind', 'dir'];
-    const x = { fillStyle: '#000', strokeStyle: '#000', lineWidth: 1, lineCap: 'butt', lineJoin: 'round', globalAlpha: 1, dash: null, fine: 0, minPx: 0, kind: 0, dir: [1, 0] };
+    const KEYS = ['fillStyle', 'strokeStyle', 'lineWidth', 'lineCap', 'globalAlpha', 'dash', 'fine', 'minPx', 'kind', 'skind', 'dir'];
+    const x = { fillStyle: '#000', strokeStyle: '#000', lineWidth: 1, lineCap: 'butt', lineJoin: 'round', globalAlpha: 1, dash: null, fine: 0, minPx: 0, kind: 0, skind: 0, dir: [1, 0] }; // skind = soort voor lijnen (gras 1, korrel 23)
     const pt = (px, py) => { const X = T[0] * px + T[2] * py + T[4], Y = T[1] * px + T[3] * py + T[5], a = cur.a, m = a.length; if (m && Math.abs(a[m - 2] - X) < 1e-4 && Math.abs(a[m - 1] - Y) < 1e-4) return; a.push(X, Y); };
     const sc = () => Math.sqrt(Math.abs(T[0] * T[3] - T[1] * T[2]));
     function fillRings(R) {
@@ -428,7 +511,7 @@
       let n = a.length / 2;
       if (n > 2 && Math.abs(a[0] - a[2 * n - 2]) < 1e-4 && Math.abs(a[1] - a[2 * n - 1]) < 1e-4) { n--; closed = true; }
       if (n < 2) return;
-      const s = { c: rgba(x.strokeStyle, x.globalAlpha), k: x.dash ? x.dash[0] : 0, f: x.fine ? 1 : 0, hw: Math.min(255, Math.round(hw * 10)), mp: Math.min(255, Math.round(mp * 20)) };
+      const s = { c: rgba(x.strokeStyle, x.globalAlpha), k: x.dash ? x.dash[0] : x.skind || 0, f: x.fine ? 1 : 0, hw: Math.min(255, Math.round(hw * 10)), mp: Math.min(255, Math.round(mp * 20)) };
       const per = x.dash ? x.dash[1] : 0, round = x.lineCap === 'round', m = closed ? n : n - 1;
       const ucm = (v, b) => Math.min(65535, Math.round((v - b) * 100));
       const fan = (cx, cy, a0, da, uu) => {
@@ -493,7 +576,7 @@
       varying vec4 vC; varying vec2 vP, vD; varying float vU, vKind, vFine;
       void main() {
         vec2 p = position.xy;
-        if (aK.x < 2.5 || (aK.x > 3.5 && aK.x < 7.5)) p += aO * max(0.0, 0.025 * aK.w / uTpm - 0.1 * aK.z); // minPx: ver weg niet dunner dan zoveel texels
+        if (aK.x < 2.5 || (aK.x > 3.5 && aK.x < 7.5) || aK.x > 21.5) p += aO * max(0.0, 0.025 * aK.w / uTpm - 0.1 * aK.z); // minPx: ver weg niet dunner dan zoveel texels
         vP = p; vD = aO; vU = aU / 100.0; vC = aC; vKind = aK.x; vFine = aK.y;
         gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 0.0, 1.0);
       }`,
@@ -551,7 +634,12 @@
       void main() {
         vec4 c = vC; float k = floor(vKind + 0.5), fk = smoothstep(0.8, 1.0, uTpm), aa = 0.5 / uTpm;
         if (vFine > 0.5) c.a *= fk;
-        if (k > 7.5) { // velden (BRP), rijen dwars op vD
+        if (k > 22.5) { // ZOAB-korrel (snelweg/autoweg): fijne spikkels licht/donker, alleen dichtbij
+          vec2 q = floor(vP / 0.3); float g = h12(q) * 0.6 + h12(floor(vP / 1.1) + 9.1) * 0.4;
+          c.rgb *= 1.0 + fk * (g - 0.5) * 0.22;
+        } else if (k > 21.5) { // blokmarkering 1 m / 3 m
+          if (mod(vU, 4.0) > 1.0) ${NOGD ? 'discard' : 'c.a = 0.0'};
+        } else if (k > 7.5) { // velden (BRP), rijen dwars op vD
           c.rgb = crop(int(k - 7.5), dot(vP, vec2(-vD.y, vD.x)), vn(vP / 9.0 + 3.7) * 0.6 + vn(vP / 2.7) * 0.4, aa);
         } else if (k > 3.5) { // streepjes (DASH in ground.js)
           float P = k < 4.5 ? 9.0 : k < 5.5 ? 12.0 : k < 6.5 ? 0.85 : 0.65, on = k < 5.5 ? 3.0 : k < 6.5 ? 0.3 : 0.27;
