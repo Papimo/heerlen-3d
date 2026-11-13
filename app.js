@@ -149,7 +149,7 @@ if (uEra.z > 0.0 && (pInfo.x < uEra.x || pInfo.x > uEra.y)) { // bouwjaar-filter
   const redraw = () => { dirty = true; full = true; };
   const BUILD = 'anime-1 licht randje, daken op bouwjaar, middag zacht, bolle bomen (2026-11-09)', DBG_U = { value: new THREE.Vector2(1, 1) }; // ?gpu: versie zichtbaar + schakelaars omlijning (x = vlaklijnen, y = dieptelijnen)
   H.redraw = redraw;
-  H.VERSION = '0.9.2-test3'; // getoond onderaan (ui.js #attr); bij release ophogen
+  H.VERSION = '0.9.2-test4'; // getoond onderaan (ui.js #attr); bij release ophogen
   // na de upload naar de GPU de kopie in het werkgeheugen weggooien (canvas → 1×1, DataTexture-data → null). Opnieuw tekenen = nieuw canvas/nieuwe textuur
   H.freeAfterUpload = tex => { tex.onUpdate = () => { tex.onUpdate = null; const im = tex.image; if (im && im.getContext) im.width = im.height = 1; else if (im && im.data) im.data = null; }; return tex; };
 
@@ -889,7 +889,7 @@ if (uEra.z > 0.0 && (pInfo.x < uEra.x || pInfo.x > uEra.y)) { // bouwjaar-filter
     // nieuwe schaduw zacht laten opkomen (geen flits na pannen): uShX = nieuwe → vorige schaduwkaart-coördinaten, uShT = 0→1; binnen het vorige kader meteen vol
     uShX: { value: new THREE.Matrix4().makeTranslation(9, 9, 0) }, uShT: { value: 1 },
     // kruisvervagen (gebruiker 0.9.2: schaduw verscheen te opvallend): binnen het vorige kader oude kaart tShOld → nieuwe in SH_XF ms (uShO 0→1, 1 = alleen nieuw); ?noshxf = oud
-    tShOld: { value: (() => { const t = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1); t.needsUpdate = true; return t; })() }, uShO: { value: 1 }, uShOP: { value: 1 / 1400 } });
+    tShOld: { value: (() => { const t = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1); t.needsUpdate = true; return t; })() }, uShO: { value: 1 }, uShOP: { value: 1 / 1400 }, uShOD: { value: 4000 } });
   // A2 gebakken licht (iso/bake.js vult de atlas): uBk = atlas (R zon zichtbaar · G contactschaduw · BA hoogte), uBkI = vak → atlasplek
   Object.assign(U, { uBk: { value: null }, uBkI: { value: null }, uBkR: { value: new THREE.Vector4(0, 0, 512, 0) }, uBkN: { value: new THREE.Vector2(0, 0) }, uBaked: { value: 0 }, uBkAO: { value: 0 } });
   // seizoenen (knop in Sfeer): één uniform, geen animatie; 0 zomer · 1 herfst · 2 winter · 3 lente. H.seasonize(shader, 'leaf'|'roof'|'') in elk materiaal dat meedoet.
@@ -1007,45 +1007,40 @@ if (uEra.z > 0.0 && (pInfo.x < uEra.x || pInfo.x > uEra.y)) { // bouwjaar-filter
   // iso-licht (design/17_licht.html): vloeiend zonlicht + hemel/grond-omgevingslicht, eigen zachte schaduw (PCSS: scherp aan de voet, zacht verder weg),
   // glans (gGloss: zink, hallen, bitumen, plassen) en glas (gGlass: ramen/zonnepanelen spiegelen de lucht). Materialen zetten de g-tags in hun kleurcode.
   const LIT_PARS = `
-  uniform float uIso, uLvl, uSoft, uGloss, uGlass, uMat, uPerM, uDR, uShT, uShO, uShOP; uniform mat4 uShX; uniform sampler2D tShOld; uniform vec3 uShC, uL, uSunC, uSkyC, uGndC, uHor, uZen;
+  uniform float uIso, uLvl, uSoft, uGloss, uGlass, uMat, uPerM, uDR, uShT, uShO, uShOP, uShOD; uniform mat4 uShX; uniform sampler2D tShOld; uniform vec3 uShC, uL, uSunC, uSkyC, uGndC, uHor, uZen;
   float gGlass = 0.0, gGloss = 0.0, gWinR = 0.5;
   vec3 skyR(vec3 r) { return r.y >= 0.0 ? mix(uHor, uZen, smoothstep(0.0, 0.7, r.y)) : mix(uHor * 0.8, uGndC * 1.4, smoothstep(0.0, -0.35, r.y)); }
   // SH-PARS (vanaf hier na shadowmap_pars_fragment)
   #if defined(USE_SHADOWMAP) && NUM_DIR_LIGHT_SHADOWS > 0
-  float shOld(vec3 o) { // vorige schaduwkaart (alleen tijdens het kruisvervagen): 5 lezingen, kleine straal
-    if (o.z >= 1.0) return 1.0; float s = 0.0, r = 2.0 * uShOP;
-    s += step(o.z, unpackRGBAToDepth(texture2D(tShOld, o.xy)));
-    s += step(o.z, unpackRGBAToDepth(texture2D(tShOld, o.xy + vec2(r, 0.0)))); s += step(o.z, unpackRGBAToDepth(texture2D(tShOld, o.xy - vec2(r, 0.0))));
-    s += step(o.z, unpackRGBAToDepth(texture2D(tShOld, o.xy + vec2(0.0, r)))); s += step(o.z, unpackRGBAToDepth(texture2D(tShOld, o.xy - vec2(0.0, r))));
-    return s / 5.0;
-  }
-  float shNew(vec3 c) {
+  float shPC(sampler2D sm, vec3 c, float pm, float dr) { // zacht filter; zelfde voor nieuwe én vorige kaart (anders sprong de schaduw bij het wisselen naar hoekig, 0.9.2-test3)
     if (c.x < 0.0 || c.x > 1.0 || c.y < 0.0 || c.y > 1.0 || c.z >= 1.0) return 1.0;
     float rot = 6.2831 * fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
-    float sr = 4.0 * uPerM, bs = 0.0, bn = 0.0;
+    float sr = 4.0 * pm, bs = 0.0, bn = 0.0;
 ${QS.has('noshfast') ? `
     for (int i = 0; i < 8; i++) { float a = float(i) * 2.39996 + rot, r = sqrt((float(i) + 0.5) / 8.0);
-      float d = unpackRGBAToDepth(texture2D(directionalShadowMap[0], c.xy + vec2(cos(a), sin(a)) * r * sr));
+      float d = unpackRGBAToDepth(texture2D(sm, c.xy + vec2(cos(a), sin(a)) * r * sr));
       if (d < c.z) { bs += d; bn += 1.0; } }
     if (bn < 0.5) return 1.0;
-    float pr = clamp((c.z - bs / bn) * uDR * uSoft, 0.3, 6.0) * uPerM, s = 0.0;
+    float pr = clamp((c.z - bs / bn) * dr * uSoft, 0.3, 6.0) * pm, s = 0.0;
     for (int i = 0; i < 12; i++) { float a = float(i) * 2.39996 + rot, r = sqrt((float(i) + 0.5) / 12.0);
-      s += step(c.z, unpackRGBAToDepth(texture2D(directionalShadowMap[0], c.xy + vec2(cos(a), sin(a)) * r * pr))); }
+      s += step(c.z, unpackRGBAToDepth(texture2D(sm, c.xy + vec2(cos(a), sin(a)) * r * pr))); }
     s /= 12.0;` : `
     // perf (?noshfast = oud): zelfde gouden-hoek-spiraal, maar richting per lezing doordraaien met een vaste matrix (2 i.p.v. 40 sin/cos per pixel);
     // alle 8 zoeklezingen in de schaduw én halfschaduw-straal ≤ zoekstraal → vol in de schaduw, de 12 PCF-lezingen overslaan
     const mat2 GA = mat2(-0.73736888, 0.67549029, -0.67549029, -0.73736888); vec2 d0 = vec2(cos(rot), sin(rot)), dv = d0;
     for (int i = 0; i < 8; i++) { float r = sqrt((float(i) + 0.5) / 8.0);
-      float d = unpackRGBAToDepth(texture2D(directionalShadowMap[0], c.xy + dv * (r * sr))); dv = GA * dv;
+      float d = unpackRGBAToDepth(texture2D(sm, c.xy + dv * (r * sr))); dv = GA * dv;
       if (d < c.z) { bs += d; bn += 1.0; } }
     if (bn < 0.5) return 1.0;
-    float pr = clamp((c.z - bs / bn) * uDR * uSoft, 0.3, 6.0) * uPerM, s = 0.0;
+    float pr = clamp((c.z - bs / bn) * dr * uSoft, 0.3, 6.0) * pm, s = 0.0;
     if (bn < 7.5 || pr > sr) { dv = d0;
       for (int i = 0; i < 12; i++) { float r = sqrt((float(i) + 0.5) / 12.0);
-        s += step(c.z, unpackRGBAToDepth(texture2D(directionalShadowMap[0], c.xy + dv * (r * pr)))); dv = GA * dv; }
+        s += step(c.z, unpackRGBAToDepth(texture2D(sm, c.xy + dv * (r * pr)))); dv = GA * dv; }
       s /= 12.0; }`}
     return s;
   }
+  float shOld(vec3 o) { return shPC(tShOld, o, uShOP, uShOD); } // vorige schaduwkaart (alleen tijdens het kruisvervagen)
+  float shNew(vec3 c) { return shPC(directionalShadowMap[0], c, uPerM, uDR); }
   #endif
   float softSh() {
   #if defined(USE_SHADOWMAP) && NUM_DIR_LIGHT_SHADOWS > 0
@@ -1080,7 +1075,7 @@ ${QS.has('noshfast') ? `
   // gebakken ↔ live als echte tak (?: kan door de driver platgeslagen worden → softSh' 20 lezingen ook bij gebakken zon)
   const BK_SH = b => `float sh; if (uBaked > 0.5) sh = ${b}; else sh = mix(1.0, softSh(), bkLF);`;
   function addLit(s, sh) {
-    for (const k of ['uIso', 'uLvl', 'uShC', 'uL', 'uSunC', 'uSkyC', 'uGndC', 'uHor', 'uZen', 'uSoft', 'uGloss', 'uGlass', 'uMat', 'uPerM', 'uDR', 'uShX', 'uShT', 'tShOld', 'uShO', 'uShOP']) s.uniforms[k] = U[k];
+    for (const k of ['uIso', 'uLvl', 'uShC', 'uL', 'uSunC', 'uSkyC', 'uGndC', 'uHor', 'uZen', 'uSoft', 'uGloss', 'uGlass', 'uMat', 'uPerM', 'uDR', 'uShX', 'uShT', 'tShOld', 'uShO', 'uShOP', 'uShOD']) s.uniforms[k] = U[k];
     const i = LIT_PARS.indexOf('// SH-PARS');
     s.fragmentShader = s.fragmentShader.replace('#include <common>', '#include <common>\n' + LIT_PARS.slice(0, i))
       .replace('#include <shadowmap_pars_fragment>', '#include <shadowmap_pars_fragment>\n' + LIT_PARS.slice(i))
@@ -2458,7 +2453,7 @@ vHk = (uBiz.y < 0.5 || uGOn < 0.5) ? 1.0 : clamp((uGT - pGrow - uGDur) / ${BIZ_F
       if (moving || !sun.castShadow || driveCam) { SP = null; shadowDirty = true; }
       else if (shStep()) {
         const old = sun.shadow; sun.shadow = SP.sh; shSpare = old;
-        if (SH_XF && old.map) { U.tShOld.value = old.map.texture; U.uShOP.value = U.uPerM.value; U.uShO.value = 0; shXfT = now; } // kruisvervagen: oude kaart blijft tot de volgende ronde in shSpare staan
+        if (SH_XF && old.map) { U.tShOld.value = old.map.texture; U.uShOP.value = U.uPerM.value; U.uShOD.value = U.uDR.value; U.uShO.value = 0; shXfT = now; } // kruisvervagen: oude kaart blijft tot de volgende ronde in shSpare staan
         U.uPerM.value = SP.perM; U.uDR.value = SP.dr; SP = null;
         // omrekening nieuw → oud kader + infaden nieuw gebied meteen (vóór dit beeld), niet pas in het shFadeGo-blok ná draw: anders las het eerste beeld
         // de oude kaart met de omrekening van de vorige ronde (= verschoven schaduw op volle sterkte → flits na elke stop, 0.9.2-test2)
