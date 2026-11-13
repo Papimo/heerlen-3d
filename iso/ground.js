@@ -7,6 +7,40 @@
 (() => {
   const H = typeof H3D !== 'undefined' ? H3D : null, GD = window.H3D_DATA?.ground; // H3D = top-level const in app.js (niet op window)
   if (!H || !GD) return;
+  // Wegen-index (bomen niet op wegen): H.roadNear(x, y, marge) = ligt RD-punt binnen halve breedte + marge (+ berm/extra per soort) van een weg/pad/spoor?
+  // Lui gebouwd uit de ruwe lijnen (GD.line wordt na het bouwen van de grond leeggemaakt → referentie RAW vasthouden tot de index er is).
+  {
+    let RAW = GD.line, IDX = null; const CELL = 40;
+    const EXTRA = { snelweg: 6, autoweg: 4, hoofd: 3, weg: 2.5, straat: 2, erfweg: 1.5, dienst: 1.5, spoor: 2.5, tram: 1.5, fiets: 1, zand: 1, pad: 0.5, voet: 0.5, stoep: 0 };
+    const build = () => {
+      IDX = new Map(); const q = GD.q, O = H.areaInfo?.origin; if (!O || !RAW) return;
+      for (const [c, w, br, d] of RAW) {
+        if (c === 'beek' || br) continue; // beek = water; brug = ligt erboven
+        const hw = (ST.hw[c]?.berm || 0) + (EXTRA[c] ?? 1), half = w / 20 + hw;
+        let x = 0, y = 0, px = 0, py = 0;
+        for (let k = 0; k < d.length; k += 2) {
+          x += d[k]; y += d[k + 1]; const ax = O[0] + x * q, ay = O[1] + y * q;
+          if (k) { // stuk px,py → ax,ay in elke cel die het (met halve breedte) raakt
+            const s = [px, py, ax, ay, half, w / 20];
+            const e = half + 3, i0 = Math.floor((Math.min(px, ax) - e) / CELL), i1 = Math.floor((Math.max(px, ax) + e) / CELL), j0 = Math.floor((Math.min(py, ay) - e) / CELL), j1 = Math.floor((Math.max(py, ay) + e) / CELL); // +3 = ruimte voor marge bij opvragen
+            for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) { const key = i * 65536 + j; let L = IDX.get(key); if (!L) IDX.set(key, L = []); L.push(s); }
+          }
+          px = ax; py = ay;
+        }
+      }
+      RAW = null;
+    };
+    H.roadNear = (x, y, m = 0, bare = false) => { // m ≤ 3; bare = alleen de weg zelf (zonder berm/extra), voor houtwallen langs de weg
+      if (!IDX) build();
+      const L = IDX.get(Math.floor(x / CELL) * 65536 + Math.floor(y / CELL)); if (!L) return false;
+      for (const [ax, ay, bx, by, hx, hb] of L) {
+        const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy, t = l2 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / l2)) : 0;
+        const ex = ax + dx * t - x, ey = ay + dy * t - y, r = (bare ? hb : hx) + m;
+        if (ex * ex + ey * ey < r * r) return true;
+      }
+      return false;
+    };
+  }
   if (window.H3D_DATA.bgt) GD.bgt = window.H3D_DATA.bgt.land; // BGT-vlakken (tools/build-bgt.cjs): wat de grond echt is; OSM-land blijft eronder (wonen/werk onder erf en panden)
 
   // ---------- stijl Speelgoedmat ----------

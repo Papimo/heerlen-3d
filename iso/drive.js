@@ -203,7 +203,7 @@
     // handschoenkastje rechts
     box(0.3, 0.004, 0.004, 0.55, 0.925, ZF + 0.012, ink); box(0.05, 0.012, 0.012, 0.55, 0.905, ZF + 0.016, chrome);
     // stuur: kantelt naar de bestuurder, draait om eigen as
-    const piv = new THREE.Group(); piv.position.set(CAR.eye[0], 1.0, -0.17); piv.rotation.x = 0.45; g.add(piv);
+    const piv = new THREE.Group(); piv.position.set(CAR.eye[0], 1.0, -0.14); piv.rotation.x = -0.45; g.add(piv); // bovenkant van de bestuurder af (kolom loopt omlaag het dashboard in; was +0.45 = kolom omhoog vóór de klokken)
     wheel = new THREE.Group(); piv.add(wheel);
     mk(new THREE.TorusGeometry(0.205, 0.011, 8, 40), ink, wheel);
     mk(new THREE.TorusGeometry(0.105, 0.005, 6, 32, Math.PI), chrome, wheel).rotation.z = Math.PI; // claxonring (onderste helft)
@@ -212,10 +212,11 @@
     const hub = mk(new THREE.CylinderGeometry(0.04, 0.048, 0.035, 16), cream, wheel); hub.rotation.x = Math.PI / 2;
     const cap = mk(new THREE.CylinderGeometry(0.02, 0.02, 0.04, 12), chrome, wheel); cap.rotation.x = Math.PI / 2;
     const col = mk(new THREE.CylinderGeometry(0.025, 0.03, 0.3, 8), ink, piv, 0, 0, -0.15); col.rotation.x = Math.PI / 2;
-    // klokken achter het stuur: snelheid (links) + benzine (rechts), chroomrand, onder een kap
-    const pod = new THREE.Group(); pod.position.set(CAR.eye[0], 1.045, -0.52); pod.rotation.x = -0.35; g.add(pod);
+    // klokken achter het stuur: snelheid (links) + benzine (rechts), chroomrand, onder een kap. Op de voorkant van het dashboard (ZF), in het zichtvenster
+    // tussen stuurrand en naaf (vanaf CAR.eye ±0,92–1,18 m hoog op deze afstand); stond op z −0.52 = half in de dashboardkast + achter de rand
+    const pod = new THREE.Group(); pod.position.set(CAR.eye[0], 1.02, ZF + 0.015); pod.rotation.x = -0.35; g.add(pod);
     mk(new THREE.BoxGeometry(0.4, 0.2, 0.02), ink, pod, 0, 0, -0.012);
-    mk(new THREE.BoxGeometry(0.42, 0.02, 0.13), dash, pod, 0, 0.105, 0.05); // kap
+    mk(new THREE.BoxGeometry(0.42, 0.02, 0.06), dash, pod, 0, 0.105, 0.02); // kap (kort: raakt anders de stuurrand)
     const clock = (x, n) => {
       const d = new THREE.Group(); d.position.set(x, 0, 0); pod.add(d);
       mk(new THREE.CircleGeometry(0.078, 28), cream, d); mk(new THREE.TorusGeometry(0.08, 0.007, 6, 28), chrome, d);

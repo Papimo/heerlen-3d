@@ -200,6 +200,7 @@
       }
     }
 
+    if (H.roadNear) for (const k of ['fruit', 'wood', 'xmas']) L[k] = L[k].filter(t => !H.roadNear(t[0], t[1], 0.5, true)); // niet midden op een weg (perceelrand over een weg heen)
     // bomen/ranken: willekeurige volgorde → count verlagen = gelijkmatig uitdunnen
     let seed = (c.i * 73856093 ^ c.j * 19349663) & 0x7fffffff || 1;
     const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
