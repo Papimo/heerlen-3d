@@ -149,7 +149,8 @@ if (uEra.z > 0.0 && (pInfo.x < uEra.x || pInfo.x > uEra.y)) { // bouwjaar-filter
   const redraw = () => { dirty = true; full = true; };
   const BUILD = 'anime-1 licht randje, daken op bouwjaar, middag zacht, bolle bomen (2026-11-09)', DBG_U = { value: new THREE.Vector2(1, 1) }; // ?gpu: versie zichtbaar + schakelaars omlijning (x = vlaklijnen, y = dieptelijnen)
   H.redraw = redraw;
-  H.VERSION = '0.9.2-test4'; // getoond onderaan (ui.js #attr); bij release ophogen
+  let inkW = 1; // dikte omlijning (1 = ±2 px, 2 = ±4 px, schakelaar Sfeer › Dikke lijnen = fxOn.dik)
+  H.VERSION = '0.9.2-test5'; // getoond onderaan (ui.js #attr); bij release ophogen
   // na de upload naar de GPU de kopie in het werkgeheugen weggooien (canvas → 1×1, DataTexture-data → null). Opnieuw tekenen = nieuw canvas/nieuwe textuur
   H.freeAfterUpload = tex => { tex.onUpdate = () => { tex.onUpdate = null; const im = tex.image; if (im && im.getContext) im.width = im.height = 1; else if (im && im.data) im.data = null; }; return tex; };
 
@@ -2127,7 +2128,7 @@ vHk = (uBiz.y < 0.5 || uGOn < 0.5) ? 1.0 : clamp((uGT - pGrow - uGDur) / ${BIZ_F
     // lijndikte/-sterkte naar zoom (pixels per meter): ver uit dun en zachter (kleine panden verdrinken anders in inkt), middenin 2 px, dichtbij weer fijn
     const ppm = dbs.y / (2 * isoHalf());
     // uW altijd 1: symmetrisch bemonsterd → lijn ±2 px; uW 2 gaf ±4 px (te dik bij startzoom)
-    post.uniforms.uRes.value.copy(rtS); post.uniforms.uW.value = 1; // uRes = maat van rtN (kleiner tijdens bewegen)
+    post.uniforms.uRes.value.copy(rtS); post.uniforms.uW.value = inkW; // uRes = maat van rtN (kleiner tijdens bewegen)
     post.uniforms.uK.value = driveCam ? 0.75 : 0.85 * Math.min(1, 0.4 + ppm * 0.3); post.uniforms.uPd.value = driveCam ? 1 : 0; post.uniforms.uFog.value.set(driveCam ? DRV_FAR * 0.45 : 0, driveCam ? DRV_FAR * 0.95 : 0);
     let on = posts.filter(p => p.enabled !== false && (!driveCam || p.drive)); for (const p of on) p.before?.(); // rijden: wolken/tilt/papier gaan uit van de iso-camera
     if (GLOW4) { if (U.uFilm.value > 0.5) { if (fresh || !glowHave) makeGlow(); } else glowHave = false; } // 92
@@ -2545,13 +2546,13 @@ vHk = (uBiz.y < 0.5 || uGOn < 0.5) ? 1.0 : clamp((uGT - pGrow - uGDur) / ${BIZ_F
   // effecten aan/uit (menu's Sfeer/Stad in ui.js); elk iso-bestand leest H.fxOn(k) en luistert naar 'fx'
   // zuinig = geen effect maar een stand: gedeelde animatietik 10/s i.p.v. 20/s, water stil, geen contactschaduw (standaard uit)
   // inkt (zwarte omlijning i.p.v. licht randje) standaard uit, bouwjaar (daken/gevels op bouwjaar i.p.v. Mijnstreek-palet) standaard aan
-  const FXK = ['wolken', 'lucht', 'verkeer', 'props', 'randen', 'ao', 'diorama', 'zuinig', 'inkt', 'bouwjaar', 'film'];
+  const FXK = ['wolken', 'lucht', 'verkeer', 'props', 'randen', 'ao', 'diorama', 'zuinig', 'inkt', 'bouwjaar', 'film', 'dik'];
   // wolken (wolkschaduw) standaard uit (buggy): alleen aan als de gebruiker hem zelf aanzet (eigen sleutel h3d.wolken, oude h3d.fx-waarde telt niet)
-  const fxOn = Object.fromEntries(FXK.map(k => [k, k === 'zuinig' || k === 'wolken' || k === 'inkt' ? 0 : 1])); // film (Filmisch licht) standaard aan sinds 0.9-test5
+  const fxOn = Object.fromEntries(FXK.map(k => [k, k === 'zuinig' || k === 'wolken' || k === 'inkt' || k === 'dik' ? 0 : 1])); // film (Filmisch licht) standaard aan sinds 0.9-test5
   try { const t = localStorage.getItem('h3d.tilt'); if (t != null) fxOn.randen = t === '0' ? 0 : 1; Object.assign(fxOn, JSON.parse(localStorage.getItem('h3d.fx') || '{}')); fxOn.wolken = localStorage.getItem('h3d.wolken') === '1' ? 1 : 0;
     if (!localStorage.getItem('h3d.film1')) { fxOn.film = 1; localStorage.setItem('h3d.film1', '1'); } } catch { fxOn.wolken = 0; } // eenmalig: bewaarde 'uit' van vóór de nieuwe standaard telt niet; daarna geldt de eigen keuze
   // uLine 0 = inkt (silhouet + vouwen) · 1 = dun (alleen dieptesprongen, 45%); film = licht E + nabewerking (gloed, ACES, waas)
-  const applyLook = () => { U.uLine.value = fxOn.inkt ? 0 : 1; U.uAnime.value = fxOn.bouwjaar ? 1 : 0;
+  const applyLook = () => { U.uLine.value = fxOn.inkt ? 0 : 1; inkW = fxOn.dik ? 2 : 1; U.uAnime.value = fxOn.bouwjaar ? 1 : 0;
     if (isoFilm !== fxOn.film) { isoFilm = U.uFilm.value = fxOn.film; sunKey = ''; applyNight(); } };
   applyLook();
   H.FXK = FXK;

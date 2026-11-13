@@ -437,7 +437,7 @@
   const FX = { // naam, icoon, kosten 1–3, uitleg
     wolken: ['Wolkschaduw', '☁', 2, '±1,3 ms per beeld'], lucht: ['Ballon en vogels', '🎈', 1, 'af en toe iets in de lucht'], randen: ['Zachte randen', '◎', 3, '±2,1 ms per beeld · toets T'],
     zuinig: ['Zuinig', '🍃', 0, 'animaties 10/s i.p.v. 20/s, water stil, geen contactschaduw, scherpte 1× — rustiger voor laptop/accu'],
-    inkt: ['Inktlijnen', '✒', 0, 'iso: volle donkere lijn om panden en vouwen i.p.v. een dunne silhouetlijn'], film: ['Filmisch licht', '🎞', 2, 'iso: lagere zon, filmische kleuren, gloed op glans en glas, waas in de verte (zwaarder voor de GPU)'], bouwjaar: ['Daken op bouwjaar', '🏠', 0, 'oud = rode pannen, jaren 40–70 = oranje, nieuw = antraciet; gevels baksteen of licht (uit = Mijnstreek-palet)'],
+    inkt: ['Inktlijnen', '✒', 0, 'iso: volle donkere lijn om panden en vouwen i.p.v. een dunne silhouetlijn'], dik: ['Dikke lijnen', '🖊', 0, 'iso: omlijning twee keer zo dik (inktlijnen én dunne silhouetlijn)'], film: ['Filmisch licht', '🎞', 2, 'iso: lagere zon, filmische kleuren, gloed op glans en glas, waas in de verte (zwaarder voor de GPU)'], bouwjaar: ['Daken op bouwjaar', '🏠', 0, 'oud = rode pannen, jaren 40–70 = oranje, nieuw = antraciet; gevels baksteen of licht (uit = Mijnstreek-palet)'],
     verkeer: ['Bussen en treinen', '🚌', 1, '±0,2 ms per beeld'], props: ['Straatmeubilair', '🌳', 2, 'straatbomen, lantaarns, bankjes'], ao: ['Contactschaduw', '◐', 1, 'één keer gebakken, daarna bijna gratis'], diorama: ['Diorama-rand', '▱', 1, 'aardlagen langs de gemeentegrens'],
   };
   const GRP = { sfeer: ['wolken', 'lucht', 'randen'], stad: ['verkeer', 'props', 'ao', 'diorama'] };
@@ -446,7 +446,7 @@
   const LIGHTS = { dag: '☀ Dag', schemer: '🌇 Schemer', avond: '🌙 Nacht', nu: '🕒 Nu' };
   const SEASONS = { lente: '🌸 Lente', zomer: '🌳 Zomer', herfst: '🍂 Herfst', winter: '❄ Winter' };
   const sfeer = $('g-sfeer').querySelector('div'), stad = $('g-stad').querySelector('div');
-  sfeer.innerHTML = `<h4>Licht</h4><div class="lseg">${Object.entries(LIGHTS).map(([k, l]) => `<button data-light="${k}">${l}</button>`).join('')}</div><h4>Seizoen</h4><div class="lseg">${Object.entries(SEASONS).map(([k, l]) => `<button data-season="${k}">${l}</button>`).join('')}</div><h4>Stijl</h4>${fxRow('film')}${fxRow('inkt')}${fxRow('bouwjaar')}<div class="sep2"></div><h4>Effecten</h4>${GRP.sfeer.map(fxRow).join('')}<div class="sep2"></div>${fxRow('zuinig')}`;
+  sfeer.innerHTML = `<h4>Licht</h4><div class="lseg">${Object.entries(LIGHTS).map(([k, l]) => `<button data-light="${k}">${l}</button>`).join('')}</div><h4>Seizoen</h4><div class="lseg">${Object.entries(SEASONS).map(([k, l]) => `<button data-season="${k}">${l}</button>`).join('')}</div><h4>Stijl</h4>${fxRow('film')}${fxRow('inkt')}${fxRow('dik')}${fxRow('bouwjaar')}<div class="sep2"></div><h4>Effecten</h4>${GRP.sfeer.map(fxRow).join('')}<div class="sep2"></div>${fxRow('zuinig')}`;
   const gemRow = g => `<label title="${g} laden (±50% meer vakken); omzetten herlaadt de pagina"><span class="ic">▦</span>${g} tonen<span class="cost">${[1, 2, 3].map(i => `<i class="${i <= 3 ? 'f' : ''}"></i>`).join('')}</span><input type="checkbox" data-gem="${g}"${H3D.gemOn(g) ? ' checked' : ''}></label>`;
   stad.innerHTML = GRP.stad.map(fxRow).join('') + '<p class="hint">Contactschaduw wordt één keer gebakken (±10 s), daarna bijna gratis.</p>'
     + (H3D.gemParts?.().length ? '<h4>Gebied</h4>' + H3D.gemParts().map(gemRow).join('') + '<p class="hint">Uit = lichter (minder geheugen en GPU). Omzetten herlaadt de kaart.</p>' : '');
