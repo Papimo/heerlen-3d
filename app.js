@@ -150,7 +150,7 @@ if (uEra.z > 0.0 && (pInfo.x < uEra.x || pInfo.x > uEra.y)) { // bouwjaar-filter
   const BUILD = 'anime-1 licht randje, daken op bouwjaar, middag zacht, bolle bomen (2026-11-09)', DBG_U = { value: new THREE.Vector2(1, 1) }; // ?gpu: versie zichtbaar + schakelaars omlijning (x = vlaklijnen, y = dieptelijnen)
   H.redraw = redraw;
   let inkW = 1; // dikte omlijning (1 = ±2 px, 2 = ±4 px, schakelaar Sfeer › Dikke lijnen = fxOn.dik)
-  H.VERSION = '0.9.2-test5'; // getoond onderaan (ui.js #attr); bij release ophogen
+  H.VERSION = '0.9.2-test6'; // getoond onderaan (ui.js #attr); bij release ophogen
   // na de upload naar de GPU de kopie in het werkgeheugen weggooien (canvas → 1×1, DataTexture-data → null). Opnieuw tekenen = nieuw canvas/nieuwe textuur
   H.freeAfterUpload = tex => { tex.onUpdate = () => { tex.onUpdate = null; const im = tex.image; if (im && im.getContext) im.width = im.height = 1; else if (im && im.data) im.data = null; }; return tex; };
 
@@ -1905,9 +1905,9 @@ vHk = (uBiz.y < 0.5 || uGOn < 0.5) ? 1.0 : clamp((uGT - pGrow - uGDur) / ${BIZ_F
       });
       // tN/tDN highp: three r160 zet geen sampler-precisie → standaard lowp → telefoon (Mali e.d.) las de diepte als 16 bit → streeplijnen
       post = new THREE.ShaderMaterial({
-        uniforms: { tC: { value: useMRT ? rtC.texture[0] : rtC.texture }, tN: { value: rtN.texture }, tSky: { value: skyTex }, tGlow: { value: null }, uGlowK: { value: 1.6 }, uMrt: { value: useMRT ? 1 : 0 }, uPd: { value: 0 }, uFog: { value: new THREE.Vector2() }, tD: { value: null }, tDN: { value: null }, uDyn: { value: 0 }, uRes: { value: new THREE.Vector2() }, uW: { value: 2 }, uK: { value: 0.85 }, uInk: { value: H.isoColors.ink }, uLine: U.uLine, uFilm: U.uFilm, uDbg: DBG_U },
+        uniforms: { tC: { value: useMRT ? rtC.texture[0] : rtC.texture }, tN: { value: rtN.texture }, tSky: { value: skyTex }, tGlow: { value: null }, uGlowK: { value: 1.6 }, uMrt: { value: useMRT ? 1 : 0 }, uPd: { value: 0 }, uFog: { value: new THREE.Vector2() }, tD: { value: null }, tDN: { value: null }, uDyn: { value: 0 }, uRes: { value: new THREE.Vector2() }, uW: { value: 2 }, uDk: { value: 0 }, uK: { value: 0.85 }, uInk: { value: H.isoColors.ink }, uLine: U.uLine, uFilm: U.uFilm, uDbg: DBG_U },
         vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
-        fragmentShader: `varying vec2 vUv; uniform sampler2D tC, tD, tSky${GLOW4 ? ', tGlow' : ''}; uniform highp sampler2D tN, tDN; uniform vec2 uRes; uniform float uW, uK, uDyn, uMrt, uLine, uFilm, uPd, uGlowK; uniform vec2 uFog; uniform vec3 uInk; uniform vec2 uDbg;
+        fragmentShader: `varying vec2 vUv; uniform sampler2D tC, tD, tSky${GLOW4 ? ', tGlow' : ''}; uniform highp sampler2D tN, tDN; uniform vec2 uRes; uniform float uW, uDk, uK, uDyn, uMrt, uLine, uFilm, uPd, uGlowK; uniform vec2 uFog; uniform vec3 uInk; uniform vec2 uDbg;
           ${NRM_GLSL}
           ivec2 tq(highp sampler2D t, vec2 o) { return clamp(ivec2(gl_FragCoord.xy + o), ivec2(0), textureSize(t, 0) - 1); } // exacte pixel (vUv+o/uRes rondde op telefoons af → strepen)
           vec4 N(vec2 o) { ivec2 u = tq(tN, o); vec2 s = texelFetch(tN, u, 0).xy; // xyz = normaal, w = diepte
@@ -1930,7 +1930,7 @@ vHk = (uBiz.y < 0.5 || uGOn < 0.5) ? 1.0 : clamp((uGT - pGrow - uGDur) / ${BIZ_F
               vec3 x = c.rgb * 1.2, t = clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
               c.rgb = mix(vec3(dot(t, vec3(0.2126, 0.7152, 0.0722))), t, 1.15); }
             float ed = smoothstep(1.7, 2.1, dd) * uDbg.y;
-            c.rgb = uLine > 0.5 ? mix(c.rgb, uInk, ed * 0.45) : mix(c.rgb, uInk, k * uK); // dun (alleen silhouet) of inkt
+            vec3 ik = mix(uInk, vec3(0.03), uDk); c.rgb = uLine > 0.5 ? mix(c.rgb, ik, ed * mix(0.45, 0.9, uDk)) : mix(c.rgb, ik, k * max(uK, uDk * 0.95)); // dun (alleen silhouet) of inkt; uDk = dik + zwart
             if (uFog.y > 0.0 && n0.w > 0.0) c.rgb = mix(c.rgb, texture2D(tSky, vUv).rgb, smoothstep(uFog.x, uFog.y, n0.w)); // rijden: mist naar de lucht erachter (verbergt de kijkgrens)
             gl_FragColor = c;
             #include <colorspace_fragment>
@@ -2128,7 +2128,7 @@ vHk = (uBiz.y < 0.5 || uGOn < 0.5) ? 1.0 : clamp((uGT - pGrow - uGDur) / ${BIZ_F
     // lijndikte/-sterkte naar zoom (pixels per meter): ver uit dun en zachter (kleine panden verdrinken anders in inkt), middenin 2 px, dichtbij weer fijn
     const ppm = dbs.y / (2 * isoHalf());
     // uW altijd 1: symmetrisch bemonsterd → lijn ±2 px; uW 2 gaf ±4 px (te dik bij startzoom)
-    post.uniforms.uRes.value.copy(rtS); post.uniforms.uW.value = inkW; // uRes = maat van rtN (kleiner tijdens bewegen)
+    post.uniforms.uRes.value.copy(rtS); const dk = inkW > 1 && (driveCam || ppm >= 4) ? 1 : 0; post.uniforms.uW.value = dk ? 2 : 1; post.uniforms.uDk.value = dk; // Dikke lijnen alleen dichtbij (dichtste stand / rijden), dan zwart en vol (gebruiker 0.9.2-test5: ver weg te zwaar) // uRes = maat van rtN (kleiner tijdens bewegen)
     post.uniforms.uK.value = driveCam ? 0.75 : 0.85 * Math.min(1, 0.4 + ppm * 0.3); post.uniforms.uPd.value = driveCam ? 1 : 0; post.uniforms.uFog.value.set(driveCam ? DRV_FAR * 0.45 : 0, driveCam ? DRV_FAR * 0.95 : 0);
     let on = posts.filter(p => p.enabled !== false && (!driveCam || p.drive)); for (const p of on) p.before?.(); // rijden: wolken/tilt/papier gaan uit van de iso-camera
     if (GLOW4) { if (U.uFilm.value > 0.5) { if (fresh || !glowHave) makeGlow(); } else glowHave = false; } // 92
