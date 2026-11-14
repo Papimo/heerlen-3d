@@ -201,7 +201,7 @@
 
   // ---------- materialen ----------
   // props: kleur per exemplaar alleen waar aTint = 1, aGlow gloeit 's avonds; daarna cel-look van de app (celify na de eigen patch)
-  let PMAT = null, POOL = null, MIST = null;
+  let PMAT = null, MIST = null;
   function mats() {
     if (PMAT) return;
     PMAT = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
@@ -238,23 +238,6 @@
           gl_FragColor = vec4(uCol * mix(1.0, 0.55, uNight), uA * vE * smoothstep(0.32, 0.72, n));
         }`,
       transparent: true, depthWrite: false,
-    });
-    // lichtpoel B: twee harde ringen (binnen 0,55, buiten 0,26), additief over het terrein
-    POOL = new THREE.ShaderMaterial({
-      uniforms: { uNight: H.U.uNight },
-      vertexShader: 'attribute vec2 aQ; varying vec2 vQ; void main() { vQ = aQ; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-      fragmentShader: `varying vec2 vQ; uniform float uNight;
-        #ifdef gl_FragColor
-        layout(location = 1) out highp vec4 gNrm; // MRT van de app: niets aan normaal/diepte veranderen (additief + 0)
-        #endif
-        void main() {
-          #ifdef gl_FragColor
-          gNrm = vec4(0.0);
-          #endif
-          float r = length(vQ), a = r < 0.42 ? 0.3 : r < 0.82 ? 0.13 : 0.0; // was 0,55/0,26: te fel
-          gl_FragColor = vec4(vec3(1.0, 0.749, 0.451) * a * uNight, 1.0);
-        }`,
-      blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4,
     });
   }
 
@@ -376,7 +359,7 @@
     return g;
   }
   const rad = d => (90 - d) * Math.PI / 180; // richting° (0 = noord, met de klok mee) → draaiing om y
-  const VAK = []; // { c, group, trees: [im], small: [im], pool }
+  const VAK = []; // { c, group, trees: [im], small: [im] }
   H.propsVak = VAK; // alleen voor metingen (tools/meet-gpu.cjs)
 
   function build(c) {
@@ -390,7 +373,7 @@
     // hoogte binnen het eigen vak (buurvak kan nog ontbreken → heightAt gaf dan de ondergrond)
     const hAt = (x, y) => H.heightAt(Math.min(c.x0 + km - 0.01, Math.max(c.x0, x)), Math.min(c.y0 + km - 0.01, Math.max(c.y0, y)));
     const at = (x, y, h, ang, s) => { ps.set(x - O[0], hAt(x, y) + h, -(y - O[1])); qq.setFromAxisAngle(UP, ang); sc.setScalar(s); };
-    const group = new THREE.Group(), v = { c, group, trees: [], small: [], pool: null };
+    const group = new THREE.Group(), v = { c, group, trees: [], small: [] };
     const inst = (geo, list, place, color) => {
       if (!list.length) return null;
       const im = new THREE.InstancedMesh(geo, PMAT, list.length);
@@ -500,28 +483,6 @@
       const m = new THREE.Mesh(bake(L), PMAT); m.userData.noShadow = noShadow; group.add(m); v.small.push(m);
       if (L === lampB) { m.geoHi = m.geometry; m.geoLo = bake(lampLoB); }
     }
-    // lichtpoel: per lamp een schijf (midden + 2 ringen × 16) op het terrein, onder de kap (arm richting straat)
-    if (b.lamps.length) {
-      const Pp = [], Q = [], I = [], seg = 16;
-      for (const l of b.lamps) {
-        const R0 = l[2] ? 15 : 11, th = rad(l[4]), arm = l[2] ? 1.5 : 0.6, base = Pp.length / 3;
-        const cx = l[0] + Math.cos(th) * arm, cy = l[1] + Math.sin(th) * arm;
-        Pp.push(cx - O[0], hAt(cx, cy) + 0.15, -(cy - O[1])); Q.push(0, 0);
-        for (const f of [0.5, 1]) for (let k = 0; k < seg; k++) {
-          const a = k / seg * 6.283, x = cx + Math.cos(a) * R0 * f, y = cy + Math.sin(a) * R0 * f;
-          Pp.push(x - O[0], hAt(x, y) + 0.15, -(y - O[1])); Q.push(Math.cos(a) * f, Math.sin(a) * f);
-        }
-        for (let k = 0; k < seg; k++) { const a = base + 1 + k, bb = base + 1 + (k + 1) % seg; I.push(base, a, bb, a, a + seg, bb, bb, a + seg, bb + seg); } // tegen de klok in van boven gezien (anders achterkant boven → weggeknipt)
-      }
-      const g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.Float32BufferAttribute(Pp, 3)); g.setAttribute('aQ', new THREE.Float32BufferAttribute(Q, 2)); g.setIndex(I);
-      g.computeBoundingSphere();
-      const pm = new THREE.Mesh(g, POOL); pm.renderOrder = 2; pm.visible = lit;
-      // niet meetekenen in de normaal/diepte-pass (scene.overrideMaterial = NRM), anders krijgt elke poel een omlijning
-      pm.onBeforeRender = (r, s, cam, geo, mat) => { if (mat !== POOL) geo.setDrawRange(0, 0); };
-      pm.onAfterRender = (r, s, cam, geo) => geo.setDrawRange(0, Infinity);
-      group.add(pm); v.pool = pm;
-    }
     H.scene.add(H.freeze ? H.freeze(group) : group); VAK.push(v);
     detail(v); H.shadowDirty();
   }
@@ -549,14 +510,6 @@
   H.on('detail', () => { let ch = false; for (const v of VAK) ch = detail(v) || ch; if (ch) H.shadowDirty(); });
   H.on('fx', k => { if (k !== 'props') return; for (const v of VAK) detail(v); H.shadowDirty(); });
 
-  // ---------- lichtpoel alleen als het (een beetje) donker is; uNight loopt geleidelijk mee ----------
-  let lit = false;
-  const checkLit = () => {
-    const on = H.U.uNight.value > 0.001;
-    if (on === lit) return; lit = on;
-    for (const v of VAK) if (v.pool) v.pool.visible = on;
-  };
-  H.on('light', checkLit); H.on('frame', checkLit);
 
   H.on('chunk', build);
   if (H.chunks) for (const c of H.chunks.values()) if (c.dem) build(c); // vakken die er al waren

@@ -81,6 +81,9 @@
   let KM = 1000, BY = null; // BY: 'i_j' → { land, area, pitch, line, wat }
   const M = 40; // marge rond het vak (lijnen/randen die erin steken)
 
+  // iso/straat.js (design/21 § 3): rijbanen (stoepranden) + oversteken (zebraborden) bewaren vóór GD.line/cross geleegd worden
+  const KEEP_RD = { hoofd: 1, weg: 1, straat: 1, erfweg: 1, dienst: 1 };
+  function keepStreet() { if (GD.lineKeep) return; GD.lineKeep = GD.line.filter(l => KEEP_RD[l[0]] && !l[2]); GD.crossKeep = GD.cross || []; }
   // ---------- data → één lijst voor heel het gebied (absolute RD) ----------
   let ALL = null;
   function prep() {
@@ -100,6 +103,7 @@
     const BRK = new Set(); for (const f of ALL.line) if (f.br && RANK[f.c] != null) for (const e of [0, f.a.length - 2]) BRK.add(Math.round(f.a[e] * 2) + ',' + Math.round(f.a[e + 1] * 2));
     ALL.jn = junctions(S, BRK); ALL.isl = islands(S); ALL.med = H.noMed ? [] : medians(S);
     GD.landKeep = GD.land.filter(l => l[0] === 'kerkhof' || l[0] === 'park' || l[0] === 'gras'); // iso/props.js (laadt na het eerste beeld, 96) leest deze nog
+    keepStreet();
     GD.land = GD.bgt = GD.area = GD.pitch = GD.line = GD.cross = []; // ruwe data niet meer nodig
     return ALL;
   }
@@ -859,7 +863,7 @@
     if (H.areaInfo.off) clipGD(); // gemeente uitgezet: vlakken/lijnen buiten de geladen vakken niet tekenen (geheugen)
     G.gen = 'worker';
     buildInWorker().then(o => {
-      GD.landKeep = GD.land.filter(l => l[0] === 'kerkhof' || l[0] === 'park' || l[0] === 'gras');
+      GD.landKeep = GD.land.filter(l => l[0] === 'kerkhof' || l[0] === 'park' || l[0] === 'gras'); keepStreet();
       GD.land = GD.bgt = GD.area = GD.pitch = GD.line = GD.cross = []; // ruwe data niet meer nodig (park/grave blijven voor iso/props.js)
       finish(o, t0, 'worker');
     }).catch(e => { console.info('heerlen-3d grond: worker lukt niet → hoofddraad', e?.message || e); buildMain(t0); });

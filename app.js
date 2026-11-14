@@ -150,7 +150,7 @@ if (uEra.z > 0.0 && (pInfo.x < uEra.x || pInfo.x > uEra.y)) { // bouwjaar-filter
   const BUILD = 'anime-1 licht randje, daken op bouwjaar, middag zacht, bolle bomen (2026-11-09)', DBG_U = { value: new THREE.Vector2(1, 1) }; // ?gpu: versie zichtbaar + schakelaars omlijning (x = vlaklijnen, y = dieptelijnen)
   H.redraw = redraw;
   let inkW = 1; // dikte omlijning (1 = ±2 px, 2 = ±4 px, schakelaar Sfeer › Dikke lijnen = fxOn.dik)
-  H.VERSION = '0.9.2-test6'; // getoond onderaan (ui.js #attr); bij release ophogen
+  H.VERSION = '0.9.2-test7'; // getoond onderaan (ui.js #attr); bij release ophogen
   // na de upload naar de GPU de kopie in het werkgeheugen weggooien (canvas → 1×1, DataTexture-data → null). Opnieuw tekenen = nieuw canvas/nieuwe textuur
   H.freeAfterUpload = tex => { tex.onUpdate = () => { tex.onUpdate = null; const im = tex.image; if (im && im.getContext) im.width = im.height = 1; else if (im && im.data) im.data = null; }; return tex; };
 
@@ -882,7 +882,13 @@ if (uEra.z > 0.0 && (pInfo.x < uEra.x || pInfo.x > uEra.y)) { // bouwjaar-filter
     uPalW: { value: pal(['#f2dcb6', '#f4e6c9', '#dfe6cf', '#d6e2e8', '#efd5c4', '#f7ecd8', '#e9d3c9', '#e7e2cc']) }, // iso-gevels
     // anime-look (design/15_anime.html): uAnime 1 = daken/gevels op bouwjaar (schakelaar Sfeer › Daken op bouwjaar), uLine 0 inkt / 1 licht randje,
     // uShC = kleur van de cel-schaduw (iso; middag zacht = blauwgrijs, 's avonds neutraal)
-    uAnime: { value: 1 }, uLine: { value: 1 }, uShC: { value: new THREE.Color(1, 1, 1) } };
+    uAnime: { value: 1 }, uLine: { value: 1 }, uShC: { value: new THREE.Color(1, 1, 1) },
+    // gevelstijl (design/20_stijl.html, ronde 2026-11-14): uGev 0 huidig · 1 A maquette · 2 B echte gevels · 3 D schilderij; uDak 1 = C dakrand (+ iso/dakdetail.js)
+    uGev: { value: 0 }, uDak: { value: 0 },
+    // avondlicht (design/21): lichtkaart rond de camera (iso/nacht.js: tLmp = licht rgb, tLmpH = bovenkant lamp), uLmpR = (x0, z0, 1/maat, basis-y), uLmpK = sterkte (0 = uit),
+    tLmp: { value: (() => { const t = new THREE.DataTexture(new Uint8Array(4), 1, 1); t.needsUpdate = true; return t; })() }, tLmpH: { value: null },
+    uLmpR: { value: new THREE.Vector4(0, 0, 1, 0) }, uLmpK: { value: 0 }, uSkyS: { value: 0 } };
+  U.tLmpH.value = U.tLmp.value;
   // licht iso (design/17_licht.html B Materiaal-middag / E Filmisch): zon uL (wereld), kleuren lineair, glans/glas/baksteen; applyNight + isoSun vullen ze
   Object.assign(U, { uL: { value: new THREE.Vector3(0, 1, 0) }, uSunC: { value: new THREE.Color() }, uSkyC: { value: new THREE.Color() }, uGndC: { value: new THREE.Color() },
     uHor: { value: new THREE.Color() }, uZen: { value: new THREE.Color() }, uSoft: { value: 0.02 }, uGloss: { value: 1.5 }, uGlass: { value: 1.3 }, uMat: { value: 1 },
@@ -975,7 +981,7 @@ if (uEra.z > 0.0 && (pInfo.x < uEra.x || pInfo.x > uEra.y)) { // bouwjaar-filter
     if (a > 0 && b > a && ls > gi.length && ls < a) L = L.slice(0, ls) + '\n\t\tbkC0 = directLight.color;' + L.slice(ls, b) + 'directLight.color = mix(bkC0, directLight.color, bkLF) * bkSun;\n\t\t' + L.slice(b);
     L = L.replace('directLight.color *= ( directLight.visible && receiveShadow ) ? getShadow( directionalShadowMap[ i ]', 'directLight.color *= ( uBaked < 0.5 && uIso < 0.5 && directLight.visible && receiveShadow ) ? getShadow( directionalShadowMap[ i ]');
     const wall = kind === 'wall';
-    s.fragmentShader = s.fragmentShader.replace('#include <common>', '#include <common>' + BAKE_GLSL) // uIso declareren addCel/terrMat zelf
+    s.fragmentShader = s.fragmentShader.replace('#include <common>', '#include <common>\n#define HAS_BKW' + BAKE_GLSL) // uIso declareren addCel/terrMat zelf; HAS_BKW = wereldpositie vBkW (lampL)
       .replace('#include <lights_fragment_begin>', `vec4 bkV = (uIso > 0.5 && (uBaked > 0.5 || uBkAO > 0.5) && ${wall ? 'false' : 'true'}) ? bake(vBkW, ${kind === 'surf' ? 'true' : 'false'}) : vec4(1.0, 1.0, 0.0, 0.0);
       float bkSun = uBaked > 0.5 ? bkV.x : 1.0;
       float bkLF = uIso > 0.5 && uBaked < 0.5 ? bkFade(vBkW) : 1.0; vec3 bkC0;
@@ -1007,10 +1013,72 @@ if (uEra.z > 0.0 && (pInfo.x < uEra.x || pInfo.x > uEra.y)) { // bouwjaar-filter
   // ---------- Licht: dag / avond / nu (volgt de klok), met verlichte ramen en gloeiende plekken ----------
   // iso-licht (design/17_licht.html): vloeiend zonlicht + hemel/grond-omgevingslicht, eigen zachte schaduw (PCSS: scherp aan de voet, zacht verder weg),
   // glans (gGloss: zink, hallen, bitumen, plassen) en glas (gGlass: ramen/zonnepanelen spiegelen de lucht). Materialen zetten de g-tags in hun kleurcode.
+  // ---------- lucht bij rijden (design/21 § 1): koepel op kijkrichting in de nabewerking, i.p.v. verloop over het scherm ----------
+  // uSkyS 0 huidig · 1 A helder (zon + gloed + nevel; 's nachts sterren, maan op uL, stadsgloed) · 2 B + zachte wolken · 3 C anime-wolken (harde rand, 2 tinten)
+  // Alleen tijdens rijden (uPd) en met MRT (lucht komt dan pas in de nabewerking); mist mengt naar dezelfde koepel.
+  const SKY_DOME = `uniform float uSkyS, uSkyT, uSkN; uniform mat3 uCamR; uniform vec2 uTanF; uniform vec3 uSkL, uSkH, uSkZ, uSkSun;
+  float sH(vec2 p) { vec3 q = fract(p.xyx * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
+  float sN(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(sH(i), sH(i + vec2(1.0, 0.0)), f.x), mix(sH(i + vec2(0.0, 1.0)), sH(i + vec2(1.0, 1.0)), f.x), f.y); }
+  float sF(vec2 p) { float a = 0.5, s = 0.0; for (int i = 0; i < 5; i++) { s += a * sN(p); p = mat2(1.6, 1.2, -1.2, 1.6) * p; a *= 0.5; } return s; }
+  vec3 dome(vec3 d) {
+    float y = d.y, day = 1.0 - smoothstep(0.55, 0.85, uSkN), ns = smoothstep(0.6, 0.95, uSkN), an = step(2.5, uSkyS);
+    vec3 L = normalize(uSkL), hor = uSkH, zen = uSkZ;
+    float t = clamp(y / 0.75, 0.0, 1.0), sd = dot(d, L);
+    vec3 col = y >= 0.0 ? mix(hor, zen, pow(t, mix(0.6, 0.42, an))) : hor * mix(1.0, 0.72, smoothstep(0.0, -0.3, y));
+    // zon: brede gloed + schijf; nevel langs de horizon (aan de zonkant warmer)
+    col += uSkSun * (0.16 * pow(max(sd, 0.0), 6.0) + 0.45 * pow(max(sd, 0.0), 90.0)) * day;
+    col = mix(col, mix(hor, uSkSun, 0.3 * max(sd, 0.0)) * 1.04, exp(-max(y, 0.0) * 14.0) * 0.45 * day);
+    col = mix(col, uSkSun * 2.0 + 0.35, smoothstep(0.99955, 0.99975 - an * 0.0001, sd) * day);
+    col += uSkSun * smoothstep(0.003, 0.0, abs(sd - 0.9968)) * 0.18 * an * day; // anime: ring om de zon
+    if (ns > 0.0) {
+      vec3 q = d * 260.0, ci = floor(q); float h = fract(sin(dot(ci, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
+      col += vec3(0.85, 0.9, 1.0) * step(0.9965, h) * (0.35 + 0.9 * fract(h * 91.7)) * smoothstep(0.38, 0.05, length(fract(q) - 0.5)) * smoothstep(0.03, 0.3, y) * ns;
+      col += vec3(0.5, 0.6, 0.85) * (pow(max(sd, 0.0), 400.0) * 0.4 + pow(max(sd, 0.0), 14.0) * 0.05) * ns;          // maanhalo (uL = maan 's nachts)
+      col = mix(col, vec3(0.93, 0.93, 0.86) * (0.8 + 0.2 * sN(d.xz * 1400.0)), smoothstep(0.99935, 0.99955, sd) * ns);
+      col += vec3(0.55, 0.3, 0.14) * exp(-max(y, -0.05) * 7.0) * 0.3 * ns;                                            // stadsgloed
+    }
+    if (uSkyS > 1.5 && y > 0.0) { // wolken op een vlak boven de camera, drijven langzaam
+      vec2 p = d.xz / (y + 0.12) * mix(1.4, 0.9, an) + vec2(uSkyT * 0.012, uSkyT * 0.004);
+      float c = sF(p), c2 = sF(p + L.xz * 0.12);
+      vec3 lit = mix(vec3(1.0), uSkSun, 0.35) * (day + ns * 0.12) + vec3(0.6, 0.35, 0.2) * ns * 0.22, shd = mix(zen, hor, 0.5) * mix(0.78, 0.4, ns);
+      float den, lt;
+      if (an > 0.5) { den = smoothstep(0.55, 0.565, c); lt = step(0.5, 0.55 + (c - c2) * 5.0); shd = mix(shd, vec3(0.7, 0.68, 0.92) * (day + 0.15), 0.45); }
+      else { den = smoothstep(0.48, 0.78, c) * 0.92; lt = clamp(0.55 + (c - c2) * 4.0, 0.0, 1.0); }
+      col = mix(col, mix(shd, lit, lt), den * smoothstep(0.0, 0.12, y));
+    }
+    return col;
+  }
+  vec3 skyC(vec2 uv) {
+    if (uSkyS < 0.5 || uPd < 0.5) return texture2D(tSky, uv).rgb;
+    vec2 v = uv * 2.0 - 1.0; return dome(normalize(uCamR * vec3(v.x * uTanF.x, v.y * uTanF.y, -1.0)));
+  }`;
+  const SKY_STYLES = ['0', 'a', 'b', 'c'];
+  try { const q = QS.get('sky'), st = localStorage.getItem('h3d.sky'), v = SKY_STYLES.includes(q) ? q : SKY_STYLES.includes(st) ? st : '0'; U.uSkyS.value = SKY_STYLES.indexOf(v); } catch {}
+  H.skyStyle = () => SKY_STYLES[U.uSkyS.value];
+  H.setSky = (v, keep) => { if (SKY_STYLES.includes(v)) U.uSkyS.value = SKY_STYLES.indexOf(v); if (!keep) try { localStorage.setItem('h3d.sky', v); } catch {} redraw(); emit('skystyle', v); };
   const LIT_PARS = `
   uniform float uIso, uLvl, uSoft, uGloss, uGlass, uMat, uPerM, uDR, uShT, uShO, uShOP, uShOD; uniform mat4 uShX; uniform sampler2D tShOld; uniform vec3 uShC, uL, uSunC, uSkyC, uGndC, uHor, uZen;
   float gGlass = 0.0, gGloss = 0.0, gWinR = 0.5;
   vec3 skyR(vec3 r) { return r.y >= 0.0 ? mix(uHor, uZen, smoothstep(0.0, 0.7, r.y)) : mix(uHor * 0.8, uGndC * 1.4, smoothstep(0.0, -0.35, r.y)); }
+  // avondlicht (design/21, iso/nacht.js): lichtkaart in wereld-xz rond de camera. Grond krijgt de poel, gevels alleen de kant die naar de lamp kijkt
+  // (richting = helling van de kaart), boven de lamp (tLmpH) niets.
+  uniform sampler2D tLmp, tLmpH; uniform vec4 uLmpR; uniform float uLmpK, uLmN;
+  vec3 lampL(vec3 w, vec3 N) {
+    vec3 o = vec3(0.0);
+    vec2 uv = (w.xz - uLmpR.xy) * uLmpR.z;
+    if (uLmpK > 0.0 && uv.x > 0.0 && uv.y > 0.0 && uv.x < 1.0 && uv.y < 1.0) {
+      vec3 L = texture2D(tLmp, uv).rgb;
+      if (L.r + L.g + L.b > 0.002) {
+        float top = texture2D(tLmpH, uv).r * 127.5 + uLmpR.w, hv = smoothstep(top + 1.5, top - 2.5, w.y);
+        float e = uLmpR.z * 2.5; vec3 lw = vec3(0.3, 0.5, 0.2);
+        vec2 g = vec2(dot(texture2D(tLmp, uv + vec2(e, 0.0)).rgb - texture2D(tLmp, uv - vec2(e, 0.0)).rgb, lw), dot(texture2D(tLmp, uv + vec2(0.0, e)).rgb - texture2D(tLmp, uv - vec2(0.0, e)).rgb, lw));
+        float up = smoothstep(0.35, 0.8, N.y), face = clamp(dot(N.xz, g / (length(g) + 0.004)) * 0.9 + 0.25, 0.0, 1.0);
+        o = L * hv * mix(face * 0.85, 1.0, up) * uLmpK;
+      }
+    }
+    return o * uLmN;
+  }
   // SH-PARS (vanaf hier na shadowmap_pars_fragment)
   #if defined(USE_SHADOWMAP) && NUM_DIR_LIGHT_SHADOWS > 0
   float shPC(sampler2D sm, vec3 c, float pm, float dr) { // zacht filter; zelfde voor nieuwe én vorige kaart (anders sprong de schaduw bij het wisselen naar hoekig, 0.9.2-test3)
@@ -1070,13 +1138,17 @@ ${QS.has('noshfast') ? `
         if (gs > 0.0) { vec3 Hh = normalize(uL + V);
           col += uSunC * pow(max(dot(N, Hh), 0.0), 24.0) * sh * 0.35 * gs;
           col = mix(col, skyR(reflect(-V, N)), clamp(fr * 0.7 * gs, 0.0, 0.6)); }
+        #ifdef HAS_BKW
+        if (uLmN > 0.0) col += alb * lampL(vBkW, N);
+        #endif
         outgoingLight = col + totalEmissiveRadiance;
       }
       #include <opaque_fragment>`;
   // gebakken ↔ live als echte tak (?: kan door de driver platgeslagen worden → softSh' 20 lezingen ook bij gebakken zon)
   const BK_SH = b => `float sh; if (uBaked > 0.5) sh = ${b}; else sh = mix(1.0, softSh(), bkLF);`;
   function addLit(s, sh) {
-    for (const k of ['uIso', 'uLvl', 'uShC', 'uL', 'uSunC', 'uSkyC', 'uGndC', 'uHor', 'uZen', 'uSoft', 'uGloss', 'uGlass', 'uMat', 'uPerM', 'uDR', 'uShX', 'uShT', 'tShOld', 'uShO', 'uShOP', 'uShOD']) s.uniforms[k] = U[k];
+    for (const k of ['uIso', 'uLvl', 'uShC', 'uL', 'uSunC', 'uSkyC', 'uGndC', 'uHor', 'uZen', 'uSoft', 'uGloss', 'uGlass', 'uMat', 'uPerM', 'uDR', 'uShX', 'uShT', 'tShOld', 'uShO', 'uShOP', 'uShOD', 'tLmp', 'tLmpH', 'uLmpR', 'uLmpK']) s.uniforms[k] = U[k];
+    s.uniforms.uLmN = U.uNight; // eigen naam: veel materialen declareren uNight zelf
     const i = LIT_PARS.indexOf('// SH-PARS');
     s.fragmentShader = s.fragmentShader.replace('#include <common>', '#include <common>\n' + LIT_PARS.slice(0, i))
       .replace('#include <shadowmap_pars_fragment>', '#include <shadowmap_pars_fragment>\n' + LIT_PARS.slice(i))
@@ -1162,7 +1234,7 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
               p *= mix(1.0, 0.9 + 0.16 * bzH(floor(vec2(u / 0.9 + floor(vRW.y / 0.3) * 0.5, vRW.y / 0.3))), bf) * (0.94 + 0.1 * bzN(vec2(u, vRW.y) * 0.5));
               p = mix(p, ${lin('#cbbfae')}, step(fract(vRW.y / 0.3), 0.15) * 0.6 * bf); } }
           else if (fract(vS * 5.3) < 0.35) { ${glPick(W_MOD, 'fract(vS * 3.7)')} } else { ${glPick(W_PALE, 'vS')} }
-          if (bzHal(vI, vHt)) ${PANEL} else {
+          if (bzHal(vI, vHt)) ${PANEL} else if (uGev < 0.5) {
           vec2 f = vec2(fract(u / 3.2), fract(fy));
           float inW = step(0.8, hb) * step(1.1, ht) * step(4.0, vHt);
           float gl = step(0.25, f.x) * step(f.x, 0.75) * step(0.3, f.y) * step(f.y, 0.8);
@@ -1173,8 +1245,74 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
           p *= 1.0 - 0.16 * step(ht, 0.35) * step(4.0, vHt); // schaduwrand onder de dakgoot
           if (vBz.y > 0.6 && fract(vS * 3.1) < 0.34) p = mix(p, ${lin('#cdd1d4')}, step(ht, 0.35)); // bitumen-dak: aluminium dakrand
         } }`;
+  // ---------- gevelstijlen (design/20_stijl.html): uGev 1 A maquette · 2 B echte gevels · 3 D schilderij; uDak = C dakrand ----------
+  // gWin = glasmasker van de dagramen (≥ 0 = stijl actief) → avondramen in MAT.wall gebruiken hetzelfde raster (gWinR = toeval per raam).
+  const GEV_COMMON = `uniform float uGev, uDak; float gWin = -1.0;
+float gBox(vec2 f, vec4 r) { return step(r.x, f.x) * step(f.x, r.y) * step(r.z, f.y) * step(f.y, r.w); }
+vec3 gSat(vec3 c, float k) { return max(mix(vec3(dot(c, vec3(0.3, 0.59, 0.11))), c, k), 0.0); }`;
+  const GEV_WALL = `if (uAnime > 0.5 && !bzHal(vI, vHt)) {
+          vec3 wn = normalize(cross(dFdx(vRW), dFdy(vRW)));
+          float u = abs(wn.x) > abs(wn.z) ? vRW.z : vRW.x, hb = vRW.y - vI.z, ht = vI.z + vHt - vRW.y, yr = vI.x > 1000.0 ? vI.x : 1930.0 + vS * 70.0;
+          float inW = step(4.0, vHt) * step(1.0, ht) * step(0.3, hb);
+          if (uGev > 0.5 && uGev < 1.5) { // A maquette: gebroken wit, ramen als ondiepe inkeping met lichte vensterbank
+            p = mix(${lin('#efebe4')}, ${lin('#e6e4df')}, fract(vS * 9.17)) * (0.98 + 0.03 * fract(vS * 3.3));
+            float cu = u / 2.8, fy = hb / 3.0; vec2 f = vec2(fract(cu), fract(fy)); float far = smoothstep(0.25, 0.6, fwidth(cu));
+            float w = gBox(f, vec4(0.3, 0.7, 0.3, 0.8)) * inW, sill = gBox(f, vec4(0.27, 0.73, 0.25, 0.3)) * inW;
+            p *= mix(1.0 - 0.13 * w + 0.05 * sill, 1.0 - 0.04 * inW, far);
+            p *= 1.0 - 0.1 * step(ht, 0.3) * step(4.0, vHt);
+            gWin = w; gWinR = bzH(vec2(floor(cu), floor(fy)) + floor(vRW.xz / 40.0)); gGlass = 0.0; gGloss = 0.0;
+          } else if (uGev > 1.5 && uGev < 2.5) { // B echte gevels: raam/kozijn/deur per bouwjaar
+            bool old = yr < 1940.0, mid = yr >= 1940.0 && yr < 1975.0, strip = mid && vHt > 9.0;
+            float cw = old ? 2.6 : strip ? 1.5 : mid ? 2.4 : 3.0, fh = old ? 3.0 : 2.8;
+            float cu = u / cw, fy = hb / fh; vec2 f = vec2(fract(cu), fract(fy)), id = vec2(floor(cu), floor(fy));
+            float far = smoothstep(0.25, 0.6, fwidth(cu)), rnd = bzH(id + floor(vRW.xz / 40.0) + vS * 17.0);
+            vec4 R = old ? vec4(0.31, 0.69, 0.2, 0.84) : strip ? vec4(0.0, 1.0, 0.36, 0.86) : mid ? vec4(0.16, 0.84, 0.3, 0.82) : vec4(0.1, 0.9, 0.16, 0.86);
+            float kx = 0.08 / cw, ky = 0.08 / fh;
+            vec3 frame = old ? ${lin('#f4f1ea')} : mid ? ${lin('#c9ccd0')} : ${lin('#3b3f45')}, glass = ${lin('#3f5262')} * (0.8 + 0.5 * f.y);
+            bool ground = id.y < 0.5;
+            if (ground && !old && !mid && vHt > 8.0) R = vec4(0.05, 0.95, 0.05, 0.9); // nieuwbouw: glazen plint
+            float outer = gBox(f, R) * inW, inner = gBox(f, vec4(R.x + kx, R.y - kx, R.z + ky, R.w - ky)) * inW;
+            if (old) inner *= (1.0 - gBox(f, vec4(0.5 - kx * 0.5, 0.5 + kx * 0.5, 0.0, 1.0))) * (1.0 - gBox(f, vec4(0.0, 1.0, 0.66, 0.66 + ky))); // roedes
+            float door = (ground && (old || (mid && !strip) || strip) && rnd < 0.45) ? gBox(f, vec4(0.3, 0.7, 0.0, 0.78)) * step(4.0, vHt) : 0.0;
+            if (door > 0.5) { outer = 0.0; inner = 0.0; }
+            vec3 q = p;
+            if (strip) q = mix(q, ${lin('#d8d4cb')}, step(f.y, 0.16) * step(0.5, fy)); // betonnen verdiepingsbanden (galerijflat)
+            if (!old && !strip) q *= 1.0 - 0.12 * step(f.y, 0.03) * step(0.5, fy);
+            q = mix(q, q * 0.72, step(hb, 0.5) * (old || mid ? 1.0 : 0.0)); // plint
+            q = mix(q, ${lin('#f2efe8')}, gBox(f, vec4(R.x - 0.03, R.y + 0.03, R.z - ky * 1.6, R.z)) * inW * (old ? 1.0 : 0.0)); // vensterbank
+            q = mix(q, frame, outer);
+            vec3 g = glass; if (old && rnd > 0.6) g = mix(g, ${lin('#d8d2c4')}, step(0.72, f.y)); // vitrage
+            q = mix(q, g, inner);
+            vec3 dc; ${pickV('dc', ['#2f4a3a', '#5a2a26', '#27384f', '#3b3631', '#e4dfd4'], 'rnd * 2.2 - floor(rnd * 2.2)')}
+            q = mix(q, frame, door); q = mix(q, dc, door * gBox(f, vec4(0.3 + kx, 0.7 - kx, 0.0, 0.78 - ky)));
+            if (old) { q = mix(q, ${lin('#ebe4d6')}, step(ht, 0.32) * step(4.0, vHt)); q *= 1.0 - 0.3 * step(0.32, ht) * step(ht, 0.45) * step(4.0, vHt); } // kroonlijst
+            p = mix(q, mix(p, glass, 0.3 * inW), far);
+            gWin = inner; gWinR = rnd; gGlass = inner * (1.0 - far) + 0.2 * far * inW; gGloss = 0.0;
+          } else if (uGev > 2.5) { // D schilderij: verloop, penseelstreek, ramen met luchtglans en luiken
+            p = gSat(p, 1.12) * mix(vec3(0.84, 0.88, 0.97), vec3(1.08, 1.03, 0.94), smoothstep(0.0, max(vHt, 3.0), hb));
+            p *= 0.93 + 0.12 * bzN(vec2(u * 0.18 + vS * 50.0, vRW.y * 0.9));
+            float cu = u / 2.8, fy = hb / 3.0; vec2 f = vec2(fract(cu), fract(fy)), id = vec2(floor(cu), floor(fy));
+            float far = smoothstep(0.25, 0.6, fwidth(cu)), rnd = bzH(id + floor(vRW.xz / 40.0) + vS * 17.0);
+            float outer = gBox(f, vec4(0.28, 0.72, 0.24, 0.82)) * inW, inner = gBox(f, vec4(0.31, 0.69, 0.27, 0.79)) * inW;
+            vec3 g = mix(${lin('#3f5f80')}, ${lin('#bcd7e6')}, smoothstep(0.27, 0.79, f.y));
+            g = mix(g, vec3(1.0), 0.45 * step(0.12, fract((f.x * 2.8 + f.y * 3.0) * 0.8)) * step(fract((f.x * 2.8 + f.y * 3.0) * 0.8), 0.24));
+            vec3 q = mix(p, ${lin('#f3ead8')}, outer); q = mix(q, g, inner);
+            if (yr < 1960.0 && fract(vS * 6.1) > 0.4) { vec3 sc; ${pickV('sc', ['#4f7a5a', '#3f6487', '#8a4a3c'], 'fract(vS * 2.9)')}
+              q = mix(q, sc * (0.9 + 0.1 * step(0.5, fract(f.y * 9.0))), (gBox(f, vec4(0.15, 0.27, 0.25, 0.81)) + gBox(f, vec4(0.73, 0.85, 0.25, 0.81))) * inW); }
+            q *= 1.0 - 0.35 * step(ht, 0.4) * step(4.0, vHt); // dakgoot-schaduw
+            p = mix(q, mix(p, ${lin('#7f9db5')}, 0.25 * inW), far);
+            gWin = inner; gWinR = rnd; gGlass = inner * 0.5 * (1.0 - far); gGloss = 0.0;
+          }
+          if (uDak > 0.5 && vBz.y > 0.6 && vHt > 3.0) { // C: dakrand/afdekker op platte daken
+            p = mix(p, ${lin('#d9d6cf')}, step(ht, 0.22)); p *= 1.0 - 0.35 * step(0.22, ht) * step(ht, 0.34);
+          }
+        }`;
+  const GEV_ROOF = `if (uAnime > 0.5 && uGev > 0.5) {
+          if (uGev < 1.5) { p = dn.y > 0.97 ? ${lin('#dcd9d3')} : ${lin('#cdc7bf')} * (1.0 - 0.05 * rows); gGloss = 0.0; }
+          else if (uGev > 2.5) { p = gSat(p, 1.08) * (0.92 + 0.14 * bzN(vRW.xz * 0.25 + vS * 30.0)) * (0.88 + 0.18 * smoothstep(vI.z, vI.z + vHt, vRW.y)); }
+        }`;
   const isoPal = (s, roof) => {
-    Object.assign(s.uniforms, { uPalR: U.uPalR, uPalW: U.uPalW, uDim: U.uDim, uAnime: U.uAnime, uHlN: U.uNight });
+    Object.assign(s.uniforms, { uPalR: U.uPalR, uPalW: U.uPalW, uDim: U.uDim, uAnime: U.uAnime, uHlN: U.uNight, uGev: U.uGev, uDak: U.uDak });
     // oplichten (87): vHl = (kleur, stijl) uit de pand-textuur; stijl 1 = plek (dak in kleur, gevel band begane grond), 2 = heel pand (bouwjaar-filter, uitgelicht)
     const hlGlow = 'vHl.rgb * 0.18 * (1.0 + 1.6 * uHlN)';
     // vI = (bouwjaar, dakoppervlak, voet, lange as), vHt = hoogte in m; pSeed/pInfo/pBiz/pGBase komen uit PAND_GLSL (via addGrow, ook op deze materialen)
@@ -1183,13 +1321,13 @@ vec3 bzAcc(float s) { vec3 ac; ${pickV('ac', MIJN, 'fract(s * 5.7)')} return ac;
 vHl = pHl; if (uEraC.a > 0.5 && vHl.a < 0.5 && pI.x >= uEra.x && pI.x <= uEra.y) vHl = vec4(uEraC.rgb, 2.0);
 vHk = (uBiz.y < 0.5 || uGOn < 0.5) ? 1.0 : clamp((uGT - pGrow - uGDur) / ${BIZ_FADE.toFixed(2)}, 0.0, 1.0);`);
     s.vertexShader = s.vertexShader.replace('varying vec4 vHl;', 'varying vec4 vHl; varying float vHk; uniform vec2 uBiz;');
-    s.fragmentShader = s.fragmentShader.replace('#include <common>', `#include <common>\nvarying float vS, vHt; varying vec3 vRW; varying vec4 vI; varying vec4 vHl; varying float vHk; uniform vec2 uBiz; uniform vec3 uPalR[8]; uniform vec3 uPalW[8]; uniform float uDim, uAnime, uHlN;\n#define BK_FOOT vI.z\n${BIZ_COMMON}`)
+    s.fragmentShader = s.fragmentShader.replace('#include <common>', `#include <common>\nvarying float vS, vHt; varying vec3 vRW; varying vec4 vI; varying vec4 vHl; varying float vHk; uniform vec2 uBiz; uniform vec3 uPalR[8]; uniform vec3 uPalW[8]; uniform float uDim, uAnime, uHlN;\n#define BK_FOOT vI.z\n${BIZ_COMMON}\n${GEV_COMMON}`)
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
       ${roof ? `if (vHl.a > 0.5) totalEmissiveRadiance += ${hlGlow} * hlIn;`
         : `if (vHl.a > 1.5) totalEmissiveRadiance += ${hlGlow}; else if (vHl.a > 0.5) totalEmissiveRadiance = mix(totalEmissiveRadiance, vHl.rgb * (1.0 - hlLip) * 0.32 * (1.0 + 1.6 * uHlN), hlIn);`}`)
       .replace('#include <color_fragment>', `#include <color_fragment>
       {
-        vec3 p = ${roof ? 'uPalR[int(fract(vS * 7.31) * 7.999)]' : 'uPalW[int(vS * 7.999)]'};${roof ? ROOF_MIJN + ANIME_ROOF : ANIME_WALL}
+        vec3 p = ${roof ? 'uPalR[int(fract(vS * 7.31) * 7.999)]' : 'uPalW[int(vS * 7.999)]'};${roof ? ROOF_MIJN + ANIME_ROOF + GEV_ROOF : ANIME_WALL + GEV_WALL}
         diffuseColor.rgb = mix(p, vec3(dot(p, vec3(0.3, 0.59, 0.11)) * 1.1), 0.7 * uDim); gGlass *= 1.0 - uDim; gGloss *= 1.0 - uDim;
       }
       float hlIn = 0.0, hlLip = 0.0, hlHb = 0.0; // gevel: binnen de band, luifelrand, hoogte boven de voet
@@ -1235,8 +1373,13 @@ vHk = (uBiz.y < 0.5 || uGOn < 0.5) ? 1.0 : clamp((uGT - pGrow - uGDur) / ${BIZ_F
         vec2 f = vec2(fract(u / 3.2), fract(fy));
         float win = step(0.25, f.x) * step(f.x, 0.75) * step(0.3, f.y) * step(f.y, 0.8);
         float lit = step(0.8, h21(vec2(floor(u / 3.2), floor(fy)) + floor(vW.xz / 40.0)));
+        float wr = h21(vec2(floor(u / 3.2), floor(fy)) + floor(vW.xz / 40.0) + 17.3);
+        if (gWin >= 0.0) { win = gWin; lit = step(0.8, gWinR); wr = fract(gWinR * 13.7); } // gevelstijl (design/20): avondramen op het dagraster
         float fade = smoothstep(700.0, 2200.0, length(vW - uEye));
-        if (vHl.a < 0.5) gl_FragColor.rgb += vec3(1.0, 0.72, 0.38) * mix(win * lit, 0.05, fade) * step(abs(n.y), 0.5) * uNight * 0.6;
+        // design/21: gemengd = warm gloeilamp, gebroken wit (LED), tv-blauw, enkele rode/groene gordijnen; helderheid per raam, onderin iets lichter (gordijn)
+        vec3 wc = wr < 0.55 ? vec3(1.0, 0.66, 0.3) : wr < 0.78 ? vec3(1.0, 0.9, 0.72) : wr < 0.9 ? vec3(0.45, 0.62, 1.0) : wr < 0.95 ? vec3(1.0, 0.45, 0.3) : vec3(0.7, 0.95, 0.55);
+        wc *= (0.6 + 0.8 * fract(wr * 7.7)) * mix(1.15, 0.8, gWin >= 0.0 ? 0.5 : f.y); lit = gWin >= 0.0 ? step(0.74, gWinR) : step(0.74, h21(vec2(floor(u / 3.2), floor(fy)) + floor(vW.xz / 40.0)));
+        if (vHl.a < 0.5) gl_FragColor.rgb += wc * mix(win * lit, 0.05, fade) * step(abs(n.y), 0.5) * uNight * 0.6;
         else if (vHl.a < 1.5) { // pand van een plek (87, was matWall): etalage in de band + avondramen in categoriekleur
           float fx = fract(u / 4.0), fy2 = (hlHb - 4.0) / 3.1; vec2 g2 = vec2(fract(u / 3.2), fract(fy2));
           float shop = hlIn * (1.0 - hlLip) * step(0.06, fx) * step(fx, 0.94) * step(0.35, hlHb) * step(hlHb, 3.45);
@@ -1329,8 +1472,16 @@ vHk = (uBiz.y < 0.5 || uGOn < 0.5) ? 1.0 : clamp((uGT - pGrow - uGDur) / ${BIZ_F
     document.body.classList.toggle('night', n > 0.6);
     applyDim();
   }
-  H.setLight = m => { lightMode = m; nightGoal = goalFor(m); try { localStorage.setItem('h3d.light', m); } catch {} redraw(); emit('light', m); };
+  H.setLight = (m, keep) => { lightMode = m; nightGoal = goalFor(m); if (!keep) try { localStorage.setItem('h3d.light', m); } catch {} redraw(); emit('light', m); }; // keep: ontwerppagina (niet bewaren)
   H.getLight = () => lightMode;
+  // nachtsfeer (design/21 § 5): andere nacht-stop voor het iso-licht; '0' = huidig. Zonshoogte = maan (schaduwrichting) → herbakken via isoSun
+  const NIGHT_LOOKS = { '0': { ...ISO_L.night },
+    b: { sun: 32, sunC: '#a9bfff', sunI: 0.3, sky: '#5068b0', gnd: '#2a2c44', ambI: 0.36, hor: '#3a4f86', zen: '#0c1838' },   // blauw uur: helderder, diep blauw
+    m: { sun: 42, sunC: '#d6e0fa', sunI: 0.46, sky: '#2c3658', gnd: '#18181f', ambI: 0.2, hor: '#1a2238', zen: '#04081a' },    // maannacht: zilver maanlicht, scherpe schaduw, donker
+    s: { sun: 30, sunC: '#b4b0dc', sunI: 0.2, sky: '#4c4468', gnd: '#3c2c2a', ambI: 0.3, hor: '#6a4436', zen: '#0e1028' } };  // stadsgloed: oranje-paarse nevel
+  let nightLook = '0';
+  H.setNightLook = k => { nightLook = NIGHT_LOOKS[k] ? k : '0'; Object.assign(ISO_L.night, NIGHT_LOOKS[nightLook]); applyNight(); redraw(); emit('nightlook', nightLook); };
+  H.nightLook = () => nightLook;
   nightGoal = night = goalFor(lightMode);
   // gedeeld met iso/*.js: uniforms (uIso, uLvl, uNight, uEye …), nachtwaarde 0–1, iso-palet (kleurtrio's = [dag, avond, nacht])
   H.U = U;
@@ -1498,6 +1649,17 @@ vHk = (uBiz.y < 0.5 || uGOn < 0.5) ? 1.0 : clamp((uGT - pGrow - uGDur) / ${BIZ_F
     if (!BIZ_STYLES.includes(v)) return; bizStyle = v; bizFade = !!fade;
     if (!keep) try { localStorage.setItem('h3d.biz', v); localStorage.setItem('h3d.bizfade', bizFade ? '1' : '0'); } catch {}
     GU.uBiz.value.set(BIZ_STYLES.indexOf(v), bizFade ? 1 : 0); redraw(); emit('bizstyle', v);
+  };
+  // gevelstijl + dakdetail (design/20_stijl.html, keuze 2026-11-14: B echte gevels + C dakdetail): ?gev=0|a|b|d / h3d.gev, ?dak=0|1 / h3d.dak. Alleen met "Daken op bouwjaar" (uAnime).
+  const GEV_STYLES = ['0', 'a', 'b', 'd'];
+  try { const q = QS.get('gev'), st = localStorage.getItem('h3d.gev'), v = GEV_STYLES.includes(q) ? q : GEV_STYLES.includes(st) ? st : 'b'; U.uGev.value = GEV_STYLES.indexOf(v);
+    const dq = QS.get('dak'), ds = localStorage.getItem('h3d.dak'); U.uDak.value = (dq != null ? dq !== '0' : ds !== '0') ? 1 : 0; } catch {}
+  H.gevStyle = () => GEV_STYLES[U.uGev.value];
+  H.setGev = (v, dak, keep) => {
+    if (GEV_STYLES.includes(v)) U.uGev.value = GEV_STYLES.indexOf(v);
+    if (dak != null) U.uDak.value = dak ? 1 : 0;
+    if (!keep) try { localStorage.setItem('h3d.gev', GEV_STYLES[U.uGev.value]); localStorage.setItem('h3d.dak', String(U.uDak.value)); } catch {}
+    redraw(); emit('gevstyle', GEV_STYLES[U.uGev.value]);
   };
   // 87: oplichten = texel (kleur + stijl) in de pand-textuur i.p.v. losse kopieën van de driehoeken; ?nohltex = oude kopieën.
   const HLTEX = PANDTEX && !QS.has('nohltex'), hlCol = new THREE.Color(); let hlPrev = new Set();
@@ -1735,7 +1897,7 @@ vHk = (uBiz.y < 0.5 || uGOn < 0.5) ? 1.0 : clamp((uGT - pGrow - uGDur) / ${BIZ_F
   H.spin = on => { clearTimeout(idleT); controls.autoRotate = !!on; redraw(); }; // rondleiding
   H.target = () => toRD(controls.target);
   H.azimuth = () => controls.getAzimuthalAngle();
-  H.camera = () => camera;
+  H.camera = () => camera; H.isoHalf = isoHalf;
   // pannen in iso = zuivere verschuiving op het scherm → labels/pins schuiven als laag mee i.p.v. elk beeld opnieuw plaatsen (labels.js, ui.js)
   // panRef() na volledig plaatsen; panShift(ref) → [dx, dy] px, of null als zoom/draaiing/venster veranderde (dan opnieuw plaatsen)
   const PSV = new THREE.Vector3();
@@ -1905,17 +2067,19 @@ vHk = (uBiz.y < 0.5 || uGOn < 0.5) ? 1.0 : clamp((uGT - pGrow - uGDur) / ${BIZ_F
       });
       // tN/tDN highp: three r160 zet geen sampler-precisie → standaard lowp → telefoon (Mali e.d.) las de diepte als 16 bit → streeplijnen
       post = new THREE.ShaderMaterial({
-        uniforms: { tC: { value: useMRT ? rtC.texture[0] : rtC.texture }, tN: { value: rtN.texture }, tSky: { value: skyTex }, tGlow: { value: null }, uGlowK: { value: 1.6 }, uMrt: { value: useMRT ? 1 : 0 }, uPd: { value: 0 }, uFog: { value: new THREE.Vector2() }, tD: { value: null }, tDN: { value: null }, uDyn: { value: 0 }, uRes: { value: new THREE.Vector2() }, uW: { value: 2 }, uDk: { value: 0 }, uK: { value: 0.85 }, uInk: { value: H.isoColors.ink }, uLine: U.uLine, uFilm: U.uFilm, uDbg: DBG_U },
+        uniforms: { tC: { value: useMRT ? rtC.texture[0] : rtC.texture }, tN: { value: rtN.texture }, tSky: { value: skyTex }, tGlow: { value: null }, uGlowK: { value: 1.6 }, uMrt: { value: useMRT ? 1 : 0 }, uPd: { value: 0 }, uFog: { value: new THREE.Vector2() }, tD: { value: null }, tDN: { value: null }, uDyn: { value: 0 }, uRes: { value: new THREE.Vector2() }, uW: { value: 2 }, uDk: { value: 0 }, uK: { value: 0.85 }, uInk: { value: H.isoColors.ink }, uLine: U.uLine, uFilm: U.uFilm, uDbg: DBG_U,
+          uSkyS: U.uSkyS, uSkyT: { value: 0 }, uCamR: { value: new THREE.Matrix3() }, uTanF: { value: new THREE.Vector2(1, 1) }, uSkL: U.uL, uSkH: U.uHor, uSkZ: U.uZen, uSkSun: U.uSunC, uSkN: U.uNight },
         vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
         fragmentShader: `varying vec2 vUv; uniform sampler2D tC, tD, tSky${GLOW4 ? ', tGlow' : ''}; uniform highp sampler2D tN, tDN; uniform vec2 uRes; uniform float uW, uDk, uK, uDyn, uMrt, uLine, uFilm, uPd, uGlowK; uniform vec2 uFog; uniform vec3 uInk; uniform vec2 uDbg;
           ${NRM_GLSL}
+          ${SKY_DOME}
           ivec2 tq(highp sampler2D t, vec2 o) { return clamp(ivec2(gl_FragCoord.xy + o), ivec2(0), textureSize(t, 0) - 1); } // exacte pixel (vUv+o/uRes rondde op telefoons af → strepen)
           vec4 N(vec2 o) { ivec2 u = tq(tN, o); vec2 s = texelFetch(tN, u, 0).xy; // xyz = normaal, w = diepte
             if (uDyn > 0.5) { vec2 d = texelFetch(tDN, u, 0).xy; if (d.y > 0.0 && (s.y <= 0.0 || d.y < s.y)) s = d; }
             return vec4(nrmUnpack(s.x), s.y); }
           void main() {
             vec4 c = texture2D(tC, vUv);
-            if (uMrt > 0.5 && c.a < 1.0) { c.rgb += texture2D(tSky, vUv).rgb * (1.0 - c.a); c.a = 1.0; } // MRT: lucht pas hier (achtergrond zou uitvoer 1 vullen)
+            if (uMrt > 0.5 && c.a < 1.0) { c.rgb += skyC(vUv) * (1.0 - c.a); c.a = 1.0; } // MRT: lucht pas hier (achtergrond zou uitvoer 1 vullen)
             if (uDyn > 0.5) { vec2 s = texelFetch(tN, tq(tN, vec2(0.0)), 0).xy, d = texelFetch(tDN, tq(tDN, vec2(0.0)), 0).xy; if (d.y > 0.0 && (s.y <= 0.0 || d.y < s.y)) { vec4 dc = texture2D(tD, vUv); c.rgb = mix(c.rgb, dc.rgb, dc.a); } }
             vec4 n0 = N(vec2(0.0)), a = N(vec2(uW, 0.0)), b = N(vec2(-uW, 0.0)), d = N(vec2(0.0, uW)), e = N(vec2(0.0, -uW));
             float nd = 4.0 - dot(n0.xyz, a.xyz) - dot(n0.xyz, b.xyz) - dot(n0.xyz, d.xyz) - dot(n0.xyz, e.xyz);
@@ -1931,7 +2095,7 @@ vHk = (uBiz.y < 0.5 || uGOn < 0.5) ? 1.0 : clamp((uGT - pGrow - uGDur) / ${BIZ_F
               c.rgb = mix(vec3(dot(t, vec3(0.2126, 0.7152, 0.0722))), t, 1.15); }
             float ed = smoothstep(1.7, 2.1, dd) * uDbg.y;
             vec3 ik = mix(uInk, vec3(0.03), uDk); c.rgb = uLine > 0.5 ? mix(c.rgb, ik, ed * mix(0.45, 0.9, uDk)) : mix(c.rgb, ik, k * max(uK, uDk * 0.95)); // dun (alleen silhouet) of inkt; uDk = dik + zwart
-            if (uFog.y > 0.0 && n0.w > 0.0) c.rgb = mix(c.rgb, texture2D(tSky, vUv).rgb, smoothstep(uFog.x, uFog.y, n0.w)); // rijden: mist naar de lucht erachter (verbergt de kijkgrens)
+            if (uFog.y > 0.0 && n0.w > 0.0) c.rgb = mix(c.rgb, skyC(vUv), smoothstep(uFog.x, uFog.y, n0.w)); // rijden: mist naar de lucht erachter (verbergt de kijkgrens)
             gl_FragColor = c;
             #include <colorspace_fragment>
           }`,
@@ -2130,6 +2294,7 @@ vHk = (uBiz.y < 0.5 || uGOn < 0.5) ? 1.0 : clamp((uGT - pGrow - uGDur) / ${BIZ_F
     // uW altijd 1: symmetrisch bemonsterd → lijn ±2 px; uW 2 gaf ±4 px (te dik bij startzoom)
     post.uniforms.uRes.value.copy(rtS); const dk = inkW > 1 && (driveCam || ppm >= 4) ? 1 : 0; post.uniforms.uW.value = dk ? 2 : 1; post.uniforms.uDk.value = dk; // Dikke lijnen alleen dichtbij (dichtste stand / rijden), dan zwart en vol (gebruiker 0.9.2-test5: ver weg te zwaar) // uRes = maat van rtN (kleiner tijdens bewegen)
     post.uniforms.uK.value = driveCam ? 0.75 : 0.85 * Math.min(1, 0.4 + ppm * 0.3); post.uniforms.uPd.value = driveCam ? 1 : 0; post.uniforms.uFog.value.set(driveCam ? DRV_FAR * 0.45 : 0, driveCam ? DRV_FAR * 0.95 : 0);
+    if (driveCam) { const pu = post.uniforms, tf = Math.tan(camera.fov * Math.PI / 360); pu.uCamR.value.setFromMatrix4(camera.matrixWorld); pu.uTanF.value.set(tf * camera.aspect, tf); pu.uSkyT.value = performance.now() / 1000; } // lucht bij rijden (SKY_DOME)
     let on = posts.filter(p => p.enabled !== false && (!driveCam || p.drive)); for (const p of on) p.before?.(); // rijden: wolken/tilt/papier gaan uit van de iso-camera
     if (GLOW4) { if (U.uFilm.value > 0.5) { if (fresh || !glowHave) makeGlow(); } else glowHave = false; } // 92
     // 82: stappen die niet van de tijd afhangen ({ still: true } bij H.addPost) → resultaat gecachet (rtK); bij een tik met alleen postDirty alleen de rest opnieuw.

@@ -8,6 +8,7 @@
   const MIN_H = 25, MIN_OSM = 15, TOP_FR = 0.8, TOP_A = 40, CAP = 600, TIP_UP = 0.3, GOLD = '#d9a54a';
   const tips = new Map(); // sleutel → [x, y, z] (wereld); 'o<n>' = OSM-omtrek n (hoogste pand wint), 'h<bag>' = heuristiek
   let mesh = null, dirty = false;
+  H.spires = { tips, get rings() { return rings; } }; // iso/nacht.js: kerken aanlichten (omtrek of toppunt)
 
   // ---------- OSM-data (RD) ----------
   const D = (window.H3D_DATA || {}).spires || {};
