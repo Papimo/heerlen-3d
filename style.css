@@ -261,3 +261,8 @@ body.drive #drivehud { display: block; }
 #drivehud kbd { display: inline-block; padding: 0 5px; margin: 0 1px; border-radius: 4px; background: rgba(255, 255, 255, .18); font: inherit; }
 body.drive #labels, body.drive #pins, body.drive #compass, body.drive #zoom, body.drive #tour { display: none !important; }
 @media (max-width: 640px) { #drivehud .dhelp { display: none; } #drivehud .dgauge { width: 110px; height: 110px; } }
+
+/* verzadiging-schuif (Sfeer › Stijl) */
+.grp .slrow { display: flex; align-items: center; gap: 6px; }
+.grp .slrow input[type=range] { flex: 1; min-width: 60px; accent-color: var(--ink); }
+.grp .slrow b { font-weight: 600; font-variant-numeric: tabular-nums; min-width: 3.2em; text-align: right; }

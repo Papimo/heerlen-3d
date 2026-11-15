@@ -150,7 +150,7 @@ if (uEra.z > 0.0 && (pInfo.x < uEra.x || pInfo.x > uEra.y)) { // bouwjaar-filter
   const BUILD = 'anime-1 licht randje, daken op bouwjaar, middag zacht, bolle bomen (2026-11-09)', DBG_U = { value: new THREE.Vector2(1, 1) }; // ?gpu: versie zichtbaar + schakelaars omlijning (x = vlaklijnen, y = dieptelijnen)
   H.redraw = redraw;
   let inkW = 1; // dikte omlijning (1 = ±2 px, 2 = ±4 px, schakelaar Sfeer › Dikke lijnen = fxOn.dik)
-  H.VERSION = '0.9.2-test11'; // getoond onderaan (ui.js #attr); bij release ophogen
+  H.VERSION = '0.9.2-test12'; // getoond onderaan (ui.js #attr); bij release ophogen
   // na de upload naar de GPU de kopie in het werkgeheugen weggooien (canvas → 1×1, DataTexture-data → null). Opnieuw tekenen = nieuw canvas/nieuwe textuur
   H.freeAfterUpload = tex => { tex.onUpdate = () => { tex.onUpdate = null; const im = tex.image; if (im && im.getContext) im.width = im.height = 1; else if (im && im.data) im.data = null; }; return tex; };
 
@@ -913,7 +913,7 @@ if (uEra.z > 0.0 && (pInfo.x < uEra.x || pInfo.x > uEra.y)) { // bouwjaar-filter
   // licht iso (design/17_licht.html B Materiaal-middag / E Filmisch): zon uL (wereld), kleuren lineair, glans/glas/baksteen; applyNight + isoSun vullen ze
   Object.assign(U, { uL: { value: new THREE.Vector3(0, 1, 0) }, uSunC: { value: new THREE.Color() }, uSkyC: { value: new THREE.Color() }, uGndC: { value: new THREE.Color() },
     uHor: { value: new THREE.Color() }, uZen: { value: new THREE.Color() }, uSoft: { value: 0.02 }, uGloss: { value: 1.5 }, uGlass: { value: 1.3 }, uMat: { value: 1 },
-    uPerM: { value: 1 / 1400 }, uDR: { value: 3000 }, uFilm: { value: 0 },
+    uPerM: { value: 1 / 1400 }, uDR: { value: 3000 }, uFilm: { value: 0 }, uSat: { value: 1 },
     // nieuwe schaduw zacht laten opkomen (geen flits na pannen): uShX = nieuwe → vorige schaduwkaart-coördinaten, uShT = 0→1; binnen het vorige kader meteen vol
     uShX: { value: new THREE.Matrix4().makeTranslation(9, 9, 0) }, uShT: { value: 1 },
     // kruisvervagen (gebruiker 0.9.2: schaduw verscheen te opvallend): binnen het vorige kader oude kaart tShOld → nieuwe in SH_XF ms (uShO 0→1, 1 = alleen nieuw); ?noshxf = oud
@@ -1537,7 +1537,7 @@ vHk = (uBiz.y < 0.5 || uGOn < 0.5) ? 1.0 : clamp((uGT - pGrow - uGDur) / ${BIZ_F
   // zon van opzij: 82° naast de kijkrichting van de standaard-kwartslag, vast in de wereld (draait niet mee, isoSun)
   const ISO_L = {
     B: { sun: 38, sunC: '#fff2dc', sunI: 0.95, sky: '#a5c1e4', gnd: '#b9ad98', ambI: 0.46, hor: '#e3edf3', zen: '#7fb0e6', soft: 0.02, gloss: 1.5, glass: 1.3, mat: 1 },
-    E: { sun: 19, sunC: '#ffd3a0', sunI: 1.2, sky: '#86a7d6', gnd: '#9c8a72', ambI: 0.4, hor: '#f2dcc0', zen: '#7aa5dc', soft: 0.075, gloss: 1.0, glass: 1.1, mat: 0 },
+    E: { sun: 19, sunC: '#ffd3a0', sunI: 1.2, sky: '#86a7d6', gnd: '#9c8a72', ambI: 0.4, hor: '#f2dcc0', zen: '#7aa5dc', soft: 0.075, gloss: 1.0, glass: 1.1, mat: 1 }, // mat 1 sinds test12: baksteen + lateien ook in Filmisch (anders verdwenen details),
     eve: { sun: 6, sunC: '#ff8f52', sunI: 0.95, sky: '#4d5c94', gnd: '#3b3242', ambI: 0.34, hor: '#f2a070', zen: '#2c3a72' },
     night: { sun: 35, sunC: '#aebfff', sunI: 0.22, sky: '#3c4a78', gnd: '#24222c', ambI: 0.32, hor: '#1c2640', zen: '#070d22' } };
   let isoFilm = 0; // = fxOn.film (applyLook)
@@ -1579,6 +1579,10 @@ vHk = (uBiz.y < 0.5 || uGOn < 0.5) ? 1.0 : clamp((uGT - pGrow - uGDur) / ${BIZ_F
   }
   H.setLight = (m, keep) => { lightMode = m; nightGoal = goalFor(m); if (!keep) try { localStorage.setItem('h3d.light', m); } catch {} redraw(); emit('light', m); }; // keep: ontwerppagina (niet bewaren)
   H.getLight = () => lightMode;
+  // verzadiging (schuif Sfeer › Stijl): 0–2, 1 = ongewijzigd; bewaard in h3d.sat
+  try { const v = parseFloat(localStorage.getItem('h3d.sat')); if (v >= 0 && v <= 2) U.uSat.value = v; } catch {}
+  H.setSat = v => { U.uSat.value = Math.max(0, Math.min(2, +v || 0)); try { localStorage.setItem('h3d.sat', U.uSat.value); } catch {} redraw(); };
+  H.getSat = () => U.uSat.value;
   // iso/weer.js (dag in 60 s): dagdeel direct zetten; lock = zonrichting vast op het huidige doel (geen herbakken), null = los
   H.setNightGoal = (n, lock) => { if (lock) sunLockN ??= nightGoal; else sunLockN = null; nightGoal = Math.max(0, Math.min(1, n)); redraw(); };
   // nachtsfeer (design/21 § 5): andere nacht-stop voor het iso-licht; '0' = huidig. Zonshoogte = maan (schaduwrichting) → herbakken via isoSun
@@ -2175,10 +2179,10 @@ vHk = (uBiz.y < 0.5 || uGOn < 0.5) ? 1.0 : clamp((uGT - pGrow - uGDur) / ${BIZ_F
       });
       // tN/tDN highp: three r160 zet geen sampler-precisie → standaard lowp → telefoon (Mali e.d.) las de diepte als 16 bit → streeplijnen
       post = new THREE.ShaderMaterial({
-        uniforms: { tC: { value: useMRT ? rtC.texture[0] : rtC.texture }, tN: { value: rtN.texture }, tSky: { value: skyTex }, tGlow: { value: null }, uGlowK: { value: 1.6 }, uMrt: { value: useMRT ? 1 : 0 }, uPd: { value: 0 }, uFog: { value: new THREE.Vector2() }, tD: { value: null }, tDN: { value: null }, uDyn: { value: 0 }, uRes: { value: new THREE.Vector2() }, uW: { value: 2 }, uDk: { value: 0 }, uK: { value: 0.85 }, uInk: { value: H.isoColors.ink }, uLine: U.uLine, uFilm: U.uFilm, uDbg: DBG_U,
+        uniforms: { tC: { value: useMRT ? rtC.texture[0] : rtC.texture }, tN: { value: rtN.texture }, tSky: { value: skyTex }, tGlow: { value: null }, uGlowK: { value: 1.6 }, uMrt: { value: useMRT ? 1 : 0 }, uPd: { value: 0 }, uFog: { value: new THREE.Vector2() }, tD: { value: null }, tDN: { value: null }, uDyn: { value: 0 }, uRes: { value: new THREE.Vector2() }, uW: { value: 2 }, uDk: { value: 0 }, uK: { value: 0.85 }, uInk: { value: H.isoColors.ink }, uLine: U.uLine, uFilm: U.uFilm, uSat: U.uSat, uDbg: DBG_U,
           uSkyS: U.uSkyS, uSkyT: { value: 0 }, uCamR: { value: new THREE.Matrix3() }, uTanF: { value: new THREE.Vector2(1, 1) }, uSkL: U.uL, uSkH: U.uHor, uSkZ: U.uZen, uSkSun: U.uSunC, uSkN: U.uNight },
         vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
-        fragmentShader: `varying vec2 vUv; uniform sampler2D tC, tD, tSky${GLOW4 ? ', tGlow' : ''}; uniform highp sampler2D tN, tDN; uniform vec2 uRes; uniform float uW, uDk, uK, uDyn, uMrt, uLine, uFilm, uPd, uGlowK; uniform vec2 uFog; uniform vec3 uInk; uniform vec2 uDbg;
+        fragmentShader: `varying vec2 vUv; uniform sampler2D tC, tD, tSky${GLOW4 ? ', tGlow' : ''}; uniform highp sampler2D tN, tDN; uniform vec2 uRes; uniform float uW, uDk, uK, uDyn, uMrt, uLine, uFilm, uPd, uGlowK, uSat; uniform vec2 uFog; uniform vec3 uInk; uniform vec2 uDbg;
           ${NRM_GLSL}
           ${SKY_DOME}
           ivec2 tq(highp sampler2D t, vec2 o) { return clamp(ivec2(gl_FragCoord.xy + o), ivec2(0), textureSize(t, 0) - 1); } // exacte pixel (vUv+o/uRes rondde op telefoons af → strepen)
@@ -2201,6 +2205,7 @@ vHk = (uBiz.y < 0.5 || uGOn < 0.5) ? 1.0 : clamp((uGT - pGrow - uGDur) / ${BIZ_F
               c.rgb += bl / 12.0 * 4.0;`} // drempel 0,72 → 0,9: lichte pastelgrond gaf een witte waas over alles (gebruiker); waas bovenin weg
               vec3 x = c.rgb * 1.2, t = clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
               c.rgb = mix(vec3(dot(t, vec3(0.2126, 0.7152, 0.0722))), t, 1.15); }
+            if (uSat != 1.0) c.rgb = max(mix(vec3(dot(c.rgb, vec3(0.2126, 0.7152, 0.0722))), c.rgb, uSat), 0.0); // verzadiging (Sfeer › Stijl, H.setSat)
             float ed = smoothstep(1.7, 2.1, dd) * uDbg.y;
             vec3 ik = mix(uInk, vec3(0.03), uDk); c.rgb = uLine > 0.5 ? mix(c.rgb, ik, ed * mix(0.45, 0.9, uDk)) : mix(c.rgb, ik, k * max(uK, uDk * 0.95)); // dun (alleen silhouet) of inkt; uDk = dik + zwart
             if (uFog.y > 0.0 && n0.w > 0.0) c.rgb = mix(c.rgb, skyC(vUv), smoothstep(uFog.x, uFog.y, n0.w)); // rijden: mist naar de lucht erachter (verbergt de kijkgrens)
