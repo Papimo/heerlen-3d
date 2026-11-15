@@ -11,11 +11,11 @@
   // ---------- nat + grijs: één nabewerking (na de wolkschaduw), stil (geen tijd) ----------
   const camW = new THREE.Matrix4(), lrbt = new THREE.Vector4();
   const WU = { tIn: { value: null }, tN: { value: null }, uRes: { value: new THREE.Vector2(1, 1) }, uCamW: { value: camW }, uLRBT: { value: lrbt },
-    uWet: { value: 0 }, uGrey: { value: 0 }, uNight: { value: 0 }, uHor: U.uHor, uZen: U.uZen };
+    uWet: { value: 0 }, uGrey: { value: 0 }, uNight: { value: 0 }, uHor: U.uHor, uZen: U.uZen, uSat: U.uSat };
   const wm = new THREE.ShaderMaterial({ name: 'weer', uniforms: WU, depthTest: false, depthWrite: false,
     vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
     fragmentShader: `varying vec2 vUv; uniform sampler2D tIn; uniform highp sampler2D tN; uniform mat4 uCamW; uniform vec4 uLRBT;
-      uniform float uWet, uGrey, uNight; uniform vec3 uHor, uZen;
+      uniform float uWet, uGrey, uNight, uSat; uniform vec3 uHor, uZen;
       ${H.NRM_GLSL}
       float h1(vec2 p) { vec3 q = fract(p.xyx * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
       float vn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(h1(i), h1(i + vec2(1, 0)), f.x), mix(h1(i + vec2(0, 1)), h1(i + vec2(1, 1)), f.x), f.y); }
@@ -26,7 +26,7 @@
         if (n.g > 0.0 && uWet > 0.0) { // nat: vlak + grijs (asfalt, klinkers, platte daken) of rood fietsasfalt → donkerder, spiegelt de lucht; plassen als vlekken
           vec3 wp = (uCamW * vec4(mix(uLRBT.x, uLRBT.y, vUv.x), mix(uLRBT.z, uLRBT.w, vUv.y), -n.g, 1.0)).xyz;
           vec3 wn = normalize(mat3(uCamW) * nrmUnpack(n.r));
-          float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b)), sat = (mx - mn) / max(mx, 1e-3);
+          float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b)), sat = (mx - mn) / max(mx, 1e-3) / max(uSat, 0.05); // verzadigingsschuif terugrekenen: anders is asfalt bij 150% niet 'grijs' → geen natte straten
           float fl = smoothstep(0.86, 0.96, wn.y), grey = 1.0 - smoothstep(0.1, 0.2, sat);
           float red = smoothstep(0.25, 0.4, sat) * step(c.g * 1.25, c.r) * step(c.b * 1.2, c.r) * (1.0 - smoothstep(0.55, 0.7, mx));
           float w = uWet * fl * max(grey * smoothstep(0.08, 0.18, lum) * (1.0 - smoothstep(0.62, 0.8, lum)), red * 0.8);
