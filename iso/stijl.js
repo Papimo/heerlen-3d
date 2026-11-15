@@ -1,5 +1,5 @@
 // iso/stijl.js — stijlmodi (keuze design/25: d aquarel + e prentbriefkaart 1930, alleen iso, alleen nabewerking).
-//  Schakelaars Sfeer › Stijl (fx 'aquarel' / 'kaart', standaard uit, één tegelijk). Nabewerking order 16, stil.
+//  Schakelaars Sfeer › Stijl (fx 'aquarel' / 'kaart', één tegelijk; aquarel standaard aan sinds test13). Nabewerking order 16, stil, ook tijdens rijden.
 //  Afgewezen in ronde 25: pentekening, kleurplaat, blauwdruk.
 (() => {
   const H = typeof H3D !== 'undefined' ? H3D : null;
@@ -7,23 +7,28 @@
   const iso = () => H.getMode?.() === 'iso';
   const VS = 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }';
 
-  const camW = new THREE.Matrix4(), lrbt = new THREE.Vector4();
+  // iso (orthografisch) of rijden (perspectief, H.driving): diepte in tN = afstand langs de kijkas → wereldpunt per pixel
+  const camW = new THREE.Matrix4(), lrbt = new THREE.Vector4(), tanF = new THREE.Vector2(1, 1), persp = { value: 0 };
   function cam() {
-    const c = H.camera(); if (!c?.isOrthographicCamera) return;
+    const c = H.camera(); if (!c) return;
     c.updateMatrixWorld(); camW.copy(c.matrixWorld);
+    persp.value = c.isPerspectiveCamera ? 1 : 0;
+    if (c.isPerspectiveCamera) { const t = Math.tan(c.fov * Math.PI / 360); tanF.set(t * c.aspect, t); return; }
     const cx = (c.right + c.left) / 2, cy = (c.top + c.bottom) / 2, dx = (c.right - c.left) / (2 * c.zoom), dy = (c.top - c.bottom) / (2 * c.zoom);
     lrbt.set(cx - dx, cx + dx, cy - dy, cy + dy);
   }
-  const SU = { tIn: { value: null }, tN: { value: null }, uRes: { value: new THREE.Vector2(1, 1) }, uHalf: { value: 800 }, uCamW: { value: camW }, uLRBT: { value: lrbt }, uSty: { value: 0 } };
+  const SU = { tIn: { value: null }, tN: { value: null }, uRes: { value: new THREE.Vector2(1, 1) }, uHalf: { value: 800 }, uCamW: { value: camW }, uLRBT: { value: lrbt }, uSty: { value: 0 }, uPersp: persp, uTanF: { value: tanF } };
   const styM = new THREE.ShaderMaterial({ name: 'stijl', uniforms: SU, depthTest: false, depthWrite: false, vertexShader: VS,
-    fragmentShader: `varying vec2 vUv; uniform sampler2D tIn; uniform highp sampler2D tN; uniform vec2 uRes; uniform float uHalf; uniform mat4 uCamW; uniform vec4 uLRBT; uniform float uSty;
+    fragmentShader: `varying vec2 vUv; uniform sampler2D tIn; uniform highp sampler2D tN; uniform vec2 uRes; uniform float uHalf; uniform mat4 uCamW; uniform vec4 uLRBT; uniform float uSty, uPersp; uniform vec2 uTanF;
       ${H.NRM_GLSL}
       float h1(vec2 p) { vec3 q = fract(p.xyx * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
       float vn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(h1(i), h1(i + vec2(1, 0)), f.x), mix(h1(i + vec2(0, 1)), h1(i + vec2(1, 1)), f.x), f.y); }
       vec3 toS(vec3 c) { return pow(max(c, 0.0), vec3(1.0 / 2.2)); }
       vec3 toL(vec3 c) { return pow(max(c, 0.0), vec3(2.2)); }
       vec4 nf(ivec2 p) { return texelFetch(tN, clamp(p, ivec2(0), textureSize(tN, 0) - 1), 0); }
-      vec3 wpos(vec2 uv, float d) { return (uCamW * vec4(mix(uLRBT.x, uLRBT.y, uv.x), mix(uLRBT.z, uLRBT.w, uv.y), -d, 1.0)).xyz; }
+      vec3 wpos(vec2 uv, float d) {
+        if (uPersp > 0.5) return (uCamW * vec4((uv * 2.0 - 1.0) * uTanF * d, -d, 1.0)).xyz;
+        return (uCamW * vec4(mix(uLRBT.x, uLRBT.y, uv.x), mix(uLRBT.z, uLRBT.w, uv.y), -d, 1.0)).xyz; }
       float edges(ivec2 p, int s, float mpp) { // randen: normaal-sprong, diepte-sprong, rand van de lucht
         vec4 a = nf(p); vec3 na = a.g > 0.0 ? nrmUnpack(a.r) : vec3(0.0); float e = 0.0;
         ivec2 OF[4] = ivec2[4](ivec2(s, 0), ivec2(-s, 0), ivec2(0, s), ivec2(0, -s));
@@ -32,7 +37,8 @@
           if ((a.g > 0.0) != (b.g > 0.0)) { e = 1.0; continue; }
           if (a.g <= 0.0) continue;
           e = max(e, smoothstep(0.12, 0.3, 1.0 - dot(na, nrmUnpack(b.r))));
-          float k = mpp * float(s) * 2.5 + 0.6; e = max(e, smoothstep(k, k * 2.0, abs(b.g - a.g)));
+          if (uPersp > 0.5) { float c2 = nf(p - OF[i]).g; if (c2 > 0.0) e = max(e, smoothstep(0.04, 0.08, abs(b.g + c2 - 2.0 * a.g) / a.g)); } // rijden: 2e afgeleide (scherende grond geeft geen valse randen)
+          else { float k = mpp * float(s) * 2.5 + 0.6; e = max(e, smoothstep(k, k * 2.0, abs(b.g - a.g))); }
         }
         return e;
       }
@@ -64,7 +70,7 @@
   let post = null;
   function apply() {
     const id = H.fxOn('aquarel') ? 1 : H.fxOn('kaart') ? 2 : 0, on = iso() && id > 0;
-    if (on && !post) post = H.addPost({ material: styM, order: 16, still: true, before: cam, enabled: true });
+    if (on && !post) post = H.addPost({ material: styM, order: 16, still: true, drive: true, before: cam, enabled: true });
     if (!post) return;
     post.enabled = on; SU.uSty.value = id; H.redraw();
   }

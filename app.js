@@ -150,7 +150,7 @@ if (uEra.z > 0.0 && (pInfo.x < uEra.x || pInfo.x > uEra.y)) { // bouwjaar-filter
   const BUILD = 'anime-1 licht randje, daken op bouwjaar, middag zacht, bolle bomen (2026-11-09)', DBG_U = { value: new THREE.Vector2(1, 1) }; // ?gpu: versie zichtbaar + schakelaars omlijning (x = vlaklijnen, y = dieptelijnen)
   H.redraw = redraw;
   let inkW = 1; // dikte omlijning (1 = ±2 px, 2 = ±4 px, schakelaar Sfeer › Dikke lijnen = fxOn.dik)
-  H.VERSION = '0.9.2-test12'; // getoond onderaan (ui.js #attr); bij release ophogen
+  H.VERSION = '0.9.2-test13'; // getoond onderaan (ui.js #attr); bij release ophogen
   // na de upload naar de GPU de kopie in het werkgeheugen weggooien (canvas → 1×1, DataTexture-data → null). Opnieuw tekenen = nieuw canvas/nieuwe textuur
   H.freeAfterUpload = tex => { tex.onUpdate = () => { tex.onUpdate = null; const im = tex.image; if (im && im.getContext) im.width = im.height = 1; else if (im && im.data) im.data = null; }; return tex; };
 
@@ -913,7 +913,7 @@ if (uEra.z > 0.0 && (pInfo.x < uEra.x || pInfo.x > uEra.y)) { // bouwjaar-filter
   // licht iso (design/17_licht.html B Materiaal-middag / E Filmisch): zon uL (wereld), kleuren lineair, glans/glas/baksteen; applyNight + isoSun vullen ze
   Object.assign(U, { uL: { value: new THREE.Vector3(0, 1, 0) }, uSunC: { value: new THREE.Color() }, uSkyC: { value: new THREE.Color() }, uGndC: { value: new THREE.Color() },
     uHor: { value: new THREE.Color() }, uZen: { value: new THREE.Color() }, uSoft: { value: 0.02 }, uGloss: { value: 1.5 }, uGlass: { value: 1.3 }, uMat: { value: 1 },
-    uPerM: { value: 1 / 1400 }, uDR: { value: 3000 }, uFilm: { value: 0 }, uSat: { value: 1 },
+    uPerM: { value: 1 / 1400 }, uDR: { value: 3000 }, uFilm: { value: 0 }, uSat: { value: 1.5 },
     // nieuwe schaduw zacht laten opkomen (geen flits na pannen): uShX = nieuwe → vorige schaduwkaart-coördinaten, uShT = 0→1; binnen het vorige kader meteen vol
     uShX: { value: new THREE.Matrix4().makeTranslation(9, 9, 0) }, uShT: { value: 1 },
     // kruisvervagen (gebruiker 0.9.2: schaduw verscheen te opvallend): binnen het vorige kader oude kaart tShOld → nieuwe in SH_XF ms (uShO 0→1, 1 = alleen nieuw); ?noshxf = oud
@@ -1579,7 +1579,7 @@ vHk = (uBiz.y < 0.5 || uGOn < 0.5) ? 1.0 : clamp((uGT - pGrow - uGDur) / ${BIZ_F
   }
   H.setLight = (m, keep) => { lightMode = m; nightGoal = goalFor(m); if (!keep) try { localStorage.setItem('h3d.light', m); } catch {} redraw(); emit('light', m); }; // keep: ontwerppagina (niet bewaren)
   H.getLight = () => lightMode;
-  // verzadiging (schuif Sfeer › Stijl): 0–2, 1 = ongewijzigd; bewaard in h3d.sat
+  // verzadiging (schuif Sfeer › Stijl): 0–2, 1 = ongewijzigd, standaard 1,5 (gebruiker test12: aquarel 150%); bewaard in h3d.sat
   try { const v = parseFloat(localStorage.getItem('h3d.sat')); if (v >= 0 && v <= 2) U.uSat.value = v; } catch {}
   H.setSat = v => { U.uSat.value = Math.max(0, Math.min(2, +v || 0)); try { localStorage.setItem('h3d.sat', U.uSat.value); } catch {} redraw(); };
   H.getSat = () => U.uSat.value;
@@ -2827,9 +2827,9 @@ vHk = (uBiz.y < 0.5 || uGOn < 0.5) ? 1.0 : clamp((uGT - pGrow - uGDur) / ${BIZ_F
   // inkt (zwarte omlijning i.p.v. licht randje) standaard uit, bouwjaar (daken/gevels op bouwjaar i.p.v. Mijnstreek-palet) standaard aan
   const FXK = ['wolken', 'lucht', 'verkeer', 'props', 'randen', 'ao', 'diorama', 'zuinig', 'inkt', 'bouwjaar', 'film', 'dik', 'weer', 'aquarel', 'kaart', 'foto', 'poster', 'mini']; // weer = echt weer (iso/weer.js), standaard aan; aquarel/kaart = iso/stijl.js, foto/poster/mini = iso/foto.js (standaard uit)
   // wolken (wolkschaduw) standaard uit (buggy): alleen aan als de gebruiker hem zelf aanzet (eigen sleutel h3d.wolken, oude h3d.fx-waarde telt niet)
-  const fxOn = Object.fromEntries(FXK.map(k => [k, ['zuinig', 'wolken', 'inkt', 'dik', 'aquarel', 'kaart', 'foto', 'poster', 'mini'].includes(k) ? 0 : 1])); // film (Filmisch licht) standaard aan sinds 0.9-test5
+  const fxOn = Object.fromEntries(FXK.map(k => [k, ['zuinig', 'wolken', 'inkt', 'dik', 'film', 'kaart', 'foto', 'poster', 'mini'].includes(k) ? 0 : 1])); // sinds test13: Filmisch uit, aquarel aan // film (Filmisch licht) standaard aan sinds 0.9-test5
   try { const t = localStorage.getItem('h3d.tilt'); if (t != null) fxOn.randen = t === '0' ? 0 : 1; Object.assign(fxOn, JSON.parse(localStorage.getItem('h3d.fx') || '{}')); fxOn.wolken = localStorage.getItem('h3d.wolken') === '1' ? 1 : 0;
-    if (!localStorage.getItem('h3d.film1')) { fxOn.film = 1; localStorage.setItem('h3d.film1', '1'); } } catch { fxOn.wolken = 0; } fxOn.foto = fxOn.poster = 0; // foto/poster (UI weg) nooit bewaard aan; eenmalig: bewaarde 'uit' van vóór de nieuwe standaard telt niet; daarna geldt de eigen keuze
+    if (!localStorage.getItem('h3d.look2')) { fxOn.film = 0; fxOn.aquarel = 1; fxOn.kaart = 0; localStorage.setItem('h3d.look2', '1'); localStorage.removeItem('h3d.sat'); } } catch { fxOn.wolken = 0; } fxOn.foto = fxOn.poster = 0; // foto/poster (UI weg) nooit bewaard aan; eenmalig: bewaarde 'uit' van vóór de nieuwe standaard telt niet; daarna geldt de eigen keuze
   // uLine 0 = inkt (silhouet + vouwen) · 1 = dun (alleen dieptesprongen, 45%); film = licht E + nabewerking (gloed, ACES, waas)
   const applyLook = () => { U.uLine.value = fxOn.inkt ? 0 : 1; inkW = fxOn.dik ? 2 : 1; U.uAnime.value = fxOn.bouwjaar ? 1 : 0;
     if (isoFilm !== fxOn.film) { isoFilm = U.uFilm.value = fxOn.film; sunKey = ''; applyNight(); } };
