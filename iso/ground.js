@@ -467,7 +467,9 @@
       // markering (fijn): straten kantstrepen + middenstreep op doorgaande wegen
       x.fine = 1;
       for (const f of S) if (RANK[f.c] >= 3 && aw(f) >= 5) { x.noCap = f.dead; stroke(f, aw(f) - 0.7, RD.paint); stroke(f, aw(f) - 0.98, asp(f)); } x.noCap = 0;
-      x.lineCap = 'butt'; x.setLineDash([3, 6]); for (const f of S) if (RANK[f.c] >= 3) stroke(f, 0.15, RD.paint); x.setLineDash([]);
+      x.lineCap = 'butt'; x.setLineDash([3, 6]); for (const f of S) if (RANK[f.c] >= 3) stroke(f, 0.15, RD.paint);
+      for (const f of S) if (RANK[f.c] === 2 && aw(f) >= 5.5) stroke(f, 0.12, RD.paint); // middenstreep woonstraten (design/23 wegen)
+      x.setLineDash([]);
       // snelweg/autoweg: doorgetrokken kantstrepen 0,45 m uit de rand, stroken 3 m / gat 9 m (aantal uit OSM lanes, anders breedte / 3,5 m)
       for (const f of M) {
         const e = f.w / 2 - 0.45, nl = f.lanes || Math.max(1, Math.round(f.w / 3.5));
@@ -632,6 +634,7 @@
 
   // ---------- grond-pass: mesh van bovenaf in één schermgroot doel (alleen iso) ----------
   const hex3 = h => { const n = parseInt(h.slice(1), 16); return [(n >> 16) / 255, (n >> 8 & 255) / 255, (n & 255) / 255].map(v => v.toFixed(4)).join(', '); };
+  const BIKE1 = hex3(ST.road.bike), BIKE2 = hex3(ST.area.fietsvlak), BIKE3 = hex3(ST.road.bikeX);
   const W1 = hex3(ST.area.water), W2 = hex3(ST.area.zwembad), BASEV = hex3(ST.base);
   const SEAS = ['zomer', 'herfst', 'winter', 'lente'];
   const GT = { uTpm: { value: 1 }, uSeason: { get value() { return Math.max(0, SEAS.indexOf(H.getSeason?.())); } } }; // velden kleuren mee (app.js SEASONS)
@@ -702,6 +705,8 @@
       void main() {
         vec4 c = vC; float k = floor(vKind + 0.5), fk = smoothstep(0.8, 1.0, uTpm), aa = 0.5 / uTpm;
         if (vFine > 0.5) c.a *= fk;
+        { vec3 b1 = c.rgb - vec3(${BIKE1}), b2 = c.rgb - vec3(${BIKE2}), b3 = c.rgb - vec3(${BIKE3}); // rood fietsasfalt (design/23 wegen)
+          if (min(dot(b1, b1), min(dot(b2, b2), dot(b3, b3))) < 0.004) c.rgb = dot(b3, b3) < 0.004 ? vec3(0.62, 0.2, 0.17) : vec3(0.71, 0.27, 0.22); }
         if (k > 22.5) { // ZOAB-korrel (snelweg/autoweg): fijne spikkels licht/donker, alleen dichtbij
           vec2 q = floor(vP / 0.3); float g = h12(q) * 0.6 + h12(floor(vP / 1.1) + 9.1) * 0.4;
           c.rgb *= 1.0 + fk * (g - 0.5) * 0.22;
@@ -924,6 +929,21 @@
     tGrX: { value: new THREE.DataTexture(new Uint8Array(4), 1, 1) }, uGrVPX: { value: new THREE.Matrix4() }, uGrXOn: { value: 0 } };
   GU.tGrN.value.needsUpdate = true; GU.tGrX.value.needsUpdate = true;
   GU.tGr.value.needsUpdate = true;
+  // looks (design/23, vast): water c (dieper donkerder, lichte oever, stille glinstering; niet bij winter = ijs) + helling (zonkant licht). Op de albedo, addLit (app.js) belicht daarna
+  const LK_WATER = `if (!(uSeason > 1.5 && uSeason < 2.5)) {
+            float deep = smoothstep(0.45, 1.0, s2 / 8.0), shore = 1.0 - smoothstep(0.55, 0.9, s1 / 8.0);
+            vec3 wc = diffuseColor.rgb;
+            wc = mix(wc, wc * vec3(0.5, 0.64, 0.8), deep);
+            wc = mix(wc, vec3(0.78, 0.88, 0.92), shore * 0.55);
+            vec3 V = normalize(cameraPosition - vGrW); float sp = pow(max(dot(reflect(-V, vec3(0.0, 1.0, 0.0)), uL), 0.0), 4.0);
+            float n = grN(vGrW.xz * 0.9) * grN(vGrW.xz * 2.3);
+            wc = mix(wc, vec3(1.6), smoothstep(0.36, 0.44, n) * (0.35 + 0.65 * sp) * (0.3 + 0.7 * deep));
+            diffuseColor.rgb = mix(diffuseColor.rgb, wc, grW); grK = 0.0;
+          }`;
+  const LK_LAND = `{ // helling: zonkant lichter, schaduwkant donkerder (vlaknormaal uit de terreinpositie)
+          vec3 hn = normalize(cross(dFdx(vGrW), dFdy(vGrW))); if (hn.y < 0.0) hn = -hn;
+          diffuseColor.rgb *= clamp(1.0 + 1.6 * (dot(hn, uL) - uL.y), 0.55, 1.6);
+        }`;
   H.patchTerrain('ground', s => {
     Object.assign(s.uniforms, GU); H.seasonize?.(s, '');
     s.vertexShader = s.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vGrW;')
@@ -949,14 +969,16 @@
           if (xk > 0.0) { vec4 tx = texture2D(tGrX, xUv); grC = mix(grC, tx.rgb + GR_BASE * (1.0 - tx.a), xk); } }
         diffuseColor.rgb = grLin(grC);
         float grW = grWat(grC) * smoothstep(0.8, 1.0, uGrTpm) * uGrOn;
-        ${H.seasonize ? 'diffuseColor.rgb = seasonGround(diffuseColor.rgb, grWat(grC));' : ''}
+        ${H.seasonize ? 'diffuseColor.rgb = seasonGround2(diffuseColor.rgb, grWat(grC), grC, vGrW.xz);' : ''}
         if (grW > 0.0) { // schuimrand: aandeel water binnen 1,6 m (smal) en 8 m (geen schuim op smalle beken)
           float s1 = 0.0, s2 = 0.0;
           for (int i = 0; i < 8; i++) { float a = float(i) * 0.7853982; vec2 d = vec2(cos(a), sin(a)) * uGrM;
             s1 += grWat(grAt(grUv + d * 1.6)); s2 += grWat(grAt(grUv + d * 8.0)); }
           float wid = 0.3 + 0.08 * sin(uGrT * 1.4 + grN(vGrW.xz / 6.0) * 6.0);
           grK = (1.0 - smoothstep(wid * 0.75, wid, s1 / 16.0)) * smoothstep(0.28, 0.42, s2 / 8.0) * 0.92 * grW;
+          ${H.seasonize ? LK_WATER : ''}
         }
+        ${H.seasonize ? LK_LAND : ''}
       }
       #include <alphamap_fragment>`)
       .replace('#include <opaque_fragment>', `if (grK > 0.0) {

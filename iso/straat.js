@@ -4,7 +4,7 @@
 (() => {
   const H = typeof H3D !== 'undefined' ? H3D : null; if (!H || !H.on) return;
   const NEAR = 1300;
-  const V = new THREE.Vector3(), S = new THREE.Vector3(), Q = new THREE.Quaternion(), M = new THREE.Matrix4(), UP = new THREE.Vector3(0, 1, 0);
+  const V = new THREE.Vector3(), S = new THREE.Vector3(), Q = new THREE.Quaternion(), M = new THREE.Matrix4(), UP = new THREE.Vector3(0, 1, 0), QZ = new THREE.Quaternion(), ZA = new THREE.Vector3(0, 0, 1);
 
   // ---------- modellen: vertexkleur + aSG (eigen licht: 1 = brandt, ook overdag; 's avonds feller) ----------
   let MAT = null, GEO = null;
@@ -98,7 +98,12 @@
           for (const [c0, c1] of cut) parts = parts.flatMap(([p0, p1]) => c1 <= p0 || c0 >= p1 ? [[p0, p1]] : [[p0, Math.max(p0, c0)], [Math.min(p1, c1), p1]].filter(([q0, q1]) => q1 - q0 > 0.4));
           for (const [p0, p1] of parts) { const m = (p0 + p1) / 2 - s0, mx = a[k] + ux * m, my = a[k + 1] + uy * m;
             if (mx < c.x0 || mx >= c.x0 + km || my < c.y0 || my >= c.y0 + km) continue;
-            for (const sd of [1, -1]) put('kerb', mx - uy * r.half * sd, my + ux * r.half * sd, th - Math.PI / 2, p1 - p0, 0.16, 0.22, -0.04); } // th − 90°: lange as (x) langs de weg
+            // stukken van max. 4 m die de helling volgen (één horizontale balk over een heel wegstuk zweefde aan het ene eind en zakte weg aan het andere)
+            const nP = Math.max(1, Math.ceil((p1 - p0) / 4)), pl = (p1 - p0) / nP;
+            for (let q = 0; q < nP; q++) { const qm = p0 + (q + 0.5) * pl - s0, cx = a[k] + ux * qm, cy = a[k + 1] + uy * qm;
+              for (const sd of [1, -1]) { const ex = cx - uy * r.half * sd, ey = cy + ux * r.half * sd, h0 = hAt(ex - ux * pl / 2, ey - uy * pl / 2), h1 = hAt(ex + ux * pl / 2, ey + uy * pl / 2);
+                Q.setFromAxisAngle(UP, th).multiply(QZ.setFromAxisAngle(ZA, Math.atan2(h1 - h0, pl))); // lange as (x) langs de weg, gekanteld naar de helling
+                M.compose(V.set(ex - O[0], (h0 + h1) / 2 - 0.04, -(ey - O[1])), Q, S.set(Math.hypot(pl, h1 - h0) + 0.02, 0.16, 0.22)); (L.kerb ||= []).push(M.clone()); } } }
         }
       }
     }

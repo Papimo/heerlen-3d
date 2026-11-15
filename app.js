@@ -939,32 +939,72 @@ if (uEra.z > 0.0 && (pInfo.x < uEra.x || pInfo.x > uEra.y)) { // bouwjaar-filter
     for (const k of WON_K) if (o && wonOk(k, o[k])) { won[k] = o[k]; if (!keep) try { localStorage.setItem('h3d.w.' + k, o[k]); } catch {} }
     wonApply(); shadowDirty = true; redraw(); emit('won', { ...won });
   };
+  // ---------- looks (design/23_looks.html, gekozen 2026-11-15; vast): winter a + herfst b hier in SEASON_GLSL, water c/helling a/fietsasfalt in iso/ground.js,
+  // mijnlaag, abri's, wolkenzee en wandelpaden (laag 'paden') in iso/looks.js. uLkT = klok voor wolkenzee en padlichtjes
+  Object.assign(U, { uLkT: { value: 0 } });
   const SEASON_GLSL = `uniform float uSeason;
     const vec3 SN_COL = vec3(0.80, 0.84, 0.90);
+    vec3 snWP = vec3(0.0); // wereldpositie (seasonize zet hem bij 'leaf'/'roof'); herfst: bospalet in plukken
     float snHash(vec3 c) { vec3 q = fract(c * 0.1031); q += dot(q, q.zyx + 31.32); return fract((q.x + q.y) * q.z); }
+    float snN(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+      return mix(mix(snHash(vec3(i, 1.7)), snHash(vec3(i + vec2(1, 0), 1.7)), f.x), mix(snHash(vec3(i + vec2(0, 1), 1.7)), snHash(vec3(i + vec2(1, 1), 1.7)), f.x), f.y); }
+    bool snConifer(vec3 c) { return c.b > c.r * 1.05; } // naaldbomen (blauwgroen) houden hun kleur
     vec3 seasonLeaf(vec3 c, float up) { // c lineair; alleen groen (blad) verandert, stam/rest blijft
       if (uSeason < 0.5) return c;
       float leaf = smoothstep(0.0, 0.015, c.g - max(c.r, c.b)), r = snHash(c), lum = dot(c, vec3(0.2126, 0.7152, 0.0722));
       vec3 o;
-      if (uSeason < 1.5) { o = r < 0.35 ? vec3(0.60, 0.17, 0.02) : r < 0.7 ? vec3(0.70, 0.38, 0.03) : r < 0.88 ? vec3(0.40, 0.08, 0.02) : c; o *= 0.55 + lum * 2.5; }
-      else if (uSeason < 2.5) { o = vec3(0.085, 0.07, 0.058) * (0.8 + r * 0.4); o = mix(o, SN_COL, smoothstep(0.3, 0.65, up)); }
+      if (uSeason < 1.5) { // herfst: plukken van ±80 m per soort (beuk koper, eik oranjebruin, berk/esdoorn geel, esdoorn rood, nog groen)
+        if (snConifer(c)) return c * vec3(0.92, 0.95, 0.9);
+        float n = snN(snWP.xz / 85.0) * 0.75 + r * 0.25;
+        o = n < 0.3 ? vec3(0.42, 0.11, 0.025) : n < 0.48 ? vec3(0.58, 0.25, 0.03) : n < 0.64 ? vec3(0.80, 0.55, 0.05) : n < 0.74 ? vec3(0.55, 0.05, 0.02) : n < 0.84 ? vec3(0.62, 0.42, 0.05) : c * vec3(1.05, 0.95, 0.6);
+        o *= 0.6 + lum * 2.2; o *= 0.9 + 0.2 * snHash(c + 3.1);
+      }
+      else if (uSeason < 2.5) { // winter: naaldbomen donkergroen met sneeuw erop, loofbomen kaal en wit bestoven
+        if (snConifer(c)) o = mix(c * vec3(0.55, 0.7, 0.65), SN_COL * 1.04, smoothstep(0.35, 0.7, up) * 0.9);
+        else o = mix(vec3(0.075, 0.064, 0.056) * (0.8 + r * 0.4), SN_COL * 1.04, smoothstep(0.15, 0.5, up) * 0.95);
+      }
       else o = r < 0.14 ? vec3(0.92, 0.55, 0.66) : c * vec3(1.15, 1.35, 0.75);
       return mix(c, o, leaf);
     }
-    vec3 seasonRoof(vec3 c, float up) { return uSeason > 1.5 && uSeason < 2.5 ? mix(c, SN_COL, 0.82 * smoothstep(0.25, 0.6, up)) : c; }
+    vec3 seasonRoof(vec3 c, float up) {
+      if (uSeason < 1.5 || uSeason > 2.5) return c;
+      float n = snN(snWP.xz / 7.0); return mix(c, SN_COL * (1.02 + 0.04 * n), smoothstep(0.12, 0.4, up) * (0.9 + 0.1 * n)); // dik pak, ook op steilere daken
+    }
     vec3 seasonGround(vec3 c, float wat) { // c lineair; wat = 1 op water (geen sneeuw)
       if (uSeason < 0.5) return c;
       float g = smoothstep(0.0, 0.02, c.g - max(c.r, c.b));
       if (uSeason < 1.5) return mix(c, c * vec3(1.3, 1.0, 0.55), g * 0.75);
       if (uSeason < 2.5) return mix(c, SN_COL, (g * 0.7 + 0.22) * (1.0 - wat));
       return mix(c, c * vec3(1.05, 1.15, 0.85), g);
+    }
+    // grond (iso/ground.js): s = sRGB-kleur uit de grondlaag (soort herkennen), p = wereld xz
+    vec3 seasonGround2(vec3 c, float wat, vec3 s, vec2 p) {
+      bool W = uSeason > 1.5 && uSeason < 2.5, F = uSeason > 0.5 && uSeason < 1.5;
+      if (!W && !F) return seasonGround(c, wat);
+      float sat = max(s.r, max(s.g, s.b)) - min(s.r, min(s.g, s.b)), g = smoothstep(0.0, 0.03, s.g - max(s.r, s.b));
+      float n = snN(p / 9.0) * 0.6 + snN(p / 2.3) * 0.4;
+      if (W) { // winter: alles wat niet verhard is wit (velden, tuinen, bermen), verhard = natte weg met smeltrand, water = ijs
+        if (wat > 0.5) return mix(vec3(0.62, 0.72, 0.80), vec3(0.85, 0.9, 0.95), smoothstep(0.55, 0.75, snN(p / 4.0))) * (0.92 + 0.08 * n);
+        float paved = 1.0 - smoothstep(0.05, 0.12, sat);
+        vec3 sn = SN_COL * (0.97 + 0.08 * n);
+        return mix(mix(c, sn, 0.93), mix(c * 0.8, sn, smoothstep(0.62, 0.8, n) * 0.6), paved);
+      }
+      // herfst: bosgrond bladerdek (oranjebruin, vlekkerig), gras geler met verwaaide blaadjes
+      if (wat > 0.5) return c;
+      float bos = g * (1.0 - smoothstep(0.62, 0.72, s.g)); // donkergroen = bos/struik
+      vec3 lit = mix(vec3(0.36, 0.13, 0.03), vec3(0.62, 0.33, 0.05), n);
+      c = mix(c, c * vec3(1.25, 1.0, 0.5), g * 0.6);
+      c = mix(c, lit, bos * 0.8);
+      float sp = step(0.82, snHash(vec3(floor(p / 0.9), 4.2))) * g * (1.0 - bos);
+      return mix(c, mix(vec3(0.7, 0.3, 0.04), vec3(0.75, 0.55, 0.08), snHash(vec3(floor(p / 0.9), 8.1))), sp * 0.7);
     }`;
   H.seasonize = (s, kind) => {
     s.uniforms.uSeason = U.uSeason;
     s.fragmentShader = s.fragmentShader.replace('#include <common>', '#include <common>\n' + SEASON_GLSL);
     if (!kind) return;
-    // vlaknormaal uit vViewPosition (panden hebben geen normal-attribuut) → wereld-omhoog, ook ortho
-    s.fragmentShader = s.fragmentShader.replace('#include <alphamap_fragment>', `{ float snUp = abs((transpose(mat3(viewMatrix)) * normalize(cross(dFdx(vViewPosition), dFdy(vViewPosition)))).y);
+    // vlaknormaal uit vViewPosition (panden hebben geen normal-attribuut) → wereld-omhoog, ook ortho; snWP = wereldpositie
+    s.fragmentShader = s.fragmentShader.replace('#include <alphamap_fragment>', `{ mat3 snR = transpose(mat3(viewMatrix)); snWP = cameraPosition - snR * vViewPosition;
+      float snUp = abs((snR * normalize(cross(dFdx(vViewPosition), dFdy(vViewPosition)))).y);
       diffuseColor.rgb = ${kind === 'roof' ? 'seasonRoof' : 'seasonLeaf'}(diffuseColor.rgb, snUp); }\n#include <alphamap_fragment>`);
   };
   const SUN_DIR = new THREE.Vector3(-0.55, 0.62, 0.35); H.SUN_DIR = SUN_DIR; // ±44° (schaduwen weer leesbaar; anime-1 had -0.5, 0.86, 0.32 = ±55°, daarvoor -0.55, 0.75, 0.35) — vaste zonrichting (× 3000 = zonpositie t.o.v. het doel)
@@ -2772,8 +2812,9 @@ vHk = (uBiz.y < 0.5 || uGOn < 0.5) ? 1.0 : clamp((uGT - pGrow - uGDur) / ${BIZ_F
   }
 
   // ---------- Lagen (data/layers.js): water, spoor, snelwegen als linten op het terrein; labels/bekende gebouwen in labels.js/ui.js ----------
-  const layerOn = { straten: 1, wijken: 1, water: 1, spoor: 1, wegen: 1, bomen: 1, gebouwen: 1 };
+  const layerOn = { straten: 1, wijken: 1, water: 1, spoor: 1, wegen: 1, bomen: 1, gebouwen: 1, paden: 1, mijn: 0 }; // paden/mijn: iso/looks.js
   try { Object.assign(layerOn, JSON.parse(localStorage.getItem('h3d.layers') || '{}')); } catch {}
+  layerOn.mijn = 0; // mijnlaag start altijd uit (aanzetten geldt alleen voor deze sessie)
   // effecten aan/uit (menu's Sfeer/Stad in ui.js); elk iso-bestand leest H.fxOn(k) en luistert naar 'fx'
   // zuinig = geen effect maar een stand: gedeelde animatietik 10/s i.p.v. 20/s, water stil, geen contactschaduw (standaard uit)
   // inkt (zwarte omlijning i.p.v. licht randje) standaard uit, bouwjaar (daken/gevels op bouwjaar i.p.v. Mijnstreek-palet) standaard aan

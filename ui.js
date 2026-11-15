@@ -430,7 +430,7 @@
   showOpen();
   setInterval(() => { if (state.openOnly) rebuildPins(); }, 60000); // tijd loopt door
   // ---------- Lagen aan/uit ----------
-  const LAYERS = { straten: 'Straatnamen', wijken: 'Wijken en stations', water: 'Water', spoor: 'Spoor', wegen: 'Wegen', bomen: 'Bossen', gebouwen: '◆ Bekende gebouwen' };
+  const LAYERS = { straten: 'Straatnamen', wijken: 'Wijken en stations', water: 'Water', spoor: 'Spoor', wegen: 'Wegen', bomen: 'Bossen', paden: 'Wandelpaden', mijn: 'Mijnverleden', gebouwen: '◆ Bekende gebouwen' };
   $('layers').innerHTML = Object.entries(LAYERS).map(([k, l]) => `<label><input type="checkbox" data-layer="${k}"${H3D.layerOn(k) ? ' checked' : ''}> ${l}</label>`).join('');
   $('layers').addEventListener('change', e => { const k = e.target.dataset.layer; if (k) { H3D.setLayer(k, e.target.checked); showCounts(); } });
   // ---------- Effecten: menu's Sfeer (licht + wolken, lucht, randen) en Stad (verkeer, meubilair, schaduw, diorama) ----------
