@@ -219,9 +219,9 @@
       return im;
     };
     // hoek: model-x langs RD-hoek a → om y draaien = −a (z = −noord)
-    const tree = (geoHi, geoLo, list) => { const im = inst(geoHi, list, -0.15); if (im) { im.geoHi = geoHi; im.geoLo = geoLo; v.trees.push(im); } };
+    const tree = (geoHi, geoLo, list) => { const im = inst(geoHi, list, -0.15); if (im) { im.geoHi = geoHi; im.geoLo = geoLo; v.trees.push(im); H.treesDry?.(im); } }; // geen bomen in water (iso/ground.js)
     tree(G.fruitHi, G.fruitLo, L.fruit); tree(G.wood, G.woodLo, L.wood);
-    const xm = inst(G.xmas, L.xmas, -0.05); if (xm) { xm.geoHi = xm.geoLo = G.xmas; v.trees.push(xm); }
+    const xm = inst(G.xmas, L.xmas, -0.05); if (xm) { xm.geoHi = xm.geoLo = G.xmas; v.trees.push(xm); H.treesDry?.(xm); }
     const vi = inst(G.vine, L.vine, -0.05); if (vi) { vi.geoHi = vi.geoLo = G.vine; v.trees.push(vi); }
     for (const [k, kind, y0] of [['cowZ', 'dier', 0], ['cowR', 'dier', 0], ['sheep', 'dier', 0], ['bale', 'bal', 0], ['stack', 'wrap', 0]]) {
       const im = inst(G[k], L[k], y0 - 0.05); if (im) { im.userData.kind = kind; im.userData.sOK = sOK(kind, season); v.small.push(im); }

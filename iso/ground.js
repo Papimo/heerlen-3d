@@ -41,6 +41,82 @@
       return false;
     };
   }
+  // Watermasker (regel gebruiker: waar water is staan geen bomen). H.waterNear(x, y, m) = RD-punt binnen ±m meter van water?
+  // Raster 2 m in tegels van 40 m (alleen tegels met water). Bronnen: grond-water (vlakken, beken met breedte, BRP-sloten/poelen), BGT-water (komt na het
+  // eerste beeld), OSM-vijvers/-beken uit layers (Geleenbeek 5,2 m breed = iso/groen.js), later erbij via H.waterAdd (grachten iso/kastelen.js).
+  // H.treesDry(im): bomen (InstancedMesh, wereldcoördinaten, im.full = alle bomen) die in water staan plat maken (schaal 0); opnieuw zodra er water bijkomt.
+  {
+    const RES = 2, NT = 20, T = new Map(), q = GD.q || 0.5, MARGIN = 1.5, WW = { river: 8, canal: 6, stream: 2.5, ditch: 1.4, drain: 1.4 };
+    let SRC = { area: (GD.area || []).filter(a => a[0] === 'water'), line: (GD.line || []).filter(l => l[0] === 'beek'), crop: (GD.crop || []).filter(c => c[0] === 13) }; // crop 13 = water (sloot/poel, build-ground CROPS)
+    let ready = false, bgtDone = false, layDone = false; const DRY = new Set(), WAIT = [];
+    const mark = (cx, cy) => { const i = Math.floor(cx / NT), j = Math.floor(cy / NT), k = i * 65536 + j; let t = T.get(k); if (!t) T.set(k, t = new Uint8Array(NT * NT)); t[(cy - j * NT) * NT + cx - i * NT] = 1; };
+    const wet = (x, y) => { const cx = Math.floor(x / RES), cy = Math.floor(y / RES), i = Math.floor(cx / NT), j = Math.floor(cy / NT), t = T.get(i * 65536 + j); return !!t && t[(cy - j * NT) * NT + cx - i * NT] === 1; };
+    function fill(rings) { // even-odd scanline over alle ringen (gaten/binnenring vallen weg), celmiddens
+      let y0 = Infinity, y1 = -Infinity; for (const r of rings) for (let k = 1; k < r.length; k += 2) { y0 = Math.min(y0, r[k]); y1 = Math.max(y1, r[k]); }
+      for (let cy = Math.floor(y0 / RES); cy * RES <= y1; cy++) {
+        const y = (cy + 0.5) * RES, xs = [];
+        for (const r of rings) for (let a = 0, b = r.length - 2; a < r.length; b = a, a += 2) { const ya = r[b + 1], yb = r[a + 1]; if ((ya <= y) !== (yb <= y)) xs.push(r[b] + (y - ya) / (yb - ya) * (r[a] - r[b])); }
+        xs.sort((p, s) => p - s);
+        for (let k = 0; k + 1 < xs.length; k += 2) for (let cx = Math.ceil(xs[k] / RES - 0.5); (cx + 0.5) * RES <= xs[k + 1]; cx++) mark(cx, cy);
+      }
+    }
+    function line(r, half) { // band met halve breedte (+ halve cel: smalle sloten vallen niet tussen de celmiddens door)
+      const e = half + RES * 0.5;
+      for (let k = 0; k + 3 < r.length; k += 2) {
+        const ax = r[k], ay = r[k + 1], dx = r[k + 2] - ax, dy = r[k + 3] - ay, l2 = dx * dx + dy * dy;
+        for (let cy = Math.floor((Math.min(ay, ay + dy) - e) / RES); cy * RES <= Math.max(ay, ay + dy) + e; cy++) for (let cx = Math.floor((Math.min(ax, ax + dx) - e) / RES); cx * RES <= Math.max(ax, ax + dx) + e; cx++) {
+          const px = (cx + 0.5) * RES, py = (cy + 0.5) * RES, t = l2 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / l2)) : 0, ex = ax + dx * t - px, ey = ay + dy * t - py;
+          if (ex * ex + ey * ey <= e * e) mark(cx, cy);
+        }
+      }
+    }
+    const dec = (d, O) => { const a = new Float64Array(d.length); let x = 0, y = 0; for (let k = 0; k < d.length; k += 2) { x += d[k]; y += d[k + 1]; a[k] = O[0] + x * q; a[k + 1] = O[1] + y * q; } return a; };
+    function more() { // later binnenkomende bronnen; true = er kwam water bij
+      const O = H.areaInfo.origin; let ch = false;
+      const B = window.H3D_DATA.bgt?.land;
+      if (!bgtDone && B) { bgtDone = true; for (const [c, rs] of B) if (c === 'water') { fill(rs.map(d => dec(d, O))); ch = true; } }
+      const L = H.layerData;
+      if (!layDone && L) { layDone = true; ch = true; for (const [, r] of L.ponds || []) fill([r]); for (const [nm, cls, r] of L.water || []) line(r, /^Geleenbeek$/.test(nm) ? 2.6 : (WW[cls] || 2.5) / 2); }
+      while (WAIT.length) { add(WAIT.shift()); ch = true; }
+      return ch;
+    }
+    function build() {
+      const O = H.areaInfo?.origin; if (!O) return false;
+      for (const [, rs] of SRC.area) fill(rs.map(d => dec(d, O)));
+      for (const [, rs] of SRC.crop) fill(rs.map(d => dec(d, O)));
+      for (const [, w, , d] of SRC.line) line(dec(d, O), w / 20); // w in dm
+      SRC = null; ready = true; more(); return true;
+    }
+    const add = o => { if (o.rings) fill(o.rings); else line(o.line, o.half); };
+    H.waterNear = (x, y, m = MARGIN) => {
+      if (!ready && !build()) return false;
+      if (wet(x, y)) return true; if (!m) return false;
+      const d = m * 0.7071;
+      return wet(x + m, y) || wet(x - m, y) || wet(x, y + m) || wet(x, y - m) || wet(x + d, y + d) || wet(x - d, y + d) || wet(x + d, y - d) || wet(x - d, y - d);
+    };
+    function dry(im, bb) {
+      const O = H.areaInfo?.origin; if (!O || !im.instanceMatrix) return 0;
+      const a = im.instanceMatrix.array, n = Math.min(im.full ?? im.count, a.length / 16); let ch = 0;
+      for (let i = 0; i < n; i++) {
+        const o = i * 16; if (a[o + 5] === 0) continue; // al plat
+        const x = a[o + 12] + O[0], y = O[1] - a[o + 14];
+        if (bb && (x < bb[0] - 4 || x > bb[2] + 4 || y < bb[1] - 4 || y > bb[3] + 4)) continue;
+        if (H.waterNear(x, y)) { for (const k of [0, 1, 2, 4, 5, 6, 8, 9, 10]) a[o + k] = 0; ch++; }
+      }
+      if (ch) im.instanceMatrix.needsUpdate = true;
+      return ch;
+    }
+    const redo = bb => { let n = 0; for (const im of DRY) n += dry(im, bb); if (n) { H.shadowDirty?.(); H.redraw?.(); } };
+    H.treesDry = im => { if (!im) return; DRY.add(im); if (dry(im)) H.redraw?.(); };
+    H.waterAdd = o => { // {rings: [vlakke RD-ringen]} (even-odd: buiten + binnen = band) of {line: vlakke RD-lijn, half}
+      if (!ready && !build()) { WAIT.push(o); return; }
+      add(o); let bb = [Infinity, Infinity, -Infinity, -Infinity];
+      for (const r of o.rings || [o.line]) for (let k = 0; k < r.length; k += 2) bb = [Math.min(bb[0], r[k]), Math.min(bb[1], r[k + 1]), Math.max(bb[2], r[k]), Math.max(bb[3], r[k + 1])];
+      const e = o.half || 0; redo([bb[0] - e, bb[1] - e, bb[2] + e, bb[3] + e]);
+    };
+    window.addEventListener('h3d-bgt', () => { if (ready && more()) redo(); });
+    H.on('layers', () => { if (ready && more()) redo(); });
+  }
   if (window.H3D_DATA.bgt) GD.bgt = window.H3D_DATA.bgt.land; // BGT-vlakken (tools/build-bgt.cjs): wat de grond echt is; OSM-land blijft eronder (wonen/werk onder erf en panden)
 
   // ---------- stijl Speelgoedmat ----------

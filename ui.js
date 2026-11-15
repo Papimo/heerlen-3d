@@ -436,24 +436,29 @@
   // ---------- Effecten: menu's Sfeer (licht + wolken, lucht, randen) en Stad (verkeer, meubilair, schaduw, diorama) ----------
   const FX = { // naam, icoon, kosten 1–3, uitleg
     wolken: ['Wolkschaduw', '☁', 2, '±1,3 ms per beeld'], lucht: ['Ballon en vogels', '🎈', 1, 'af en toe iets in de lucht'], randen: ['Zachte randen', '◎', 3, '±2,1 ms per beeld · toets T'],
+    weer: ['Echt weer', '🌦', 1, 'iso: natte straten en plassen na regen, grijzer bij bewolking (weer in Heerlen nu, Open-Meteo, elke 10 min)'],
     zuinig: ['Zuinig', '🍃', 0, 'animaties 10/s i.p.v. 20/s, water stil, geen contactschaduw, scherpte 1× — rustiger voor laptop/accu'],
+    aquarel: ['Aquarel', '🎨', 1, 'iso: verzadigde, vlekkerige kleuren op papier met natte randen (één stijl tegelijk)'], kaart: ['Prentbriefkaart 1930', '📮', 1, 'iso: sepia met handkleuring, vignet en korrel (één stijl tegelijk)'],
+    foto: ['Fotomodus', '📷', 0, 'iso: menu en knoppen weg, knop 📷 slaat het beeld op als PNG; ✕ of Esc = terug'], poster: ['A3-poster', '🖼', 0, 'iso: staand A3-kader; 📷 slaat een poster op (PNG 2480 × 3508) met titel, noordpijl en schaalbalk; ✕ of Esc = terug'],
+    mini: ['Miniatuur', '🔍', 1, 'iso: scherpe band in het midden, rest vaag, meer kleur — alsof de stad een maquette is'],
     inkt: ['Inktlijnen', '✒', 0, 'iso: volle donkere lijn om panden en vouwen i.p.v. een dunne silhouetlijn'], dik: ['Dikke lijnen', '🖊', 0, 'iso: dichtbij (dichtste zoomstand, rijden) dikke zwarte omlijning; verder weg gewoon'], film: ['Filmisch licht', '🎞', 2, 'iso: lagere zon, filmische kleuren, gloed op glans en glas, waas in de verte (zwaarder voor de GPU)'], bouwjaar: ['Daken op bouwjaar', '🏠', 0, 'oud = rode pannen, jaren 40–70 = oranje, nieuw = antraciet; gevels baksteen of licht (uit = Mijnstreek-palet)'],
     verkeer: ['Bussen en treinen', '🚌', 1, '±0,2 ms per beeld'], props: ['Straatmeubilair', '🌳', 2, 'straatbomen, lantaarns, bankjes'], ao: ['Contactschaduw', '◐', 1, 'één keer gebakken, daarna bijna gratis'], diorama: ['Diorama-rand', '▱', 1, 'aardlagen langs de gemeentegrens'],
   };
-  const GRP = { sfeer: ['wolken', 'lucht', 'randen'], stad: ['verkeer', 'props', 'ao', 'diorama'] };
+  const GRP = { sfeer: ['weer', 'wolken', 'lucht', 'randen'], stad: ['verkeer', 'props', 'ao', 'diorama'] };
   const FXK_ALL = [...GRP.sfeer, ...GRP.stad];
   const fxRow = k => { const [n, ic, c, t] = FX[k]; return `<label title="${t}"><span class="ic">${ic}</span>${n}<span class="cost">${c ? [1, 2, 3].map(i => `<i class="${i <= c ? 'f' : ''}"></i>`).join('') : ''}</span><input type="checkbox" class="sw" data-fx="${k}"${H3D.fxOn(k) ? ' checked' : ''}></label>`; };
   const LIGHTS = { dag: '☀ Dag', schemer: '🌇 Schemer', avond: '🌙 Nacht', nu: '🕒 Nu' };
   const SEASONS = { lente: '🌸 Lente', zomer: '🌳 Zomer', herfst: '🍂 Herfst', winter: '❄ Winter' };
   const sfeer = $('g-sfeer').querySelector('div'), stad = $('g-stad').querySelector('div');
-  sfeer.innerHTML = `<h4>Licht</h4><div class="lseg">${Object.entries(LIGHTS).map(([k, l]) => `<button data-light="${k}">${l}</button>`).join('')}</div><h4>Seizoen</h4><div class="lseg">${Object.entries(SEASONS).map(([k, l]) => `<button data-season="${k}">${l}</button>`).join('')}</div><h4>Stijl</h4>${fxRow('film')}${fxRow('inkt')}${fxRow('dik')}${fxRow('bouwjaar')}<div class="sep2"></div><h4>Effecten</h4>${GRP.sfeer.map(fxRow).join('')}<div class="sep2"></div>${fxRow('zuinig')}`;
+  sfeer.innerHTML = `<h4>Licht</h4><div class="lseg">${Object.entries(LIGHTS).map(([k, l]) => `<button data-light="${k}">${l}</button>`).join('')}</div><div class="lseg"><button data-dag60 title="klok ×1440: licht volgt de zon, na 60 s terug naar nu">⏩ Dag in 60 s</button></div><h4>Seizoen</h4><div class="lseg">${Object.entries(SEASONS).map(([k, l]) => `<button data-season="${k}">${l}</button>`).join('')}</div><h4>Stijl</h4>${fxRow('film')}${fxRow('inkt')}${fxRow('dik')}${fxRow('bouwjaar')}${fxRow('aquarel')}${fxRow('kaart')}<div class="sep2"></div><h4>Foto</h4>${fxRow('foto')}${fxRow('poster')}${fxRow('mini')}<div class="sep2"></div><h4>Effecten</h4>${GRP.sfeer.map(fxRow).join('')}<p class="hint" id="weertxt"></p><div class="sep2"></div>${fxRow('zuinig')}`;
   const gemRow = g => `<label title="${g} laden (±50% meer vakken); omzetten herlaadt de pagina"><span class="ic">▦</span>${g} tonen<span class="cost">${[1, 2, 3].map(i => `<i class="${i <= 3 ? 'f' : ''}"></i>`).join('')}</span><input type="checkbox" data-gem="${g}"${H3D.gemOn(g) ? ' checked' : ''}></label>`;
   stad.innerHTML = GRP.stad.map(fxRow).join('') + '<p class="hint">Contactschaduw wordt één keer gebakken (±10 s), daarna bijna gratis.</p>'
     + (H3D.gemParts?.().length ? '<h4>Gebied</h4>' + H3D.gemParts().map(gemRow).join('') + '<p class="hint">Uit = lichter (minder geheugen en GPU). Omzetten herlaadt de kaart.</p>' : '');
   stad.addEventListener('change', e => { const g = e.target.dataset?.gem; if (g) H3D.setGem(g, e.target.checked); });
   const showLight = () => sfeer.querySelectorAll('[data-light]').forEach(b => b.classList.toggle('on', b.dataset.light === H3D.getLight()));
   const showSeason = () => sfeer.querySelectorAll('[data-season]').forEach(b => b.classList.toggle('on', b.dataset.season === H3D.getSeason?.()));
-  sfeer.addEventListener('click', e => { const b = e.target.closest('[data-light]'); if (b) { H3D.setLight(b.dataset.light); showLight(); } const z = e.target.closest('[data-season]'); if (z) { H3D.setSeason(z.dataset.season); showSeason(); } });
+  sfeer.addEventListener('click', e => { const b = e.target.closest('[data-light]'); if (b) { H3D.setLight(b.dataset.light); showLight(); } const z = e.target.closest('[data-season]'); if (z) { H3D.setSeason(z.dataset.season); showSeason(); } if (e.target.closest('[data-dag60]')) H3D.dag60?.(); });
+  H3D.on('dag60', on => sfeer.querySelector('[data-dag60]')?.classList.toggle('on', on));
   showLight(); showSeason(); H3D.on('light', showLight); // klok versnellen zet licht op 'nu'
   function showCounts() {
     const n = (keys, on) => keys.filter(on).length + '/' + keys.length;

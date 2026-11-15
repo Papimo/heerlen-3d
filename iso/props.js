@@ -389,7 +389,7 @@
         const h = t[3] || (kind ? 9 : 7) + rnd() * 6;
         at(t[0], t[1], -0.2, rnd() * 6.28, 1); sc.set(h * (0.85 + rnd() * 0.3), h, h * (0.85 + rnd() * 0.3));
       }, t => khOf(t[0], t[1]) ? col.setHSL(KV.osm[0] + (rnd() - 0.5) * 0.04, KV.osm[1], KV.osm[2] + (rnd() - 0.5) * 0.08) : col.setHSL(...treeCol(rnd, kind))); // op het kerkhof: somber
-      if (im) { im.geoHi = st.tree[kind]; im.geoLo = st.treeLo[kind]; v.trees.push(im); }
+      if (im) { im.geoHi = st.tree[kind]; im.geoLo = st.treeLo[kind]; v.trees.push(im); H.treesDry?.(im); } // geen bomen in water (iso/ground.js)
     }
     // klein spul: per vak samengebakken tot 2 gewone meshes (lantaarns zonder schaduw / banken + toestellen) i.p.v. tot 11 InstancedMeshes
     const lampB = [], restB = [];
@@ -438,7 +438,7 @@
     for (const kind in st.ktree) {
       const L = (b.ktree || []).filter(t => t[2] === kind), [th, ts, tl] = KV.treeCol[kind];
       const im = inst(st.ktree[kind], L, t => at(t[0], t[1], -0.2, t[4], t[3]), () => col.setHSL(th + (rnd() - 0.5) * 0.03, ts, tl + (rnd() - 0.5) * 0.05));
-      if (im) v.small.push(im);
+      if (im) { v.small.push(im); H.treesDry?.(im); }
     }
     // mist A: vlak raster 3 m binnen het kerkhof, alleen het deel in dit vak
     for (const n of b.mist || []) {

@@ -150,7 +150,7 @@ if (uEra.z > 0.0 && (pInfo.x < uEra.x || pInfo.x > uEra.y)) { // bouwjaar-filter
   const BUILD = 'anime-1 licht randje, daken op bouwjaar, middag zacht, bolle bomen (2026-11-09)', DBG_U = { value: new THREE.Vector2(1, 1) }; // ?gpu: versie zichtbaar + schakelaars omlijning (x = vlaklijnen, y = dieptelijnen)
   H.redraw = redraw;
   let inkW = 1; // dikte omlijning (1 = ±2 px, 2 = ±4 px, schakelaar Sfeer › Dikke lijnen = fxOn.dik)
-  H.VERSION = '0.9.2-test9'; // getoond onderaan (ui.js #attr); bij release ophogen
+  H.VERSION = '0.9.2-test11'; // getoond onderaan (ui.js #attr); bij release ophogen
   // na de upload naar de GPU de kopie in het werkgeheugen weggooien (canvas → 1×1, DataTexture-data → null). Opnieuw tekenen = nieuw canvas/nieuwe textuur
   H.freeAfterUpload = tex => { tex.onUpdate = () => { tex.onUpdate = null; const im = tex.image; if (im && im.getContext) im.width = im.height = 1; else if (im && im.data) im.data = null; }; return tex; };
 
@@ -1545,12 +1545,12 @@ vHk = (uBiz.y < 0.5 || uGOn < 0.5) ? 1.0 : clamp((uGT - pGrow - uGDur) / ${BIZ_F
   const isoStops = n => { const d = ISO_L[isoFilm ? 'E' : 'B']; return n < 0.5 ? [d, ISO_L.eve, n * 2] : [ISO_L.eve, ISO_L.night, n * 2 - 1]; };
   const isoNum = (n, k) => { const [a, b, t] = isoStops(n), d = ISO_L[isoFilm ? 'E' : 'B']; return THREE.MathUtils.lerp(a[k] ?? d[k], b[k] ?? d[k], t); };
   const isoCol = (n, k, out, i) => { const [a, b, t] = isoStops(n); out.copy(lc1.set(a[k])).multiplyScalar(i ? a[i] : 1).lerp(lc2.set(b[k]).multiplyScalar(i ? b[i] : 1), t); };
-  let sunKey = '';
+  let sunKey = '', sunLockN = null; // sunLockN: H.setNightGoal (iso/weer.js dag in 60 s)
   function isoSun() { // zonrichting (schaduw, bake, licht) uit doel-dagdeel (niet de overgang: anders steeds opnieuw bakken) + kwartslag
     let k;
     if (iso) {
       // zon vast in de wereld (gebruiker: schaduw blijft liggen bij draaien); richting = zoals in de standaard-kwartslag (th π/4)
-      const th = Math.PI / 4, az = Math.PI / 2 - th + 82 * Math.PI / 180, el = isoNum(nightGoal, 'sun') * Math.PI / 180;
+      const th = Math.PI / 4, az = Math.PI / 2 - th + 82 * Math.PI / 180, el = isoNum(sunLockN ?? nightGoal, 'sun') * Math.PI / 180;
       k = el.toFixed(3);
       if (k !== sunKey) SUN_DIR.set(Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az));
     } else { k = 'oud'; if (k !== sunKey) SUN_DIR.copy(SUN_OLD); }
@@ -1579,6 +1579,8 @@ vHk = (uBiz.y < 0.5 || uGOn < 0.5) ? 1.0 : clamp((uGT - pGrow - uGDur) / ${BIZ_F
   }
   H.setLight = (m, keep) => { lightMode = m; nightGoal = goalFor(m); if (!keep) try { localStorage.setItem('h3d.light', m); } catch {} redraw(); emit('light', m); }; // keep: ontwerppagina (niet bewaren)
   H.getLight = () => lightMode;
+  // iso/weer.js (dag in 60 s): dagdeel direct zetten; lock = zonrichting vast op het huidige doel (geen herbakken), null = los
+  H.setNightGoal = (n, lock) => { if (lock) sunLockN ??= nightGoal; else sunLockN = null; nightGoal = Math.max(0, Math.min(1, n)); redraw(); };
   // nachtsfeer (design/21 § 5): andere nacht-stop voor het iso-licht; '0' = huidig. Zonshoogte = maan (schaduwrichting) → herbakken via isoSun
   const NIGHT_LOOKS = { '0': { ...ISO_L.night },
     b: { sun: 32, sunC: '#a9bfff', sunI: 0.3, sky: '#5068b0', gnd: '#2a2c44', ambI: 0.36, hor: '#3a4f86', zen: '#0c1838' },   // blauw uur: helderder, diep blauw
@@ -2818,11 +2820,11 @@ vHk = (uBiz.y < 0.5 || uGOn < 0.5) ? 1.0 : clamp((uGT - pGrow - uGDur) / ${BIZ_F
   // effecten aan/uit (menu's Sfeer/Stad in ui.js); elk iso-bestand leest H.fxOn(k) en luistert naar 'fx'
   // zuinig = geen effect maar een stand: gedeelde animatietik 10/s i.p.v. 20/s, water stil, geen contactschaduw (standaard uit)
   // inkt (zwarte omlijning i.p.v. licht randje) standaard uit, bouwjaar (daken/gevels op bouwjaar i.p.v. Mijnstreek-palet) standaard aan
-  const FXK = ['wolken', 'lucht', 'verkeer', 'props', 'randen', 'ao', 'diorama', 'zuinig', 'inkt', 'bouwjaar', 'film', 'dik'];
+  const FXK = ['wolken', 'lucht', 'verkeer', 'props', 'randen', 'ao', 'diorama', 'zuinig', 'inkt', 'bouwjaar', 'film', 'dik', 'weer', 'aquarel', 'kaart', 'foto', 'poster', 'mini']; // weer = echt weer (iso/weer.js), standaard aan; aquarel/kaart = iso/stijl.js, foto/poster/mini = iso/foto.js (standaard uit)
   // wolken (wolkschaduw) standaard uit (buggy): alleen aan als de gebruiker hem zelf aanzet (eigen sleutel h3d.wolken, oude h3d.fx-waarde telt niet)
-  const fxOn = Object.fromEntries(FXK.map(k => [k, k === 'zuinig' || k === 'wolken' || k === 'inkt' || k === 'dik' ? 0 : 1])); // film (Filmisch licht) standaard aan sinds 0.9-test5
+  const fxOn = Object.fromEntries(FXK.map(k => [k, ['zuinig', 'wolken', 'inkt', 'dik', 'aquarel', 'kaart', 'foto', 'poster', 'mini'].includes(k) ? 0 : 1])); // film (Filmisch licht) standaard aan sinds 0.9-test5
   try { const t = localStorage.getItem('h3d.tilt'); if (t != null) fxOn.randen = t === '0' ? 0 : 1; Object.assign(fxOn, JSON.parse(localStorage.getItem('h3d.fx') || '{}')); fxOn.wolken = localStorage.getItem('h3d.wolken') === '1' ? 1 : 0;
-    if (!localStorage.getItem('h3d.film1')) { fxOn.film = 1; localStorage.setItem('h3d.film1', '1'); } } catch { fxOn.wolken = 0; } // eenmalig: bewaarde 'uit' van vóór de nieuwe standaard telt niet; daarna geldt de eigen keuze
+    if (!localStorage.getItem('h3d.film1')) { fxOn.film = 1; localStorage.setItem('h3d.film1', '1'); } } catch { fxOn.wolken = 0; } fxOn.foto = fxOn.poster = 0; // foto/poster (UI weg) nooit bewaard aan; eenmalig: bewaarde 'uit' van vóór de nieuwe standaard telt niet; daarna geldt de eigen keuze
   // uLine 0 = inkt (silhouet + vouwen) · 1 = dun (alleen dieptesprongen, 45%); film = licht E + nabewerking (gloed, ACES, waas)
   const applyLook = () => { U.uLine.value = fxOn.inkt ? 0 : 1; inkW = fxOn.dik ? 2 : 1; U.uAnime.value = fxOn.bouwjaar ? 1 : 0;
     if (isoFilm !== fxOn.film) { isoFilm = U.uFilm.value = fxOn.film; sunKey = ''; applyNight(); } };
@@ -3087,6 +3089,7 @@ vHk = (uBiz.y < 0.5 || uGOn < 0.5) ? 1.0 : clamp((uGT - pGrow - uGDur) / ${BIZ_F
           sel.forEach((i, n) => { im.setMatrixAt(n, ms[i]); im.setColorAt(n, cs[i]); });
           im.computeBoundingSphere(); im.receiveShadow = true; im.full = sel.length; im.geoHi = gHi; im.geoLo = gLo; im.aTA = aTA; im.count = 0; // updateDetail zet de dichtheid (en laat ze groeien)
           im.visible = !!layerOn.bomen; scene.add(H.freeze(im)); (layerObjs.bomen ||= []).push(im); c.trees.push(im);
+          H.treesDry?.(im); // geen bomen in water (iso/ground.js watermasker)
         }
       }
     }
