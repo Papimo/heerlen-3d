@@ -165,14 +165,16 @@ body.no-webgl #nowebgl { display: grid; }
 .grp[open] summary { background: var(--ink); color: var(--paper); }
 .grp > div { position: absolute; right: 0; top: 44px; min-width: 230px; background: var(--paper); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); padding: 8px; z-index: 5; }
 .grp h4 { margin: 4px 6px 6px; font: 600 11px var(--sans); letter-spacing: .06em; text-transform: uppercase; color: var(--ink2); }
-.grp .lseg { display: flex; flex-wrap: wrap; gap: 2px; border: 1px solid var(--line); border-radius: 10px; padding: 3px; margin: 0 4px 4px; }
-.grp .lseg button { flex: 1 1 auto; min-width: 0; border: 0; background: none; padding: 5px 6px; border-radius: 7px; font-size: 13px; white-space: nowrap; }
+.grp .lseg { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; border: 1px solid var(--line); border-radius: 10px; padding: 3px; margin: 0 4px 4px; }
+.grp .lseg button:only-child { grid-column: 1 / -1; }
+.grp .lseg button { min-width: 0; border: 0; background: none; padding: 5px 6px; border-radius: 7px; font-size: 13px; white-space: nowrap; }
 .grp .lseg button.on { background: var(--ink); color: var(--paper); }
 .grp .sep2 { height: 1px; background: var(--line); margin: 8px 2px; }
-.grp label { display: flex; gap: 8px; align-items: center; padding: 6px 8px; border-radius: 8px; cursor: pointer; font-size: 13px; white-space: nowrap; }
+.grp label { display: flex; gap: 8px; align-items: center; min-height: 32px; box-sizing: border-box; padding: 4px 8px; border-radius: 8px; cursor: pointer; font-size: 13px; white-space: nowrap; }
+.grp label .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .grp label:hover { background: var(--paper2); }
-.grp label .ic { width: 20px; text-align: center; }
-.grp .cost { margin-left: auto; display: inline-flex; gap: 2px; }
+.grp label .ic { width: 20px; flex: none; text-align: center; }
+.grp .cost { flex: none; width: 19px; display: inline-flex; gap: 2px; } /* vaste breedte → schakelaars recht onder elkaar */
 .grp .cost i { width: 5px; height: 10px; border-radius: 2px; background: var(--line); }
 .grp .cost i.f { background: var(--ink2); }
 .grp input.sw { appearance: none; -webkit-appearance: none; margin: 0 0 0 4px; width: 30px; height: 18px; border-radius: 999px; background: var(--line); position: relative; flex: none; cursor: pointer; transition: background .2s; }
@@ -180,9 +182,10 @@ body.no-webgl #nowebgl { display: grid; }
 .grp input.sw:checked { background: var(--accent); }
 .grp input.sw:checked::after { left: 14px; }
 /* één knop Weergave: Kaart · Sfeer · Stad naast elkaar; Plekken: categorieën uitklappen */
-.grp.wide > div { display: grid; grid-template-columns: repeat(3, minmax(210px, 1fr)); gap: 4px 10px; min-width: 660px; }
-.grp.wide section { min-width: 0; } /* knoppenrij mag niet onder de buurkolom doorlopen (Winter was onklikbaar) */
-.grp.wide section + section { border-left: 1px solid var(--line); padding-left: 10px; }
+.grp.wide > div { display: grid; grid-template-columns: repeat(3, 250px); gap: 4px 10px; align-items: start; }
+.grp.wide > div > * { min-width: 0; } /* knoppenrij mag niet onder de buurkolom doorlopen (Winter was onklikbaar) */
+.grp.wide > div > * + * { border-left: 1px solid var(--line); padding-left: 10px; align-self: stretch; }
+.grp.wide .col section + section { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 4px; }
 .grp h3 { margin: 4px 6px 8px; font: 700 13px var(--sans); }
 .grp h3 small { font-size: 11px; font-weight: 600; color: var(--ink2); }
 #g-plek { pointer-events: auto; display: inline-block; background: var(--paper); border: 1px solid var(--line); border-radius: 999px; box-shadow: 0 1px 4px rgba(40, 30, 15, .12); }
@@ -201,7 +204,7 @@ body.no-webgl #nowebgl { display: grid; }
   #card { left: 8px; right: 8px; width: auto; bottom: 26px; max-height: 50vh; }
   .grp > div { top: auto; bottom: 44px; }
   .grp.wide > div { grid-template-columns: 1fr; min-width: 0; width: min(300px, calc(100vw - 24px)); max-height: 70vh; overflow-y: auto; }
-  .grp.wide section + section { border-left: 0; padding-left: 0; border-top: 1px solid var(--line); padding-top: 6px; }
+  .grp.wide > div > * + * { border-left: 0; padding-left: 0; border-top: 1px solid var(--line); padding-top: 6px; }
   #g-plek > div { top: 40px; bottom: auto; }
   #menu > div { top: auto; bottom: 48px; max-height: 70vh; overflow-y: auto; } /* knop staat onderaan → omhoog openklappen */
   #tools { flex-wrap: wrap; justify-content: flex-end; max-width: calc(100vw - 24px); flex-direction: row; }
@@ -263,6 +266,7 @@ body.drive #labels, body.drive #pins, body.drive #compass, body.drive #zoom, bod
 @media (max-width: 640px) { #drivehud .dhelp { display: none; } #drivehud .dgauge { width: 110px; height: 110px; } }
 
 /* verzadiging-schuif (Sfeer › Stijl) */
-.grp .slrow { display: flex; align-items: center; gap: 6px; }
-.grp .slrow input[type=range] { flex: 1; min-width: 60px; accent-color: var(--ink); }
-.grp .slrow b { font-weight: 600; font-variant-numeric: tabular-nums; min-width: 3.2em; text-align: right; }
+.grp .slrow { cursor: default; }
+.grp .slrow input[type=range] { flex: 1; min-width: 50px; margin: 0; accent-color: var(--accent); }
+.grp .slrow b { flex: none; width: 40px; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+.grp .hint:empty { display: none; }
