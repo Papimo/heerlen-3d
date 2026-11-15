@@ -449,14 +449,15 @@
   const FXK_ALL = [...GRP.sfeer, ...GRP.stad];
   const fxRow = k => { const [n, ic, c, t] = FX[k]; return `<label title="${t}"><span class="ic">${ic}</span><span class="nm">${n}</span><span class="cost">${c ? [1, 2, 3].map(i => `<i class="${i <= c ? 'f' : ''}"></i>`).join('') : ''}</span><input type="checkbox" class="sw" data-fx="${k}"${H3D.fxOn(k) ? ' checked' : ''}></label>`; };
   // tooncurve-schuiven (H.setTone): con/bri in %, warm −100…100; dubbelklik = terug naar gewoon
-  const TONE_UI = { con: [50, 150, 100, '%'], bri: [50, 150, 100, '%'], warm: [-100, 100, 0, ''] };
+  const TONE_UI = { con: [50, 150, 100, '%'], bri: [50, 150, 100, '%'], warm: [-100, 100, 0, ''], vib: [0, 150, 0, '%'] };
+  const LOOKS_UI = { zomer: '☀ Zomermiddag', prent: '📖 Prentenboek' };
   const toneRow = (k, ic, n, t) => { const [lo, hi] = TONE_UI[k], v = Math.round((H3D.getTone?.(k) ?? TONE_UI[k][2] / 100) * 100);
     return `<label class="slrow" title="${t} (dubbelklik = terug)"><span class="ic">${ic}</span>${n}<input type="range" min="${lo}" max="${hi}" step="5" data-tone="${k}" value="${v}"><b>${v}${TONE_UI[k][3]}</b></label>`; };
   const LIGHTS = { dag: '☀ Dag', schemer: '🌇 Schemer', avond: '🌙 Nacht', nu: '🕒 Nu' };
   const SEASONS = { lente: '🌸 Lente', zomer: '🌳 Zomer', herfst: '🍂 Herfst', winter: '❄ Winter' };
   const sfeer = $('g-sfeer').querySelector('div'), stad = $('g-stad').querySelector('div'), stijl = $('g-stijl').querySelector('div');
   sfeer.innerHTML = `<h4>Licht</h4><div class="lseg">${Object.entries(LIGHTS).map(([k, l]) => `<button data-light="${k}">${l}</button>`).join('')}</div><div class="lseg"><button data-dag60 title="klok ×1440: licht volgt de zon, na 60 s terug naar nu">⏩ Dag in 60 s</button></div><h4>Seizoen</h4><div class="lseg">${Object.entries(SEASONS).map(([k, l]) => `<button data-season="${k}">${l}</button>`).join('')}</div><div class="sep2"></div><h4>Effecten</h4>${GRP.sfeer.map(fxRow).join('')}<p class="hint" id="weertxt"></p><div class="sep2"></div>${fxRow('zuinig')}`;
-  stijl.innerHTML = `<h4>Stijl</h4>${fxRow('aquarel')}${fxRow('kaart')}${fxRow('film')}${fxRow('inkt')}${fxRow('dik')}${fxRow('bouwjaar')}<label class="slrow" title="kleurverzadiging van het hele beeld; 100% = zoals het was (dubbelklik = terug naar 100%)"><span class="ic">🌈</span>Verzadiging<input type="range" min="0" max="200" step="5" data-sat value="${Math.round((H3D.getSat?.() ?? 1) * 100)}"><b data-satv>${Math.round((H3D.getSat?.() ?? 1) * 100)}%</b></label>${toneRow('con', '◐', 'Contrast', 'licht-donker-verschil; 100% = gewoon')}${toneRow('bri', '☀', 'Helderheid', 'hele beeld lichter of donkerder; 100% = gewoon')}${toneRow('warm', '🌡', 'Warmte', 'links koeler (blauwer), rechts warmer (geler); 0 = gewoon')}<div class="sep2"></div><h4>Foto</h4>${fxRow('foto')}${fxRow('poster')}${fxRow('mini')}`;
+  stijl.innerHTML = `<h4>Look</h4><div class="lseg">${Object.entries(LOOKS_UI).map(([k, l]) => `<button data-lookp="${k}">${l}</button>`).join('')}</div><h4>Stijl</h4>${fxRow('aquarel')}${fxRow('kaart')}${fxRow('film')}${fxRow('inkt')}${fxRow('dik')}${fxRow('bouwjaar')}<label class="slrow" title="kleurverzadiging van het hele beeld; 100% = zoals het was (dubbelklik = terug naar 100%)"><span class="ic">🌈</span>Verzadiging<input type="range" min="0" max="200" step="5" data-sat value="${Math.round((H3D.getSat?.() ?? 1) * 100)}"><b data-satv>${Math.round((H3D.getSat?.() ?? 1) * 100)}%</b></label>${toneRow('con', '◐', 'Contrast', 'licht-donker-verschil; 100% = gewoon')}${toneRow('bri', '☀', 'Helderheid', 'hele beeld lichter of donkerder; 100% = gewoon')}${toneRow('warm', '🌡', 'Warmte', 'links koeler (blauwer), rechts warmer (geler); 0 = gewoon')}${toneRow('vib', '🍃', 'Kleurkracht', 'flauwe kleuren voller, groen en oranje extra; 0% = uit')}<div class="sep2"></div><h4>Foto</h4>${fxRow('foto')}${fxRow('poster')}${fxRow('mini')}`;
   const gemRow = g => `<label title="${g} laden (±50% meer vakken); omzetten herlaadt de pagina"><span class="ic">▦</span><span class="nm">${g}</span><span class="cost">${[1, 2, 3].map(i => `<i class="${i <= 3 ? 'f' : ''}"></i>`).join('')}</span><input type="checkbox" class="sw" data-gem="${g}"${H3D.gemOn(g) ? ' checked' : ''}></label>`;
   stad.innerHTML = GRP.stad.map(fxRow).join('')
     + (H3D.gemParts?.().length ? '<div class="sep2"></div><h4>Gebied</h4>' + H3D.gemParts().map(gemRow).join('') + '<p class="hint">Omzetten herlaadt de kaart.</p>' : '');
@@ -468,6 +469,11 @@
     r.addEventListener('input', () => set(+r.value)); r.addEventListener('dblclick', () => set(100)); }
   stijl.querySelectorAll('[data-tone]').forEach(r => { const k = r.dataset.tone, b = r.nextElementSibling, set = v => { r.value = v; b.textContent = v + TONE_UI[k][3]; H3D.setTone(k, v / 100); };
     r.addEventListener('input', () => set(+r.value)); r.addEventListener('dblclick', () => set(TONE_UI[k][2])); });
+  { const showLookP = () => stijl.querySelectorAll('[data-lookp]').forEach(b => b.classList.toggle('on', b.dataset.lookp === H3D.getLookP?.()));
+    stijl.addEventListener('click', e => { const b = e.target.closest('[data-lookp]'); if (!b) return; H3D.setLookP(b.dataset.lookp); showLookP();
+      const r = stijl.querySelector('[data-sat]'), v = Math.round(H3D.getSat() * 100); r.value = v; stijl.querySelector('[data-satv]').textContent = v + '%';
+      stijl.querySelectorAll('[data-tone]').forEach(t => { const w = Math.round(H3D.getTone(t.dataset.tone) * 100); t.value = w; t.nextElementSibling.textContent = w + TONE_UI[t.dataset.tone][3]; }); });
+    showLookP(); }
   H3D.on('dag60', on => sfeer.querySelector('[data-dag60]')?.classList.toggle('on', on));
   showLight(); showSeason(); H3D.on('light', showLight); // klok versnellen zet licht op 'nu'
   function showCounts() {

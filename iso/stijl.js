@@ -17,9 +17,9 @@
     const cx = (c.right + c.left) / 2, cy = (c.top + c.bottom) / 2, dx = (c.right - c.left) / (2 * c.zoom), dy = (c.top - c.bottom) / (2 * c.zoom);
     lrbt.set(cx - dx, cx + dx, cy - dy, cy + dy);
   }
-  const SU = { tIn: { value: null }, tN: { value: null }, uRes: { value: new THREE.Vector2(1, 1) }, uHalf: { value: 800 }, uCamW: { value: camW }, uLRBT: { value: lrbt }, uSty: { value: 0 }, uPersp: persp, uTanF: { value: tanF } };
+  const SU = { tIn: { value: null }, tN: { value: null }, uRes: { value: new THREE.Vector2(1, 1) }, uHalf: { value: 800 }, uCamW: { value: camW }, uLRBT: { value: lrbt }, uSty: { value: 0 }, uPersp: persp, uTanF: { value: tanF }, uAq: H.aqU || { value: new THREE.Vector3(0.7, 1, 1.25) } }; // uAq = papier, donkere randen, verzadiging (app.js Look-voorkeuzes)
   const styM = new THREE.ShaderMaterial({ name: 'stijl', uniforms: SU, depthTest: false, depthWrite: false, vertexShader: VS,
-    fragmentShader: `varying vec2 vUv; uniform sampler2D tIn; uniform highp sampler2D tN; uniform vec2 uRes; uniform float uHalf; uniform mat4 uCamW; uniform vec4 uLRBT; uniform float uSty, uPersp; uniform vec2 uTanF;
+    fragmentShader: `varying vec2 vUv; uniform sampler2D tIn; uniform highp sampler2D tN; uniform vec2 uRes; uniform float uHalf; uniform mat4 uCamW; uniform vec4 uLRBT; uniform float uSty, uPersp; uniform vec2 uTanF; uniform vec3 uAq;
       ${H.NRM_GLSL}
       float h1(vec2 p) { vec3 q = fract(p.xyx * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
       float vn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f); return mix(mix(h1(i), h1(i + vec2(1, 0)), f.x), mix(h1(i + vec2(0, 1)), h1(i + vec2(1, 1)), f.x), f.y); }
@@ -52,11 +52,11 @@
           vec3 paper = vec3(0.97, 0.95, 0.9);
           vec2 px = 2.0 * sc / uRes; float ce = 0.0;
           for (int i = 0; i < 4; i++) { vec2 d = i == 0 ? vec2(px.x, 0) : i == 1 ? vec2(-px.x, 0) : i == 2 ? vec2(0, px.y) : vec2(0, -px.y); ce = max(ce, length(toS(texture2D(tIn, vUv + d).rgb) - cs)); }
-          o = mix(vec3(lum), cs, 1.25); o = mix(o, floor(o * 7.0 + 0.5) / 7.0, 0.35);
+          o = mix(vec3(lum), cs, uAq.z); o = mix(o, floor(o * 7.0 + 0.5) / 7.0, 0.35);
           vec2 bq = sky ? g / 6.0 : wp.xz;
           o *= 0.9 + 0.2 * (vn(bq / 40.0) * 0.6 + vn(bq / 9.0) * 0.4);
-          o = mix(o, paper, smoothstep(0.72, 0.92, lum) * 0.7 + (sky ? 0.35 : 0.0));
-          o *= 1.0 - 0.25 * smoothstep(0.08, 0.3, ce); o = mix(o, o * 0.55, e * 0.5);
+          o = mix(o, paper, smoothstep(0.72, 0.92, lum) * uAq.x + (sky ? 0.35 : 0.0));
+          o *= 1.0 - 0.25 * uAq.y * smoothstep(0.08, 0.3, ce); o = mix(o, o * 0.55, e * 0.5 * uAq.y);
           o *= (0.96 + 0.06 * h1(floor(g * 0.7))) * (0.98 + 0.03 * vn(g * 0.3));
         } else { // prentbriefkaart 1930: sepia met handkleuring, vervaagd, vignet, korrel
           vec3 sep = vec3(lum) * vec3(1.08, 0.94, 0.74);
@@ -69,7 +69,7 @@
       }` });
   let post = null;
   function apply() {
-    const id = H.fxOn('aquarel') ? 1 : H.fxOn('kaart') ? 2 : 0, on = iso() && id > 0;
+    const id = H.fxOn('aquarel') ? 1 : H.fxOn('kaart') ? 2 : 0, on = iso() && id > 0; if (H.aqU) SU.uAq = H.aqU; // Look-voorkeuzes (app.js) kunnen later geladen zijn
     if (on && !post) post = H.addPost({ material: styM, order: 16, still: true, drive: true, before: cam, enabled: true });
     if (!post) return;
     post.enabled = on; SU.uSty.value = id; H.redraw();
