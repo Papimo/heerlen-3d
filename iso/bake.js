@@ -145,8 +145,9 @@
     H.allWalls(false);
     const i = Math.round(c.x0 / 1000) - grid.i0, j = Math.round(c.y0 / 1000) - grid.j0, k = (j * grid.ni + i) * 4;
     const fresh = idxData[k + 2] !== 255; // opnieuw bakken (rebake): niet nog eens infaden
-    idxData[k] = sx; idxData[k + 1] = sy; idxData[k + 2] = 255; if (fresh) { idxData[k + 3] = 0; fadeIn(k); } idx.needsUpdate = true;
+    idxData[k] = sx; idxData[k + 1] = sy; idxData[k + 2] = 255; if (fresh) { idxData[k + 3] = 0; if (!c.growWait) fadeIn(k, c.growing ? H.GROW_S : FADE); } idx.needsUpdate = true; // wacht het vak nog onder de wolken: infaden bij 'growstart'
     H.U.uBk.value = atlas.texture;
+    if (fresh) H.emit('baked', c);
     return fresh;
   }
   let rbN = 0;
@@ -154,8 +155,8 @@
   // schaduw van een vers gebakken vak zacht laten opkomen (idx a: 0 → 255, gelezen in BAKE_GLSL bkTexel/bkFade)
   const FADE = 1.2, fading = new Map(); let fadeStop = null;
   function fadeStep(force) {
-    for (const [k, t0] of fading) {
-      const x = force === k ? 1 : Math.min(1, (performance.now() - t0) / 1000 / FADE);
+    for (const [k, [t0, d]] of fading) {
+      const x = force === k ? 1 : Math.min(1, (performance.now() - t0) / 1000 / d);
       idxData[k + 3] = Math.round(255 * x * x * (3 - 2 * x));
       if (x >= 1) fading.delete(k);
     }
@@ -163,20 +164,20 @@
     if (fading.size) return true;
     fadeStop?.(); fadeStop = null; H.redraw(); return false; // laatste stap ook tekenen
   }
-  function fadeIn(k) {
-    fading.set(k, performance.now());
+  function fadeIn(k, d = FADE) {
+    fading.set(k, [performance.now(), d]);
     if (!fadeStop) fadeStop = H.animate(() => fadeStep() ? undefined : false, 'schaduw infaden');
-    setTimeout(() => { if (fading.has(k)) fadeStep(k); }, FADE * 1000 + 600); // gedeelde tik pauzeert na 2 min zonder invoer → dan meteen af
+    setTimeout(() => { if (fading.has(k)) fadeStep(k); }, d * 1000 + 600); // gedeelde tik pauzeert na 2 min zonder invoer → dan meteen af
   }
   function tick() {
     timer = 0;
     if (!queue.length) return;
     if (H.U.uIso.value < 0.5) return; // alleen in iso nodig; bij terugkeer in iso gaat het verder (frame-event)
-    if (H.moving()) { timer = setTimeout(tick, 300); return; }
+    if (H.moving() && !H.intro?.()) { timer = setTimeout(tick, 300); return; } // intro: onder de wolken mag het
     const t = H.controls?.target;
-    if (t) queue.sort((a, b) => H.chunkDist(a, t) - H.chunkDist(b, t));
+    if (t) queue.sort((a, b) => (b.growWait ? 1 : 0) - (a.growWait ? 1 : 0) || H.chunkDist(a, t) - H.chunkDist(b, t)); // wachtende vakken (onder de wolken) eerst
     const c = queue.shift();
-    const fresh = bakeChunk(c); baked.add(c);
+    baked.add(c); const fresh = bakeChunk(c); // eerst toevoegen: 'baked' kan via laden.js meteen 'growstart' geven
     if (!queue.length) { H.bakeReady = true; freeTargets(); }
     // nieuw vak: meteen tekenen (infaden); herbakken: niet na elk vak een vol beeld (108 × ±50 ms GPU), wel om de 8 en aan het eind
     if (fresh || !queue.length || ++rbN % 8 === 0) H.redraw();
@@ -184,10 +185,14 @@
   }
   function schedule() { if (!timer && queue.length) timer = setTimeout(tick, 200); }
   // opnieuw bakken (laag aan/uit, andere zonrichting): oude kaart blijft zichtbaar tot het vak vervangen is
-  H.rebake = () => { if (!atlas) return; queue = [...H.chunks.values()].filter(c => c.mesh && !c.growing); schedule(); };
+  H.rebake = () => { if (!atlas) return; queue = [...H.chunks.values()].filter(c => c.mesh); schedule(); };
   let ready = false;
-  // per vak zodra de panden staan (mooi laden: groeien eerst, anders valt de schaduw vóór het pand er is)
-  H.on('grown', c => { if (!ready && !(ready = init())) return; if (!queue.includes(c)) queue.push(c); schedule(); });
+  H.bakeCan = () => ready || (ready = init()); // app.js growGate: kan er gebakken worden → panden wachten onder de wolken op hun schaduw
+  H.isBaked = c => baked.has(c);
+  // per vak zodra de panden gebouwd zijn (bakken tekent ze op volle hoogte, ook als ze nog niet gegroeid zijn); onthullen wacht op 'baked' (iso/laden.js)
+  H.on('chunk', c => { if (!H.bakeCan()) return; if (!queue.includes(c)) queue.push(c); schedule(); });
+  // groeien begint (vak onthuld): schaduw komt in dezelfde tijd op
+  H.on('growstart', c => { if (!ready || !baked.has(c)) return; const k = ((Math.round(c.y0 / 1000) - grid.j0) * grid.ni + Math.round(c.x0 / 1000) - grid.i0) * 4; fadeIn(k, H.GROW_S); });
   H.on('layer', () => { if (ready) H.rebake(); });
   H.on('frame', () => { if (ready) schedule(); });
 })();

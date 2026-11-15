@@ -126,8 +126,12 @@
   // onthullen pas als de grond geschilderd is (iso/ground.js 'ground') én de panden er staan ('chunk'); terrein alleen = papier + wolken blijven
   const kOf = c => (c.j - grid.j0) * grid.W + (c.i - grid.i0);
   const gOk = new Set(), bOk = new Set();
-  function start(k) { terr.delete(k); if (data[k * 4] === 0 && !pend.has(k)) pend.set(k, now()); }
-  function check(k) { if (gOk.has(k) && bOk.has(k)) start(k); }
+  const sOk = new Set(), keyOf = new Map(); // sOk: schaduw gebakken (iso/bake.js 'baked'); zonder bakken (H.bakeCan false) niet wachten
+  function start(k) {
+    terr.delete(k); if (data[k * 4] === 0 && !pend.has(k)) pend.set(k, now());
+    const c = H.chunks.get(keyOf.get(k)); if (c) H.startGrow?.(c); // panden groeien pas nu (wachtten onder de wolken)
+  }
+  function check(k) { if (gOk.has(k) && bOk.has(k) && (sOk.has(k) || !H.chunks.get(keyOf.get(k))?.growWait)) start(k); }
   H.on('terrain', c => {
     if (!grid && !init()) return;
     const k = kOf(c);
@@ -136,5 +140,6 @@
     check(k);
   });
   H.on('ground', c => { if (grid || init()) { const k = kOf(c); gOk.add(k); check(k); } });
-  H.on('chunk', c => { if (grid || init()) { const k = kOf(c); bOk.add(k); check(k); } });
+  H.on('chunk', c => { if (grid || init()) { const k = kOf(c); keyOf.set(k, c.i + '_' + c.j); bOk.add(k); check(k); if (pend.has(k) || data[k * 4] > 0) H.startGrow?.(c); } }); // al onthuld (G_WAIT): meteen groeien
+  H.on('baked', c => { if (grid || init()) { const k = kOf(c); sOk.add(k); check(k); } });
 })();
