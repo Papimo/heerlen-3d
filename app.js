@@ -150,7 +150,7 @@ if (uEra.z > 0.0 && (pInfo.x < uEra.x || pInfo.x > uEra.y)) { // bouwjaar-filter
   const BUILD = 'anime-1 licht randje, daken op bouwjaar, middag zacht, bolle bomen (2026-11-09)', DBG_U = { value: new THREE.Vector2(1, 1) }; // ?gpu: versie zichtbaar + schakelaars omlijning (x = vlaklijnen, y = dieptelijnen)
   H.redraw = redraw;
   let inkW = 1; // dikte omlijning (1 = ±2 px, 2 = ±4 px, schakelaar Sfeer › Dikke lijnen = fxOn.dik)
-  H.VERSION = '0.9.2-test16'; // getoond onderaan (ui.js #attr); bij release ophogen
+  H.VERSION = '0.9.2-test17'; // getoond onderaan (ui.js #attr); bij release ophogen
   // na de upload naar de GPU de kopie in het werkgeheugen weggooien (canvas → 1×1, DataTexture-data → null). Opnieuw tekenen = nieuw canvas/nieuwe textuur
   H.freeAfterUpload = tex => { tex.onUpdate = () => { tex.onUpdate = null; const im = tex.image; if (im && im.getContext) im.width = im.height = 1; else if (im && im.data) im.data = null; }; return tex; };
 
@@ -2855,7 +2855,7 @@ vHk = (uBiz.y < 0.5 || uGOn < 0.5) ? 1.0 : clamp((uGT - pGrow - uGDur) / ${BIZ_F
     H.setSat(L.sat); for (const t of ['con', 'bri', 'warm', 'vib']) H.setTone(t, L[t]); U.uAq.value.set(...L.aq);
     try { localStorage.setItem('h3d.lookp', k); } catch {} emit('lookp', k); redraw(); };
   H.getLookP = () => lookP; H.aqU = U.uAq;
-  try { if (!localStorage.getItem('h3d.look3')) { localStorage.setItem('h3d.look3', '1'); H.setLookP('zomer'); } } catch {} // eenmalig: iedereen naar de nieuwe standaard Zomermiddag
+  try { if (!localStorage.getItem('h3d.look4')) { localStorage.setItem('h3d.look4', '1'); H.setLookP('prent'); } } catch {} // eenmalig: iedereen naar de standaard Prentenboek (test17; look3 = Zomermiddag in test16)
   H.FXK = FXK;
   H.fxOn = k => k === 'zuinig' ? zuinigNow() : !!fxOn[k];
   if (IDLE && navigator.getBattery) navigator.getBattery().then(b => { // op accu → Zuinig automatisch (zonder fxOn/localStorage aan te raken); gebruikerskeuze blijft staan
